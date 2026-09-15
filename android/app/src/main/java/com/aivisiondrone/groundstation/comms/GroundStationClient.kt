@@ -27,7 +27,18 @@ class GroundStationClient(private val client: OkHttpClient = OkHttpClient()) {
     private val _messages = MutableSharedFlow<Envelope>(extraBufferCapacity = 64)
     val messages = _messages.asSharedFlow()
 
+    /** Set false by an explicit disconnect(); read by MainViewModel to decide
+     * whether a dropped link should be auto-retried. */
+    var shouldAutoReconnect: Boolean = false
+        private set
+
+    private var lastHost: String? = null
+    private var lastPort: Int? = null
+
     fun connect(host: String, port: Int) {
+        lastHost = host
+        lastPort = port
+        shouldAutoReconnect = true
         _linkState.value = LinkState.CONNECTING
         val request = Request.Builder().url("ws://$host:$port").build()
         socket = client.newWebSocket(
@@ -52,7 +63,16 @@ class GroundStationClient(private val client: OkHttpClient = OkHttpClient()) {
         )
     }
 
+    /** Re-attempts the last connect() with the same host/port - used for
+     * auto-reconnect after an unexpected drop, not the first connection. */
+    fun reconnect() {
+        val host = lastHost ?: return
+        val port = lastPort ?: return
+        connect(host, port)
+    }
+
     fun disconnect() {
+        shouldAutoReconnect = false
         socket?.close(1000, "client disconnect")
         socket = null
         _linkState.value = LinkState.DISCONNECTED
@@ -74,8 +94,10 @@ class GroundStationClient(private val client: OkHttpClient = OkHttpClient()) {
         )
     }
 
-    fun sendModeCommand(mode: String) {
-        send(MessageType.MODE_COMMAND, JSONObject().put("mode", mode))
+    fun sendModeCommand(mode: String, followSeparationM: Double? = null) {
+        val payload = JSONObject().put("mode", mode)
+        if (followSeparationM != null) payload.put("follow_separation_m", followSeparationM)
+        send(MessageType.MODE_COMMAND, payload)
     }
 
     fun sendAbort(reason: String) {

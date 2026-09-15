@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -93,6 +94,7 @@ class CompanionOrchestrator:
         self.requested_mode = SupervisorState.IDLE
         self._pending_selection: Optional[BBox] = None
         self._last_frame_ts: Optional[float] = None
+        self._recent_frame_ts: list[float] = []
 
         self.link.on_target_selected(self._on_target_selected)
         self.link.on_mode_command(self._on_mode_command)
@@ -125,7 +127,10 @@ class CompanionOrchestrator:
             self.approach.start()
         else:
             self.approach.stop()
-        self.recorder.record("mode_command", mode=mode.name)
+        separation = payload.get("follow_separation_m")
+        if separation is not None:
+            self.follow.limits["target_separation_m"] = float(separation)
+        self.recorder.record("mode_command", mode=mode.name, follow_separation_m=separation)
 
     def _on_abort(self, payload: dict) -> None:
         self.requested_mode = SupervisorState.IDLE
@@ -147,6 +152,9 @@ class CompanionOrchestrator:
         for a single frame. Split out from `_perception_loop` so tests can
         drive it deterministically without a real event loop."""
         self.watchdog.beat("camera")
+        self._recent_frame_ts.append(time.monotonic())
+        if len(self._recent_frame_ts) > 30:
+            self._recent_frame_ts.pop(0)
         detections = self.detector.parse(frame.raw_detection_output, frame.ts)
 
         if self._pending_selection is not None and self.state_machine.state == TrackingState.IDLE:
@@ -259,6 +267,14 @@ class CompanionOrchestrator:
             "battery_remaining_pct": t.battery_remaining_pct,
         }
 
+    def _current_fps(self) -> Optional[float]:
+        if len(self._recent_frame_ts) < 2:
+            return None
+        span = self._recent_frame_ts[-1] - self._recent_frame_ts[0]
+        if span <= 0:
+            return None
+        return (len(self._recent_frame_ts) - 1) / span
+
     def _build_health_payload(self) -> dict:
         stale = set(self.watchdog.stale_subsystems(REQUIRED_SUBSYSTEMS))
         return {
@@ -268,7 +284,10 @@ class CompanionOrchestrator:
             "tracker_ok": "tracker" not in stale,
             "mavlink_ok": "mavlink" not in stale,
             "video_ok": self.video_pipeline is not None,
-            "fps": None,
+            "fps": self._current_fps(),
+            # latency_ms/temperature_c need real pipeline timing and Pi
+            # thermal-sensor access respectively - out of scope in sim,
+            # left as placeholders until M12/hardware bring-up.
             "latency_ms": None,
             "temperature_c": None,
         }

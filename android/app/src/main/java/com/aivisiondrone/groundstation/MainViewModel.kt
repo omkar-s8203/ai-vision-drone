@@ -15,12 +15,16 @@ import com.aivisiondrone.groundstation.telemetry.TargetBBox
 import com.aivisiondrone.groundstation.telemetry.TelemetryState
 import com.aivisiondrone.groundstation.telemetry.TrackingState
 import com.aivisiondrone.groundstation.video.WebRtcClient
+import com.aivisiondrone.groundstation.comms.LinkState
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import org.webrtc.EglBase
 import org.webrtc.VideoTrack
+
+private const val RECONNECT_DELAY_MS = 3000L
 
 /**
  * Ties the WebSocket control/telemetry channel and the WebRTC video channel
@@ -56,6 +60,16 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch {
             client.messages.collect { envelope -> handleEnvelope(envelope) }
         }
+        viewModelScope.launch {
+            client.linkState.collect { state ->
+                if (state == LinkState.DISCONNECTED && client.shouldAutoReconnect) {
+                    delay(RECONNECT_DELAY_MS)
+                    if (client.shouldAutoReconnect) {
+                        client.reconnect()
+                    }
+                }
+            }
+        }
     }
 
     fun connect(context: Context, eglBase: EglBase, host: String, port: Int) {
@@ -83,14 +97,17 @@ class MainViewModel : ViewModel() {
 
     fun setMode(newMode: DroneMode) {
         _mode.value = newMode
-        client.sendModeCommand(newMode.wireValue)
+        val separation = if (newMode == DroneMode.FOLLOWING) _followSeparationM.value.toDouble() else null
+        client.sendModeCommand(newMode.wireValue, separation)
     }
 
     fun setFollowSeparation(meters: Float) {
-        // UI-local for now: live separation override needs a small protocol
-        // addition (not yet defined - see docs/protocol.md) before it
-        // actually reaches the Pi's follow_limits.yaml-configured controller.
         _followSeparationM.value = meters
+        // Live-update the Pi's FollowController while Follow is already
+        // active, not just at the moment the mode is first selected.
+        if (_mode.value == DroneMode.FOLLOWING) {
+            client.sendModeCommand(DroneMode.FOLLOWING.wireValue, meters.toDouble())
+        }
     }
 
     fun abort() {

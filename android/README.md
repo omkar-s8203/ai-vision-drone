@@ -59,10 +59,14 @@ app/src/main/java/com/aivisiondrone/groundstation/
 
 ## Known gaps
 
-- Follow-mode separation slider is UI-local only - live separation override
-  isn't in the wire protocol yet (Pi reads it from `follow_limits.yaml` at
-  startup). Adding a `mode_command` payload field for it is a small,
-  contained follow-up.
-- No reconnect/retry logic on WebSocket drop yet - `GroundStationClient`
-  reports `DISCONNECTED` but the UI doesn't auto-retry.
+- ~~Follow-mode separation slider is UI-local only~~ - fixed: `setMode`/
+  `setFollowSeparation` now send `follow_separation_m` on `mode_command`,
+  and the Pi applies it live to the running `FollowController` (see
+  `docs/protocol.md`). Not yet tried against a live Follow session on
+  a real phone.
+- ~~No reconnect/retry logic on WebSocket drop~~ - fixed: `GroundStationClient`
+  tracks `shouldAutoReconnect` (true after `connect()`, false after an
+  explicit `disconnect()`), and `MainViewModel` retries every 3s while a
+  drop is unexpected. Not yet tried against a real dropped link (e.g.
+  walking out of WiFi range).
 - No instrumented (Espresso) tests yet, per the plan's M6 testing section.

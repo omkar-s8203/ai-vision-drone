@@ -6,11 +6,13 @@ a separate WebRTC video channel, per `docs/protocol.md`.
 
 ## Status
 
-**Builds and runs** - confirmed on a real device, rendering the full UI
-(health/telemetry panels, mode controls, abort button, connect fields).
-This project's dev environment has no Android SDK, so every fix below came
-from you pasting back a real build/runtime error - that's the expected way
-this gets verified from here on out.
+**Builds, runs, and works end-to-end** - confirmed live on a real device
+against the Pi's sim companion stack over real WiFi: connects, streams
+synthetic video, drag-to-select correctly initializes tracking on the
+target, and the tracking overlay updates live. This project's dev
+environment has no Android SDK, so every fix below came from you pasting
+back a real build/runtime error - that's the expected way this gets
+verified from here on out.
 
 Fixed so far:
 - **Kotlin/Compose plugin version mismatch**: `org.jetbrains.kotlin.plugin.compose`
@@ -35,11 +37,11 @@ Fixed so far:
   now - that's a separate, larger decision (new runtime behavior opt-in)
   from just compiling against newer APIs.
 
-Still to validate against the real Pi (not just this environment's tests):
-run the app against the Pi's sim mode (`COMPANION_MODE=sim python -m companion.main`
-on a machine reachable from the phone, with the Pi's `video` optional
-dependency group installed - `pip install .[video]`) to confirm target
-selection, mode switching, and video actually work end-to-end over WiFi.
+Confirmed live (`COMPANION_MODE=sim python -m companion.main`, phone on the
+same WiFi as the machine running it): connect, video render, target
+selection, tracking. **Not yet tried live**: Follow mode, Approach-Test
+mode, the abort button's actual effect on an active mode, and reconnect
+after a dropped link.
 
 ## Layout
 

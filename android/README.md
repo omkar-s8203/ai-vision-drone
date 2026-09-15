@@ -39,9 +39,12 @@ Fixed so far:
 
 Confirmed live (`COMPANION_MODE=sim python -m companion.main`, phone on the
 same WiFi as the machine running it): connect, video render, target
-selection, tracking. **Not yet tried live**: Follow mode, Approach-Test
-mode, the abort button's actual effect on an active mode, and reconnect
-after a dropped link.
+selection, tracking. Rebuild after the follow-separation/reconnect changes
+above also confirmed working. **Not yet specifically exercised live**:
+Follow mode's separation override actually changing behavior, Approach-Test
+mode, the abort button's effect on an active mode, and reconnect after a
+real dropped link (only smoke-tested via instrumented tests below, which
+this environment can't run either).
 
 ## Layout
 
@@ -55,6 +58,10 @@ app/src/main/java/com/aivisiondrone/groundstation/
   telemetry/    TelemetryModels.kt, TelemetryPanel.kt, HealthPanel.kt
   ui/           GroundStationScreen.kt (top-level layout)
   MainActivity.kt, MainViewModel.kt (MVVM glue)
+
+app/src/androidTest/java/com/aivisiondrone/groundstation/
+  GroundStationScreenTest.kt (instrumented Compose UI tests - abort
+  reachability, mode controls, drag-gesture smoke test)
 ```
 
 ## Known gaps
@@ -69,4 +76,10 @@ app/src/main/java/com/aivisiondrone/groundstation/
   explicit `disconnect()`), and `MainViewModel` retries every 3s while a
   drop is unexpected. Not yet tried against a real dropped link (e.g.
   walking out of WiFi range).
-- No instrumented (Espresso) tests yet, per the plan's M6 testing section.
+- ~~No instrumented (Espresso) tests yet~~ - added
+  `app/src/androidTest/.../GroundStationScreenTest.kt`: abort-button
+  reachability (on launch and after a mode switch), mode controls visible,
+  and a drag-gesture smoke test. **Not yet run** - this dev environment has
+  no emulator/device to run instrumented tests on; run via Android
+  Studio's test runner or `./gradlew connectedAndroidTest` on a connected
+  device.

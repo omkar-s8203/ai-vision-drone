@@ -6,29 +6,33 @@ a separate WebRTC video channel, per `docs/protocol.md`.
 
 ## Status
 
-Code-complete skeleton, currently being build-verified against a real
-Android Studio/Gradle setup (this project's dev environment has no Android
-SDK, so this only gets checked when you build it). Fixed so far:
+**Builds and runs** - confirmed on a real device, rendering the full UI
+(health/telemetry panels, mode controls, abort button, connect fields).
+This project's dev environment has no Android SDK, so every fix below came
+from you pasting back a real build/runtime error - that's the expected way
+this gets verified from here on out.
 
+Fixed so far:
 - **Kotlin/Compose plugin version mismatch**: `org.jetbrains.kotlin.plugin.compose`
-  only exists from Kotlin 2.0.0 onward (it replaced the old
-  `composeOptions{ kotlinCompilerExtensionVersion }` approach). The root
-  `build.gradle.kts` originally pinned Kotlin 1.9.24 alongside it - bumped
-  both `org.jetbrains.kotlin.android` and `org.jetbrains.kotlin.plugin.compose`
-  to 2.0.21.
+  only exists from Kotlin 2.0.0 onward. Bumped `org.jetbrains.kotlin.android`
+  and `org.jetbrains.kotlin.plugin.compose` to 2.0.21 together.
+- **Invalid `spacedBy` import** in `ModeControls.kt` and `HealthPanel.kt` -
+  `Arrangement.spacedBy` is a member of `Arrangement`, not a top-level
+  function; fixed to import `Arrangement` and call it properly.
+- **16 KB page-size alignment warning** - `stream-webrtc-android:1.1.1` and
+  a transitive `androidx.graphics:graphics-path` were both built before
+  Google's 16 KB native-library alignment requirement. Bumped
+  `stream-webrtc-android` to 1.3.10, pinned `graphics-path` to 1.1.0
+  explicitly, bumped the Compose BOM to 2025.12.01, and dropped 32-bit ABIs
+  (`armeabi-v7a`/`x86`) since a phone/tablet ground station only needs
+  arm64 - GetStream's own alignment fixes reportedly lagged for 32-bit for
+  a while, so this sidesteps that entirely rather than chasing it further.
 
-Still to confirm on a real sync/build:
-1. The `org.webrtc.*` API surface in `video/WebRtcClient.kt` (written from
-   the well-known WebRTC-Android sample pattern, not checked against the
-   exact `stream-webrtc-android:1.1.1` version pinned in `app/build.gradle.kts`)
-   and Compose Material3 API drift.
-2. Run it against the Pi's sim mode (`COMPANION_MODE=sim python -m companion.main`
-   on a machine reachable from the phone) to validate the control channel
-   and video end-to-end - both are wired in by default in sim mode now
-   (`companion/main.py`'s `build_sim_orchestrator`), provided the Pi side has
-   the `video` optional dependency group installed (`pip install .[video]`).
-
-**If you hit another Gradle/compile error, paste it back and it'll get fixed the same way** - that's the expected, normal way this gets verified without an SDK on this end.
+Still to validate against the real Pi (not just this environment's tests):
+run the app against the Pi's sim mode (`COMPANION_MODE=sim python -m companion.main`
+on a machine reachable from the phone, with the Pi's `video` optional
+dependency group installed - `pip install .[video]`) to confirm target
+selection, mode switching, and video actually work end-to-end over WiFi.
 
 ## Layout
 

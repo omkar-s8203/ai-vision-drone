@@ -27,6 +27,13 @@ Fixed so far:
   (`armeabi-v7a`/`x86`) since a phone/tablet ground station only needs
   arm64 - GetStream's own alignment fixes reportedly lagged for 32-bit for
   a while, so this sidesteps that entirely rather than chasing it further.
+- **AAR metadata errors from the Compose BOM bump** - Compose 1.10.0 (pulled
+  in by the BOM bump above) requires `compileSdk 35` and AGP `>= 8.6.0`,
+  but the project was on `compileSdk 34` / AGP 8.5.2. Bumped AGP to 8.9.0
+  (supports up to API 35, needs Gradle >= 8.11.1 - wrapper updated to
+  match), and `compileSdk` to 35. `targetSdk` deliberately left at 34 for
+  now - that's a separate, larger decision (new runtime behavior opt-in)
+  from just compiling against newer APIs.
 
 Still to validate against the real Pi (not just this environment's tests):
 run the app against the Pi's sim mode (`COMPANION_MODE=sim python -m companion.main`

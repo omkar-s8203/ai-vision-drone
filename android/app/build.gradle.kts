@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.aivisiondrone.groundstation"
-    compileSdk = 34
+    compileSdk = 35 // required by compose-bom 2025.12.01's libraries (Compose 1.10.0)
 
     defaultConfig {
         applicationId = "com.aivisiondrone.groundstation"

@@ -1,0 +1,94 @@
+package com.aivisiondrone.groundstation.comms
+
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
+import org.json.JSONObject
+
+enum class LinkState { DISCONNECTED, CONNECTING, CONNECTED }
+
+/**
+ * Control/telemetry channel to the Pi's GroundStationLink (companion/comms/ws_server.py).
+ * Kept separate from video (WebRtcClient) so a video hiccup never blocks an abort command -
+ * see docs plan M5/M6.
+ */
+class GroundStationClient(private val client: OkHttpClient = OkHttpClient()) {
+    private var socket: WebSocket? = null
+
+    private val _linkState = MutableStateFlow(LinkState.DISCONNECTED)
+    val linkState = _linkState.asStateFlow()
+
+    private val _messages = MutableSharedFlow<Envelope>(extraBufferCapacity = 64)
+    val messages = _messages.asSharedFlow()
+
+    fun connect(host: String, port: Int) {
+        _linkState.value = LinkState.CONNECTING
+        val request = Request.Builder().url("ws://$host:$port").build()
+        socket = client.newWebSocket(
+            request,
+            object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    _linkState.value = LinkState.CONNECTED
+                }
+
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    runCatching { Envelope.fromJson(text) }.onSuccess { _messages.tryEmit(it) }
+                }
+
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    _linkState.value = LinkState.DISCONNECTED
+                }
+
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    _linkState.value = LinkState.DISCONNECTED
+                }
+            },
+        )
+    }
+
+    fun disconnect() {
+        socket?.close(1000, "client disconnect")
+        socket = null
+        _linkState.value = LinkState.DISCONNECTED
+    }
+
+    private fun send(type: String, payload: JSONObject) {
+        socket?.send(makeEnvelope(type, payload).toJson())
+    }
+
+    fun sendTargetSelect(x: Double, y: Double, w: Double, h: Double) {
+        send(
+            MessageType.TARGET_SELECT,
+            JSONObject().apply {
+                put("x", x)
+                put("y", y)
+                put("w", w)
+                put("h", h)
+            },
+        )
+    }
+
+    fun sendModeCommand(mode: String) {
+        send(MessageType.MODE_COMMAND, JSONObject().put("mode", mode))
+    }
+
+    fun sendAbort(reason: String) {
+        send(MessageType.ABORT, JSONObject().put("reason", reason))
+    }
+
+    fun sendWebRtcOffer(sdp: String, sdpType: String) {
+        send(
+            MessageType.WEBRTC_OFFER,
+            JSONObject().apply {
+                put("sdp", sdp)
+                put("sdp_type", sdpType)
+            },
+        )
+    }
+}

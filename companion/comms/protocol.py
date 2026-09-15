@@ -15,6 +15,8 @@ class MessageType:
     HEALTH = "health"
     ACK = "ack"
     ERROR = "error"
+    WEBRTC_OFFER = "webrtc_offer"
+    WEBRTC_ANSWER = "webrtc_answer"
 
 
 @dataclass

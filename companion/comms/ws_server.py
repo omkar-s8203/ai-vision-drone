@@ -18,6 +18,7 @@ class GroundStationLink:
         self._on_target_selected: Optional[Callable[[dict], None]] = None
         self._on_mode_command: Optional[Callable[[dict], None]] = None
         self._on_abort: Optional[Callable[[dict], None]] = None
+        self._on_webrtc_offer: Optional[Callable[[dict], None]] = None
         transport.on_message(self._dispatch)
 
     async def start(self) -> None:
@@ -35,6 +36,11 @@ class GroundStationLink:
     def on_abort(self, handler: Callable[[dict], None]) -> None:
         self._on_abort = handler
 
+    def on_webrtc_offer(self, handler: Callable[[dict], None]) -> None:
+        """handler receives {"sdp": ..., "sdp_type": ...} and is responsible
+        for calling send_webrtc_answer() with the resulting answer."""
+        self._on_webrtc_offer = handler
+
     def _dispatch(self, raw: str) -> None:
         try:
             envelope = Envelope.from_json(raw)
@@ -46,6 +52,11 @@ class GroundStationLink:
             self._on_mode_command(envelope.payload)
         elif envelope.type == MessageType.ABORT and self._on_abort:
             self._on_abort(envelope.payload)
+        elif envelope.type == MessageType.WEBRTC_OFFER and self._on_webrtc_offer:
+            self._on_webrtc_offer(envelope.payload)
+
+    async def send_webrtc_answer(self, sdp: str, sdp_type: str) -> None:
+        await self._send(MessageType.WEBRTC_ANSWER, {"sdp": sdp, "sdp_type": sdp_type})
 
     async def send_tracking_update(self, payload: dict) -> None:
         await self._send(MessageType.TRACKING_UPDATE, payload)

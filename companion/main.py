@@ -14,7 +14,7 @@ import asyncio
 import logging
 import os
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from companion.comms.transport import WebSocketTransport
 from companion.comms.ws_server import GroundStationLink
@@ -27,7 +27,12 @@ from companion.logging_.setup import configure_logging
 from companion.mavlink.bridge import MavlinkBridge
 from companion.mavlink.rc_monitor import RcOverrideMonitor
 from companion.safety.contact_sensor import ContactSensor, NullContactSensor
-from companion.safety.supervisor import SafetySupervisor, SupervisorInputs, SupervisorState
+from companion.safety.supervisor import (
+    REQUIRED_SUBSYSTEMS,
+    SafetySupervisor,
+    SupervisorInputs,
+    SupervisorState,
+)
 from companion.safety.watchdog import HeartbeatWatchdog, SystemdWatchdog
 from companion.tracking.base import Tracker
 from companion.tracking.iou_tracker import IouKalmanTracker
@@ -35,6 +40,9 @@ from companion.tracking.state import TrackingState, TrackingStateMachine
 from companion.tracking.target_selector import select_target
 from companion.vision.camera import CameraBase
 from companion.vision.detector import BBox, Detection, DetectorBase
+
+if TYPE_CHECKING:
+    from companion.comms.video_pipeline import VideoPipeline
 
 log = logging.getLogger(__name__)
 
@@ -64,6 +72,7 @@ class CompanionOrchestrator:
         link: GroundStationLink,
         recorder: SessionRecorder,
         contact_sensor: Optional[ContactSensor] = None,
+        video_pipeline: Optional["VideoPipeline"] = None,
         reacquire_timeout_s: float = 2.0,
     ) -> None:
         self.camera = camera
@@ -79,6 +88,7 @@ class CompanionOrchestrator:
         self.link = link
         self.recorder = recorder
         self.contact_sensor = contact_sensor or NullContactSensor()
+        self.video_pipeline = video_pipeline
 
         self.requested_mode = SupervisorState.IDLE
         self._pending_selection: Optional[BBox] = None
@@ -87,6 +97,21 @@ class CompanionOrchestrator:
         self.link.on_target_selected(self._on_target_selected)
         self.link.on_mode_command(self._on_mode_command)
         self.link.on_abort(self._on_abort)
+        if self.video_pipeline is not None:
+            self.link.on_webrtc_offer(self._on_webrtc_offer_sync)
+
+    def _on_webrtc_offer_sync(self, payload: dict) -> None:
+        asyncio.create_task(self._on_webrtc_offer(payload))
+
+    async def _on_webrtc_offer(self, payload: dict) -> None:
+        assert self.video_pipeline is not None
+        try:
+            answer_sdp, answer_type = await self.video_pipeline.handle_offer(
+                payload["sdp"], payload["sdp_type"]
+            )
+            await self.link.send_webrtc_answer(answer_sdp, answer_type)
+        except Exception:
+            log.exception("Failed to handle WebRTC offer")
 
     def _on_target_selected(self, payload: dict) -> None:
         self._pending_selection = BBox(
@@ -193,22 +218,59 @@ class CompanionOrchestrator:
                 yaw_rate=command.yaw_rate_rads,
             )
 
+        target = self.state_machine.target
         await self.link.send_tracking_update(
             {
                 "state": tracking_state.name,
-                "target_id": self.state_machine.target.target_id if self.state_machine.target else None,
-                "confidence": self.state_machine.target.confidence if self.state_machine.target else None,
+                "target_id": target.target_id if target else None,
+                "confidence": target.confidence if target else None,
+                "bbox": (
+                    {"x": target.bbox.x, "y": target.bbox.y, "w": target.bbox.w, "h": target.bbox.h}
+                    if target
+                    else None
+                ),
+                "image_width": frame.width,
+                "image_height": frame.height,
                 "distance_m": distance_m,
                 "supervisor_state": decision.state.name,
                 "guidance_allowed": decision.guidance_allowed,
                 "guidance_reason": decision.reason,
             }
         )
+        await self.link.send_telemetry(self._build_telemetry_payload())
+        await self.link.send_health(self._build_health_payload())
 
         return {
             "tracking_state": tracking_state,
             "supervisor_decision": decision,
             "command_sent": sent,
+        }
+
+    def _build_telemetry_payload(self) -> dict:
+        t = self.mavlink.telemetry
+        return {
+            "fc_mode": t.fc_mode,
+            "armed": t.armed,
+            "lat": t.lat,
+            "lon": t.lon,
+            "alt_m": t.alt_m,
+            "groundspeed_mps": t.groundspeed_mps,
+            "battery_voltage_v": t.battery_voltage_v,
+            "battery_remaining_pct": t.battery_remaining_pct,
+        }
+
+    def _build_health_payload(self) -> dict:
+        stale = set(self.watchdog.stale_subsystems(REQUIRED_SUBSYSTEMS))
+        return {
+            "pi_ok": True,
+            "camera_ok": "camera" not in stale,
+            "ai_ok": "tracker" not in stale,
+            "tracker_ok": "tracker" not in stale,
+            "mavlink_ok": "mavlink" not in stale,
+            "video_ok": self.video_pipeline is not None,
+            "fps": None,
+            "latency_ms": None,
+            "temperature_c": None,
         }
 
     async def _perception_loop(self) -> None:

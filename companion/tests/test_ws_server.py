@@ -34,6 +34,32 @@ async def test_abort_dispatch():
 
 
 @pytest.mark.asyncio
+async def test_webrtc_offer_dispatch():
+    transport = FakeTransport()
+    link = GroundStationLink(transport)
+    calls = []
+    link.on_webrtc_offer(lambda payload: calls.append(payload))
+
+    envelope = make_envelope(MessageType.WEBRTC_OFFER, {"sdp": "v=0...", "sdp_type": "offer"}, seq=1)
+    transport.inject(envelope.to_json())
+
+    assert calls == [{"sdp": "v=0...", "sdp_type": "offer"}]
+
+
+@pytest.mark.asyncio
+async def test_send_webrtc_answer_broadcasts_envelope():
+    transport = FakeTransport()
+    link = GroundStationLink(transport)
+
+    await link.send_webrtc_answer("v=0...", "answer")
+
+    assert len(transport.sent) == 1
+    parsed = json.loads(transport.sent[0])
+    assert parsed["type"] == MessageType.WEBRTC_ANSWER
+    assert parsed["payload"] == {"sdp": "v=0...", "sdp_type": "answer"}
+
+
+@pytest.mark.asyncio
 async def test_send_tracking_update_broadcasts_envelope():
     transport = FakeTransport()
     link = GroundStationLink(transport)

@@ -6,24 +6,29 @@ a separate WebRTC video channel, per `docs/protocol.md`.
 
 ## Status
 
-Code-complete skeleton, **not yet build-verified** - this was written
-without Android Studio/an Android SDK available in the dev environment that
-produced it. Before relying on it:
+Code-complete skeleton, currently being build-verified against a real
+Android Studio/Gradle setup (this project's dev environment has no Android
+SDK, so this only gets checked when you build it). Fixed so far:
 
-1. Open `android/` in Android Studio (this generates the Gradle wrapper jar
-   automatically on first sync - `gradle/wrapper/gradle-wrapper.properties`
-   is already in place, pointing at Gradle 8.7).
-2. Let it resolve dependencies (needs network access to Google's Maven and
-   Maven Central) and fix any compile errors it surfaces - most likely
-   candidates are the `org.webrtc.*` API surface in `video/WebRtcClient.kt`
-   (written from the well-known WebRTC-Android sample pattern, but not
-   checked against the exact `stream-webrtc-android:1.1.1` version pinned
-   in `app/build.gradle.kts`) and Compose Material3 API drift.
-3. Run it against the Pi's sim mode (`COMPANION_MODE=sim python -m companion.main`
+- **Kotlin/Compose plugin version mismatch**: `org.jetbrains.kotlin.plugin.compose`
+  only exists from Kotlin 2.0.0 onward (it replaced the old
+  `composeOptions{ kotlinCompilerExtensionVersion }` approach). The root
+  `build.gradle.kts` originally pinned Kotlin 1.9.24 alongside it - bumped
+  both `org.jetbrains.kotlin.android` and `org.jetbrains.kotlin.plugin.compose`
+  to 2.0.21.
+
+Still to confirm on a real sync/build:
+1. The `org.webrtc.*` API surface in `video/WebRtcClient.kt` (written from
+   the well-known WebRTC-Android sample pattern, not checked against the
+   exact `stream-webrtc-android:1.1.1` version pinned in `app/build.gradle.kts`)
+   and Compose Material3 API drift.
+2. Run it against the Pi's sim mode (`COMPANION_MODE=sim python -m companion.main`
    on a machine reachable from the phone) to validate the control channel
-   end-to-end; video needs the Pi's `video` optional dependency group
-   installed and an actual `AiortcVideoPipeline` wired into the orchestrator
-   (currently optional/unwired by default - see `companion/main.py`).
+   and video end-to-end - both are wired in by default in sim mode now
+   (`companion/main.py`'s `build_sim_orchestrator`), provided the Pi side has
+   the `video` optional dependency group installed (`pip install .[video]`).
+
+**If you hit another Gradle/compile error, paste it back and it'll get fixed the same way** - that's the expected, normal way this gets verified without an SDK on this end.
 
 ## Layout
 

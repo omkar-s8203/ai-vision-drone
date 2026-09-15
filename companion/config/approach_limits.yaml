@@ -1,0 +1,6 @@
+max_approach_speed_mps: 1.0
+min_boundary_m: 2.0
+geofence_radius_m: 20.0
+reacquire_timeout_s: 2.0
+comms_timeout_s: 1.5
+rc_override_deadband: 0.15

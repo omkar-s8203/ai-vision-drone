@@ -1,0 +1,12 @@
+max_speed_mps: 3.0
+max_accel_mps2: 1.5
+min_separation_m: 3.0
+max_separation_m: 15.0
+target_separation_m: 6.0
+lateral_deadband_px: 20
+vertical_deadband_px: 20
+
+pid:
+  distance: {kp: 0.6, ki: 0.0, kd: 0.15}
+  lateral: {kp: 0.004, ki: 0.0, kd: 0.001}
+  vertical: {kp: 0.004, ki: 0.0, kd: 0.001}

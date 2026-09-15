@@ -1,0 +1,7 @@
+# Placeholder intrinsics - replace with real values from tools/calibrate_camera.py (M1/M4).
+image_width: 1280
+image_height: 720
+fx: 900.0
+fy: 900.0
+cx: 640.0
+cy: 360.0

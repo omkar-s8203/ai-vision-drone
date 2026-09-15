@@ -1,0 +1,12 @@
+pi:
+  power_source: dedicated_buck_5v_5a
+
+mavlink:
+  connection: /dev/serial0
+  baud: 921600
+  # For sim/dev mode, main.py overrides this to a UDP endpoint talking to sim/mock_fc.py.
+
+camera:
+  width: 1280
+  height: 720
+  target_fps: 30

@@ -1,0 +1,5 @@
+mode: ap
+ssid: ai-vision-drone
+ws_host: 0.0.0.0
+ws_port: 8765
+video_pipeline: aiortc

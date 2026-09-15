@@ -1,10 +1,10 @@
 package com.aivisiondrone.groundstation.telemetry
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.spacedBy
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -18,7 +18,7 @@ fun HealthPanel(health: HealthState, modifier: Modifier = Modifier) {
             .background(Color.Black.copy(alpha = 0.55f))
             .padding(8.dp),
     ) {
-        Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             HealthDot("PI", health.piOk)
             HealthDot("CAM", health.cameraOk)
             HealthDot("AI", health.aiOk)

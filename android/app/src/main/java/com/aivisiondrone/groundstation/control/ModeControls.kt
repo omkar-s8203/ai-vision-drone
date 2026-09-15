@@ -1,9 +1,9 @@
 package com.aivisiondrone.groundstation.control
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.spacedBy
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Slider
@@ -28,7 +28,7 @@ fun ModeControls(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.padding(8.dp)) {
-        Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             DroneMode.entries.forEach { mode ->
                 Button(
                     onClick = { onModeSelected(mode) },

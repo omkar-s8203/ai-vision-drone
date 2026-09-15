@@ -17,7 +17,10 @@ pi = [
     "picamera2",
 ]
 video = [
+    # Verified working end-to-end (real aiortc peer over loopback) via
+    # companion/tests/test_video_pipeline.py and test_integration_video.py.
     "aiortc>=1.9",
+    "av>=11.0",
 ]
 dev = [
     "pytest>=8.0",

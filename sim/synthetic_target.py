@@ -3,6 +3,8 @@ from __future__ import annotations
 import math
 from typing import Optional
 
+import numpy as np
+
 from companion.vision.detector import BBox, Detection
 
 
@@ -59,3 +61,17 @@ class SyntheticTargetGenerator:
                 frame_ts=ts,
             )
         ]
+
+
+def render_frame(width: int, height: int, detections: list[Detection]) -> np.ndarray:
+    """Renders a plain BGR frame with the synthetic target drawn as a solid
+    rectangle - purely a visualization aid so the sim video pipeline has
+    something real to stream (docs plan M5/M13), not a stand-in detector."""
+    frame = np.full((height, width, 3), (40, 40, 40), dtype=np.uint8)
+    for det in detections:
+        x0 = max(0, int(det.bbox.x))
+        y0 = max(0, int(det.bbox.y))
+        x1 = min(width, int(det.bbox.x + det.bbox.w))
+        y1 = min(height, int(det.bbox.y + det.bbox.h))
+        frame[y0:y1, x0:x1] = (60, 180, 60)
+    return frame

@@ -289,8 +289,11 @@ def build_sim_orchestrator() -> tuple[CompanionOrchestrator, "object"]:
     see docs plan M13. Returns (orchestrator, mock_fc); the caller is
     responsible for starting mock_fc.run() as a background task.
     """
+    import time
+
     from sim.mock_fc import MockFlightController
-    from sim.synthetic_target import SyntheticTargetGenerator
+    from sim.synthetic_target import SyntheticTargetGenerator, render_frame
+    from companion.comms.video_pipeline import AiortcVideoPipeline
     from companion.vision.camera import SyntheticCamera
     from companion.vision.detector import PassthroughDetector
 
@@ -330,11 +333,26 @@ def build_sim_orchestrator() -> tuple[CompanionOrchestrator, "object"]:
     link = GroundStationLink(transport)
     recorder = SessionRecorder(Path("companion/logs/sessions"))
 
+    def _sim_frame_source():
+        detections = generator.detections_at(time.monotonic())
+        return render_frame(
+            hardware_cfg["camera"]["width"], hardware_cfg["camera"]["height"], detections
+        )
+
+    try:
+        video_pipeline = AiortcVideoPipeline(
+            frame_source=_sim_frame_source, fps=hardware_cfg["camera"]["target_fps"]
+        )
+    except RuntimeError:
+        log.warning("aiortc not installed - sim mode running without video")
+        video_pipeline = None
+
     orchestrator = CompanionOrchestrator(
         camera=camera, detector=detector, tracker=tracker,
         distance_estimator=distance_estimator, follow_controller=follow_controller,
         approach_controller=approach_controller, mavlink=mavlink, rc_monitor=rc_monitor,
         supervisor=supervisor, watchdog=watchdog, link=link, recorder=recorder,
+        video_pipeline=video_pipeline,
     )
     return orchestrator, mock_fc
 

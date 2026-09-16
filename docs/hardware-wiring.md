@@ -2,10 +2,10 @@
 
 ## Status
 
-Pi 5 + AI Camera are set up and verified on a bench (not yet mounted on the
-aircraft, not yet wired to the flight controller). Flight controller
-wiring/power-source finalization/weight-and-thermal checks are still open -
-see "Open items" below.
+Pi 5 + AI Camera + flight controller (Cube Orange, TELEM1) are all wired up
+and confirmed working together on a bench (not yet mounted on the
+aircraft). Power-source finalization for flight and weight/thermal checks
+are still open - see "Open items" below.
 
 ## Raspberry Pi OS setup (done)
 
@@ -96,37 +96,55 @@ The TELEM port's regulator is sized for a small accessory, not a Raspberry
 Pi 5; back-feeding this way risks damaging the flight controller's power
 regulation, not just the Pi.
 
-## Flight controller wiring (in progress - not yet working)
+## Flight controller wiring (confirmed working)
 
-- **FC**: CubePilot Cube Orange+, wired via a carrier board TELEM port.
-- ArduPilot side configured: `SERIALx_PROTOCOL = 2` (MAVLink2),
-  `SERIALx_BAUD = 921` (921600) on the connected TELEM port, matching
-  `companion/config/hardware.yaml`'s `/dev/serial0` @ 921600.
+- **FC**: CubePilot Cube Orange, wired via carrier board **TELEM1**.
+- Wiring (matches CubePilot's own documented TELEM pinout exactly):
+  ```
+  Cube TELEM1 TX  -> Pi GPIO15 (physical pin 10, UART RX)
+  Cube TELEM1 RX  -> Pi GPIO14 (physical pin 8, UART TX)
+  Cube TELEM1 GND -> Pi GND
+  ```
 - Pi side: UART enabled via `raspi-config` (Interface Options -> Serial ->
-  no login shell, yes hardware). `/dev/serial0` symlinks to `ttyAMA10`.
-- **Found and fixed**: Pi 5 Bluetooth was claiming the UART
+  no login shell, yes hardware); `dtparam=uart0=on` in
+  `/boot/firmware/config.txt`. `/dev/serial0` symlinks to `ttyAMA10`
+  (Pi 5's RP1-chip UART naming - differs from the `ttyAMA0` older Pi models
+  use, but is the correct GPIO14/15 UART here, confirmed via `pinctrl`).
+- **Baud rate is 57600, not 921600.** This was the actual root cause of a
+  very long debugging session: Mission Planner's parameter list *displayed*
+  `SERIAL1_BAUD = 921` (921600) after setting and writing it, but the FC
+  never actually adopted it - it kept running TELEM1 at ArduPilot's default
+  57600 regardless of what the GCS UI showed. Every test at 921600 baud
+  (raw `cat`/`od` byte dumps, `pymavlink.wait_heartbeat()`, MAVProxy) failed
+  identically because of this mismatch alone - wiring, GND, Pi UART
+  enablement, pin muxing, permissions, and the Bluetooth/UART conflict fix
+  below were all independently confirmed correct throughout and were never
+  the problem. **Lesson: when a GCS-displayed parameter and observed FC
+  behavior disagree, trust the behavior** - verify with a baud sweep
+  (57600 is ArduPilot's TELEM default) rather than assuming a UI-displayed
+  value was actually applied.
+- **Found and fixed along the way**: Pi 5 Bluetooth was claiming the UART
   (`hci_uart_bcm` in `dmesg`) - fixed with `dtoverlay=disable-bt` in
   `/boot/firmware/config.txt` plus `sudo systemctl disable bluetooth`.
   Also needed `pip install pyserial` (a real missing dependency - see
   pyproject.toml; pymavlink only imports it lazily for real serial
-  connections, so sim-mode's UDP-only tests never caught this).
-- `pinctrl get 14,15` confirms both pins are correctly muxed to their UART
-  alternate function (`a4`, `TXD0`/`RXD0`) - the OS/kernel side is correct.
-- **Still no heartbeat received** as of the last test. An isolated
-  loopback test (single jumper directly between physical pin 8 and pin 10
-  on the Pi's own header, FC fully disconnected) was set up to isolate
-  the Pi's UART/wiring from the FC side, but hadn't been completed/verified
-  before hardware-mode video testing took priority - **resume here**:
-  confirm the isolated loopback works before reconnecting to the FC and
-  re-testing `wait_heartbeat()`.
-- Common mistake made and corrected along the way: "physical pin N" vs
-  "GPIO N" are different numbering schemes on the 40-pin header - always
-  double-check against the official pinout diagram, not just the BCM GPIO
-  number, when wiring.
+  connections, so sim-mode's UDP-only tests never caught this) and
+  `pip install future` (a missing MAVProxy dependency).
+- **Confirmed working**: `pymavlink.mavlink_connection('/dev/serial0', baud=57600)`
+  successfully receives a heartbeat (system 1) and continuous `ATTITUDE`
+  messages at 10 Hz when requested. `companion/config/hardware.yaml`
+  updated to `baud: 57600` to match.
+- Common mistakes made and corrected along the way, worth remembering for
+  next time: "physical pin N" vs "GPIO N" are different numbering schemes
+  on the 40-pin header - always double-check against the official pinout
+  diagram, not just the BCM GPIO number. A `pinctrl`-based loopback test
+  (toggle one GPIO, read another) is only meaningful when nothing else is
+  connected to either pin - it's not a valid test once a real device (like
+  the FC) is already wired to those same pins, since the two signals are
+  then expected to be independent, not correlated.
 
 ## Open items
 
-- **Finish the MAVLink UART link** - see above, mid-diagnosis.
 - **Power source for flight**: Pi is currently bench-powered from a wall
   charger, not yet running from a dedicated buck converter off the flight
   battery as planned - do not assume the drone's BEC can handle the added

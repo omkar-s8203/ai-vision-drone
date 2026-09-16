@@ -3,7 +3,12 @@ pi:
 
 mavlink:
   connection: /dev/serial0
-  baud: 921600
+  # 57600, not 921600 - confirmed against a real Cube Orange on TELEM1.
+  # 57600 is ArduPilot's default TELEM baud; a Mission Planner SERIAL1_BAUD=921
+  # change appeared to save but never actually took effect on the FC, so the
+  # real fix was matching the Pi's baud to what the FC was actually using,
+  # not what the GCS UI displayed (see docs/hardware-wiring.md).
+  baud: 57600
   # For sim/dev mode, main.py overrides this to a UDP endpoint talking to sim/mock_fc.py.
 
 camera:

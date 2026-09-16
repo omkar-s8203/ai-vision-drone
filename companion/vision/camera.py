@@ -65,7 +65,13 @@ class Picamera2IMX500Camera(CameraBase):
     async def frames(self) -> AsyncIterator[Frame]:
         self._picam2 = self._Picamera2(self.imx500.camera_num)
         config = self._picam2.create_preview_configuration(
-            main={"size": (self.width, self.height), "format": "BGR888"},
+            # picamera2's format names are inverted relative to the actual
+            # numpy channel order they produce: requesting "RGB888" here is
+            # what actually yields BGR-ordered array data, matching what
+            # AiortcVideoPipeline passes to PyAV as "bgr24". Confirmed
+            # against real hardware - requesting "BGR888" produced a
+            # visibly wrong (red/blue swapped) video feed.
+            main={"size": (self.width, self.height), "format": "RGB888"},
             controls={"FrameRate": self.target_fps},
             buffer_count=12,
         )

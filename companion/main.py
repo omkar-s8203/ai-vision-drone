@@ -38,7 +38,7 @@ from companion.safety.watchdog import HeartbeatWatchdog, SystemdWatchdog
 from companion.tracking.base import Tracker
 from companion.tracking.iou_tracker import IouKalmanTracker
 from companion.tracking.state import TrackingState, TrackingStateMachine
-from companion.tracking.target_selector import select_target
+from companion.tracking.target_selector import select_target, select_target_at_point
 from companion.vision.camera import CameraBase
 from companion.vision.detector import BBox, Detection, DetectorBase
 
@@ -92,7 +92,7 @@ class CompanionOrchestrator:
         self.video_pipeline = video_pipeline
 
         self.requested_mode = SupervisorState.IDLE
-        self._pending_selection: Optional[BBox] = None
+        self._pending_selection: Optional[tuple] = None  # ("bbox", BBox) or ("point", x, y)
         self._last_frame_ts: Optional[float] = None
         self._recent_frame_ts: list[float] = []
 
@@ -116,9 +116,13 @@ class CompanionOrchestrator:
             log.exception("Failed to handle WebRTC offer")
 
     def _on_target_selected(self, payload: dict) -> None:
-        self._pending_selection = BBox(
-            x=payload["x"], y=payload["y"], w=payload["w"], h=payload["h"]
-        )
+        if payload.get("point"):
+            self._pending_selection = ("point", payload["x"], payload["y"])
+        else:
+            self._pending_selection = (
+                "bbox",
+                BBox(x=payload["x"], y=payload["y"], w=payload["w"], h=payload["h"]),
+            )
 
     def _on_mode_command(self, payload: dict) -> None:
         mode = MODE_COMMAND_MAP.get(payload.get("mode", "idle"), SupervisorState.IDLE)
@@ -130,7 +134,15 @@ class CompanionOrchestrator:
         separation = payload.get("follow_separation_m")
         if separation is not None:
             self.follow.limits["target_separation_m"] = float(separation)
-        self.recorder.record("mode_command", mode=mode.name, follow_separation_m=separation)
+        altitude = payload.get("follow_altitude_m")
+        if altitude is not None:
+            self.follow.limits["target_altitude_m"] = float(altitude)
+        self.recorder.record(
+            "mode_command",
+            mode=mode.name,
+            follow_separation_m=separation,
+            follow_altitude_m=altitude,
+        )
 
     def _on_abort(self, payload: dict) -> None:
         self.requested_mode = SupervisorState.IDLE
@@ -158,7 +170,12 @@ class CompanionOrchestrator:
         detections = self.detector.parse(frame.raw_detection_output, frame.ts)
 
         if self._pending_selection is not None and self.state_machine.state == TrackingState.IDLE:
-            det = select_target(detections, self._pending_selection)
+            if self._pending_selection[0] == "point":
+                _, px, py = self._pending_selection
+                det = select_target_at_point(detections, px, py)
+            else:
+                _, bbox = self._pending_selection
+                det = select_target(detections, bbox)
             if det is not None:
                 self.state_machine.start(frame.ts, det)
             self._pending_selection = None
@@ -197,7 +214,12 @@ class CompanionOrchestrator:
         command = None
         if decision.state == SupervisorState.FOLLOWING and self.state_machine.target is not None:
             command = self.follow.compute(
-                self.state_machine.target, distance_m, frame.width, frame.height, dt
+                self.state_machine.target,
+                distance_m,
+                frame.width,
+                frame.height,
+                dt,
+                current_altitude_m=self.mavlink.telemetry.alt_m,
             )
         elif decision.state == SupervisorState.APPROACHING:
             result = self.approach.update(
@@ -243,6 +265,20 @@ class CompanionOrchestrator:
                 "supervisor_state": decision.state.name,
                 "guidance_allowed": decision.guidance_allowed,
                 "guidance_reason": decision.reason,
+            }
+        )
+        await self.link.send_detections_update(
+            {
+                "image_width": frame.width,
+                "image_height": frame.height,
+                "detections": [
+                    {
+                        "bbox": {"x": d.bbox.x, "y": d.bbox.y, "w": d.bbox.w, "h": d.bbox.h},
+                        "class_name": d.class_name,
+                        "score": d.score,
+                    }
+                    for d in detections
+                ],
             }
         )
         await self.link.send_telemetry(self._build_telemetry_payload())

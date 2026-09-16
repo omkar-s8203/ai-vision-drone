@@ -21,3 +21,22 @@ def select_target(
     if best_det is None or best_iou < min_iou:
         return None
     return best_det
+
+
+def select_target_at_point(detections: list[Detection], x: float, y: float) -> Optional[Detection]:
+    """Tap-to-select: finds which detection's box contains the tap point,
+    rather than matching by overlap against a drawn selection rectangle
+    (IoU against a tiny tap-sized box would be misleadingly low even for a
+    dead-center tap on a large object). When multiple boxes overlap the
+    point, picks the smallest one - the most specific match, matching how
+    people expect tapping a person standing in front of a car to select
+    the person, not the car behind them."""
+    best_det: Optional[Detection] = None
+    best_area = None
+    for det in detections:
+        b = det.bbox
+        if b.x <= x <= b.x + b.w and b.y <= y <= b.y + b.h:
+            if best_area is None or b.area < best_area:
+                best_area = b.area
+                best_det = det
+    return best_det

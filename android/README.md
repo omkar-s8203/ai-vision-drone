@@ -37,14 +37,20 @@ Fixed so far:
   now - that's a separate, larger decision (new runtime behavior opt-in)
   from just compiling against newer APIs.
 
-Confirmed live (`COMPANION_MODE=sim python -m companion.main`, phone on the
-same WiFi as the machine running it): connect, video render, target
-selection, tracking. Rebuild after the follow-separation/reconnect changes
-above also confirmed working. **Not yet specifically exercised live**:
-Follow mode's separation override actually changing behavior, Approach-Test
-mode, the abort button's effect on an active mode, and reconnect after a
-real dropped link (only smoke-tested via instrumented tests below, which
-this environment can't run either).
+Confirmed live end-to-end against **real hardware** (not just sim): real
+camera video, real on-sensor AI detection, and real MAVLink telemetry from
+a Cube Orange, all at once. Every mode (Tracking, Follow incl. live
+separation override, Approach-Test, abort) has been confirmed live against
+the sim stack; hardware-mode testing has so far focused on camera+video+
+MAVLink together rather than every mode specifically.
+
+**New, not yet build-verified**: showing every live detection as a tappable
+box (`DetectionsOverlay.kt`), tap-to-select (`TargetSelectionOverlay.kt`'s
+`onTapSelect`), and a follow-altitude slider alongside the separation one
+(`ModeControls.kt`) - see `docs/protocol.md` for the `detections_update`
+message and `target_select`'s new `point: true` payload shape. These
+compile-clean by inspection but haven't been through a real Android Studio
+build yet - expect the usual round of paste-back-the-error fixes.
 
 ## Layout
 
@@ -53,8 +59,11 @@ app/src/main/java/com/aivisiondrone/groundstation/
   comms/        Protocol.kt (wire schema, mirrors companion/comms/protocol.py),
                 GroundStationClient.kt (OkHttp WebSocket client), JsonExt.kt
   video/        WebRtcClient.kt (receive-only WebRTC peer connection)
-  control/      TargetSelectionOverlay.kt (drag-to-select), TrackingOverlay.kt
-                (bbox/id/confidence), ModeControls.kt, AbortButton.kt
+  control/      TargetSelectionOverlay.kt (tap-to-select + drag-to-select),
+                DetectionsOverlay.kt (all live detections, labeled),
+                TrackingOverlay.kt (the one actively-tracked box),
+                ModeControls.kt (mode buttons + separation/altitude sliders),
+                AbortButton.kt
   telemetry/    TelemetryModels.kt, TelemetryPanel.kt, HealthPanel.kt
   ui/           GroundStationScreen.kt (top-level layout)
   MainActivity.kt, MainViewModel.kt (MVVM glue)

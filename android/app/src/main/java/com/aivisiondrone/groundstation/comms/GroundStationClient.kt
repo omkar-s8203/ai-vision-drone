@@ -94,9 +94,28 @@ class GroundStationClient(private val client: OkHttpClient = OkHttpClient()) {
         )
     }
 
-    fun sendModeCommand(mode: String, followSeparationM: Double? = null) {
+    /** Tap-to-select: the Pi matches this point against its own current
+     * detections (whichever box contains it), rather than requiring the
+     * operator to drag out a selection rectangle. */
+    fun sendTargetSelectAtPoint(x: Double, y: Double) {
+        send(
+            MessageType.TARGET_SELECT,
+            JSONObject().apply {
+                put("x", x)
+                put("y", y)
+                put("point", true)
+            },
+        )
+    }
+
+    fun sendModeCommand(
+        mode: String,
+        followSeparationM: Double? = null,
+        followAltitudeM: Double? = null,
+    ) {
         val payload = JSONObject().put("mode", mode)
         if (followSeparationM != null) payload.put("follow_separation_m", followSeparationM)
+        if (followAltitudeM != null) payload.put("follow_altitude_m", followAltitudeM)
         send(MessageType.MODE_COMMAND, payload)
     }
 

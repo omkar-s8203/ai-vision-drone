@@ -1,3 +1,5 @@
+import pytest
+
 from companion.comms.ws_server import GroundStationLink
 from companion.config.loader import load_yaml
 from companion.guidance.approach_test import ApproachTestController
@@ -11,7 +13,9 @@ from companion.safety.supervisor import SafetySupervisor
 from companion.safety.watchdog import HeartbeatWatchdog
 from companion.tests.conftest import FakeTransport
 from companion.tracking.iou_tracker import IouKalmanTracker
-from companion.vision.detector import PassthroughDetector
+from companion.tracking.state import TrackingState
+from companion.vision.camera import Frame
+from companion.vision.detector import BBox, Detection, PassthroughDetector
 
 
 def _build_minimal_orchestrator(tmp_path):
@@ -59,4 +63,53 @@ def test_mode_command_without_separation_leaves_default(tmp_path):
     orchestrator._on_mode_command({"mode": "follow"})
 
     assert orchestrator.follow.limits["target_separation_m"] == default_separation
+    recorder.close()
+
+
+def test_follow_altitude_override_updates_controller_live(tmp_path):
+    orchestrator, recorder = _build_minimal_orchestrator(tmp_path)
+    assert orchestrator.follow.limits["target_altitude_m"] is None
+
+    orchestrator._on_mode_command({"mode": "follow", "follow_altitude_m": 12.0})
+
+    assert orchestrator.follow.limits["target_altitude_m"] == 12.0
+    recorder.close()
+
+
+def test_on_target_selected_point_payload_stores_point(tmp_path):
+    orchestrator, recorder = _build_minimal_orchestrator(tmp_path)
+
+    orchestrator._on_target_selected({"x": 10.0, "y": 20.0, "point": True})
+
+    assert orchestrator._pending_selection == ("point", 10.0, 20.0)
+    recorder.close()
+
+
+def test_on_target_selected_bbox_payload_stores_bbox(tmp_path):
+    orchestrator, recorder = _build_minimal_orchestrator(tmp_path)
+
+    orchestrator._on_target_selected({"x": 1.0, "y": 2.0, "w": 3.0, "h": 4.0})
+
+    kind, bbox = orchestrator._pending_selection
+    assert kind == "bbox"
+    assert bbox == BBox(1.0, 2.0, 3.0, 4.0)
+    recorder.close()
+
+
+@pytest.mark.asyncio
+async def test_point_tap_selects_correct_overlapping_detection(tmp_path):
+    """End-to-end through process_frame: tapping a point inside a person
+    standing in front of a car selects the person, not the car - the same
+    smallest-box-wins behavior verified in isolation in
+    test_target_selector.py, now exercised through the real dispatch path."""
+    orchestrator, recorder = _build_minimal_orchestrator(tmp_path)
+    car = Detection(bbox=BBox(0, 0, 100, 100), score=0.9, class_id=2, class_name="car", frame_ts=0.0)
+    person = Detection(bbox=BBox(40, 40, 20, 20), score=0.9, class_id=0, class_name="person", frame_ts=0.0)
+
+    orchestrator._on_target_selected({"x": 50.0, "y": 50.0, "point": True})
+    frame = Frame(ts=0.0, width=100, height=100, raw_detection_output=[car, person])
+    result = await orchestrator.process_frame(frame)
+
+    assert result["tracking_state"] == TrackingState.TRACKING
+    assert orchestrator.state_machine.target.class_name == "person"
     recorder.close()

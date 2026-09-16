@@ -2,6 +2,7 @@ package com.aivisiondrone.groundstation.control
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -17,14 +18,18 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 
 /**
- * Drag-to-select target overlay on top of the live video surface. Reports
- * the selection rectangle in the overlay's own pixel space; the caller
- * (MainViewModel) is responsible for scaling it to the source video
- * resolution before sending target_select to the Pi (docs plan M6/M3).
+ * Target selection overlay on top of the live video surface: a quick tap
+ * selects whichever detected object is under it (matched against the Pi's
+ * current detections - see DetectionsOverlay), while a drag draws an
+ * explicit selection rectangle for anything not already recognized as its
+ * own detection. Reports coordinates in the overlay's own pixel space; the
+ * caller (MainViewModel) scales them to the source video resolution before
+ * sending target_select to the Pi (docs plan M6/M3).
  */
 @Composable
 fun TargetSelectionOverlay(
     modifier: Modifier = Modifier,
+    onTapSelect: (Offset) -> Unit,
     onSelectionComplete: (Rect) -> Unit,
 ) {
     var dragStart by remember { mutableStateOf<Offset?>(null) }
@@ -33,6 +38,9 @@ fun TargetSelectionOverlay(
     Canvas(
         modifier = modifier
             .fillMaxSize()
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = { offset -> onTapSelect(offset) })
+            }
             .pointerInput(Unit) {
                 detectDragGestures(
                     onDragStart = { offset ->

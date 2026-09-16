@@ -3,6 +3,13 @@ max_accel_mps2: 1.5
 min_separation_m: 3.0
 max_separation_m: 15.0
 target_separation_m: 6.0
+# null = fall back to pixel-framing vertical control (keep target centered
+# in frame) instead of absolute altitude-hold. Set via the Android altitude
+# slider, or here for a startup default. Min/max mirror typical safe bounds
+# for a line-of-sight follow shot - adjust per site/regulatory limits.
+target_altitude_m: null
+min_altitude_m: 2.0
+max_altitude_m: 30.0
 lateral_deadband_px: 20
 vertical_deadband_px: 20
 
@@ -10,3 +17,4 @@ pid:
   distance: {kp: 0.6, ki: 0.0, kd: 0.15}
   lateral: {kp: 0.004, ki: 0.0, kd: 0.001}
   vertical: {kp: 0.004, ki: 0.0, kd: 0.001}
+  altitude: {kp: 0.5, ki: 0.0, kd: 0.1}

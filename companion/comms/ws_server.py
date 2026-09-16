@@ -61,6 +61,9 @@ class GroundStationLink:
     async def send_tracking_update(self, payload: dict) -> None:
         await self._send(MessageType.TRACKING_UPDATE, payload)
 
+    async def send_detections_update(self, payload: dict) -> None:
+        await self._send(MessageType.DETECTIONS_UPDATE, payload)
+
     async def send_telemetry(self, payload: dict) -> None:
         await self._send(MessageType.TELEMETRY, payload)
 

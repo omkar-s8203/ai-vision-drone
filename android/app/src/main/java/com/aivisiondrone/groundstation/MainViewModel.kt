@@ -10,7 +10,9 @@ import com.aivisiondrone.groundstation.comms.optDoubleOrNull
 import com.aivisiondrone.groundstation.comms.optIntOrNull
 import com.aivisiondrone.groundstation.comms.optStringOrNull
 import com.aivisiondrone.groundstation.control.DroneMode
+import com.aivisiondrone.groundstation.telemetry.DetectionsState
 import com.aivisiondrone.groundstation.telemetry.HealthState
+import com.aivisiondrone.groundstation.telemetry.RawDetection
 import com.aivisiondrone.groundstation.telemetry.TargetBBox
 import com.aivisiondrone.groundstation.telemetry.TelemetryState
 import com.aivisiondrone.groundstation.telemetry.TrackingState
@@ -47,11 +49,17 @@ class MainViewModel : ViewModel() {
     private val _tracking = MutableStateFlow(TrackingState())
     val tracking = _tracking.asStateFlow()
 
+    private val _detections = MutableStateFlow(DetectionsState())
+    val detections = _detections.asStateFlow()
+
     private val _mode = MutableStateFlow(DroneMode.IDLE)
     val mode = _mode.asStateFlow()
 
     private val _followSeparationM = MutableStateFlow(6f)
     val followSeparationM = _followSeparationM.asStateFlow()
+
+    private val _followAltitudeM = MutableStateFlow(10f)
+    val followAltitudeM = _followAltitudeM.asStateFlow()
 
     private val _remoteVideoTrack = MutableStateFlow<VideoTrack?>(null)
     val remoteVideoTrack = _remoteVideoTrack.asStateFlow()
@@ -95,10 +103,17 @@ class MainViewModel : ViewModel() {
         client.sendTargetSelect(x, y, w, h)
     }
 
+    /** Tap-to-select on one of the live detection boxes, instead of
+     * dragging out a new selection rectangle. */
+    fun selectTargetAtPoint(x: Double, y: Double) {
+        client.sendTargetSelectAtPoint(x, y)
+    }
+
     fun setMode(newMode: DroneMode) {
         _mode.value = newMode
         val separation = if (newMode == DroneMode.FOLLOWING) _followSeparationM.value.toDouble() else null
-        client.sendModeCommand(newMode.wireValue, separation)
+        val altitude = if (newMode == DroneMode.FOLLOWING) _followAltitudeM.value.toDouble() else null
+        client.sendModeCommand(newMode.wireValue, separation, altitude)
     }
 
     fun setFollowSeparation(meters: Float) {
@@ -106,7 +121,14 @@ class MainViewModel : ViewModel() {
         // Live-update the Pi's FollowController while Follow is already
         // active, not just at the moment the mode is first selected.
         if (_mode.value == DroneMode.FOLLOWING) {
-            client.sendModeCommand(DroneMode.FOLLOWING.wireValue, meters.toDouble())
+            client.sendModeCommand(DroneMode.FOLLOWING.wireValue, meters.toDouble(), _followAltitudeM.value.toDouble())
+        }
+    }
+
+    fun setFollowAltitude(meters: Float) {
+        _followAltitudeM.value = meters
+        if (_mode.value == DroneMode.FOLLOWING) {
+            client.sendModeCommand(DroneMode.FOLLOWING.wireValue, _followSeparationM.value.toDouble(), meters.toDouble())
         }
     }
 
@@ -124,6 +146,7 @@ class MainViewModel : ViewModel() {
             MessageType.TELEMETRY -> _telemetry.value = parseTelemetry(envelope.payload)
             MessageType.HEALTH -> _health.value = parseHealth(envelope.payload)
             MessageType.TRACKING_UPDATE -> _tracking.value = parseTracking(envelope.payload)
+            MessageType.DETECTIONS_UPDATE -> _detections.value = parseDetections(envelope.payload)
             MessageType.WEBRTC_ANSWER -> {
                 envelope.payload.optStringOrNull("sdp")?.let { webRtcClient?.onRemoteAnswer(it) }
             }
@@ -167,6 +190,32 @@ class MainViewModel : ViewModel() {
             distanceM = p.optDoubleOrNull("distance_m"),
             guidanceAllowed = p.optBoolean("guidance_allowed", false),
             guidanceReason = p.optStringOrNull("guidance_reason"),
+        )
+    }
+
+    private fun parseDetections(p: JSONObject): DetectionsState {
+        val array = p.optJSONArray("detections")
+        val list = mutableListOf<RawDetection>()
+        if (array != null) {
+            for (i in 0 until array.length()) {
+                val d = array.getJSONObject(i)
+                val bboxJson = d.getJSONObject("bbox")
+                list.add(
+                    RawDetection(
+                        bbox = TargetBBox(
+                            bboxJson.getDouble("x"), bboxJson.getDouble("y"),
+                            bboxJson.getDouble("w"), bboxJson.getDouble("h"),
+                        ),
+                        className = d.getString("class_name"),
+                        score = d.getDouble("score"),
+                    )
+                )
+            }
+        }
+        return DetectionsState(
+            imageWidth = p.optIntOrNull("image_width"),
+            imageHeight = p.optIntOrNull("image_height"),
+            detections = list,
         )
     }
 }

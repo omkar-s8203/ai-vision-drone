@@ -11,6 +11,7 @@ class MessageType:
     MODE_COMMAND = "mode_command"
     ABORT = "abort"
     TRACKING_UPDATE = "tracking_update"
+    DETECTIONS_UPDATE = "detections_update"
     TELEMETRY = "telemetry"
     HEALTH = "health"
     ACK = "ack"

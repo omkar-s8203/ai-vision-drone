@@ -23,8 +23,10 @@ enum class DroneMode(val wireValue: String, val label: String) {
 fun ModeControls(
     currentMode: DroneMode,
     followSeparationM: Float,
+    followAltitudeM: Float,
     onModeSelected: (DroneMode) -> Unit,
     onFollowSeparationChanged: (Float) -> Unit,
+    onFollowAltitudeChanged: (Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.padding(8.dp)) {
@@ -43,11 +45,17 @@ fun ModeControls(
             }
         }
         if (currentMode == DroneMode.FOLLOWING) {
-            Text("Follow separation: ${"%.1f".format(followSeparationM)} m")
+            Text("Follow distance: ${"%.1f".format(followSeparationM)} m")
             Slider(
                 value = followSeparationM,
                 onValueChange = onFollowSeparationChanged,
                 valueRange = 3f..15f,
+            )
+            Text("Follow altitude: ${"%.1f".format(followAltitudeM)} m")
+            Slider(
+                value = followAltitudeM,
+                onValueChange = onFollowAltitudeChanged,
+                valueRange = 2f..30f,
             )
         }
     }

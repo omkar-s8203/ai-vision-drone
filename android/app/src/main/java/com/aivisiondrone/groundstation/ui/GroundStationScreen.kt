@@ -28,6 +28,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.aivisiondrone.groundstation.MainViewModel
 import com.aivisiondrone.groundstation.comms.LinkState
 import com.aivisiondrone.groundstation.control.AbortButton
+import com.aivisiondrone.groundstation.control.DetectionsOverlay
 import com.aivisiondrone.groundstation.control.ModeControls
 import com.aivisiondrone.groundstation.control.TargetSelectionOverlay
 import com.aivisiondrone.groundstation.control.TrackingOverlay
@@ -47,8 +48,10 @@ fun GroundStationScreen(viewModel: MainViewModel, eglBase: EglBase, context: Con
     val telemetry by viewModel.telemetry.collectAsState()
     val health by viewModel.health.collectAsState()
     val tracking by viewModel.tracking.collectAsState()
+    val detections by viewModel.detections.collectAsState()
     val mode by viewModel.mode.collectAsState()
     val followSeparation by viewModel.followSeparationM.collectAsState()
+    val followAltitude by viewModel.followAltitudeM.collectAsState()
     val remoteVideoTrack by viewModel.remoteVideoTrack.collectAsState()
 
     var host by remember { mutableStateOf(DEFAULT_HOST) }
@@ -88,8 +91,17 @@ fun GroundStationScreen(viewModel: MainViewModel, eglBase: EglBase, context: Con
             },
         )
 
+        DetectionsOverlay(detections = detections, modifier = Modifier.fillMaxSize())
+
         TargetSelectionOverlay(
             modifier = Modifier.fillMaxSize(),
+            onTapSelect = { point ->
+                if (overlaySizePx.width > 0f && overlaySizePx.height > 0f) {
+                    val scaleX = videoWidth / overlaySizePx.width
+                    val scaleY = videoHeight / overlaySizePx.height
+                    viewModel.selectTargetAtPoint(x = point.x * scaleX, y = point.y * scaleY)
+                }
+            },
             onSelectionComplete = { rect: Rect ->
                 if (overlaySizePx.width > 0f && overlaySizePx.height > 0f) {
                     val scaleX = videoWidth / overlaySizePx.width
@@ -131,8 +143,10 @@ fun GroundStationScreen(viewModel: MainViewModel, eglBase: EglBase, context: Con
             ModeControls(
                 currentMode = mode,
                 followSeparationM = followSeparation,
+                followAltitudeM = followAltitude,
                 onModeSelected = { viewModel.setMode(it) },
                 onFollowSeparationChanged = { viewModel.setFollowSeparation(it) },
+                onFollowAltitudeChanged = { viewModel.setFollowAltitude(it) },
             )
         }
     }

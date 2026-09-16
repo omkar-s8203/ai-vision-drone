@@ -8,6 +8,7 @@ object MessageType {
     const val MODE_COMMAND = "mode_command"
     const val ABORT = "abort"
     const val TRACKING_UPDATE = "tracking_update"
+    const val DETECTIONS_UPDATE = "detections_update"
     const val TELEMETRY = "telemetry"
     const val HEALTH = "health"
     const val ACK = "ack"

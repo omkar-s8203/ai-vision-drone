@@ -64,3 +64,51 @@ def test_output_respects_max_speed_limit():
     target = make_target(IMAGE_W / 2, IMAGE_H / 2)
     cmd = controller.compute(target, distance_m=1000.0, image_width=IMAGE_W, image_height=IMAGE_H, dt=0.1)
     assert cmd.vx_mps <= LIMITS["max_speed_mps"]
+
+
+def test_altitude_hold_climbs_when_below_target_altitude():
+    limits = load_yaml("follow_limits.yaml")
+    limits["target_altitude_m"] = 10.0
+    controller = FollowController(limits)
+    target = make_target(IMAGE_W / 2, IMAGE_H / 2)
+    cmd = controller.compute(
+        target, distance_m=limits["target_separation_m"], image_width=IMAGE_W, image_height=IMAGE_H,
+        dt=0.1, current_altitude_m=5.0,
+    )
+    assert cmd.vz_mps < 0  # NED: negative = climb
+
+
+def test_altitude_hold_descends_when_above_target_altitude():
+    limits = load_yaml("follow_limits.yaml")
+    limits["target_altitude_m"] = 5.0
+    controller = FollowController(limits)
+    target = make_target(IMAGE_W / 2, IMAGE_H / 2)
+    cmd = controller.compute(
+        target, distance_m=limits["target_separation_m"], image_width=IMAGE_W, image_height=IMAGE_H,
+        dt=0.1, current_altitude_m=10.0,
+    )
+    assert cmd.vz_mps > 0
+
+
+def test_altitude_hold_falls_back_to_pixel_framing_without_telemetry():
+    limits = load_yaml("follow_limits.yaml")
+    limits["target_altitude_m"] = 10.0
+    controller = FollowController(limits)
+    target = make_target(IMAGE_W / 2, IMAGE_H / 2 + 200)  # off-center vertically
+    cmd = controller.compute(
+        target, distance_m=limits["target_separation_m"], image_width=IMAGE_W, image_height=IMAGE_H,
+        dt=0.1, current_altitude_m=None,
+    )
+    assert cmd.vz_mps != 0.0
+
+
+def test_no_altitude_configured_uses_pixel_framing_by_default():
+    limits = load_yaml("follow_limits.yaml")
+    assert limits["target_altitude_m"] is None
+    controller = FollowController(limits)
+    target = make_target(IMAGE_W / 2, IMAGE_H / 2)
+    cmd = controller.compute(
+        target, distance_m=limits["target_separation_m"], image_width=IMAGE_W, image_height=IMAGE_H,
+        dt=0.1, current_altitude_m=100.0,  # ignored since target_altitude_m is unset
+    )
+    assert cmd.vz_mps == 0.0

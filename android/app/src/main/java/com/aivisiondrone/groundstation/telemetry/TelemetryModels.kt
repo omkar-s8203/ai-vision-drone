@@ -36,3 +36,17 @@ data class TrackingState(
     val guidanceAllowed: Boolean = false,
     val guidanceReason: String? = null,
 )
+
+/** One live object detection before/independent of target selection - lets
+ * the operator see everything the AI can detect and tap one to select it. */
+data class RawDetection(
+    val bbox: TargetBBox,
+    val className: String,
+    val score: Double,
+)
+
+data class DetectionsState(
+    val imageWidth: Int? = null,
+    val imageHeight: Int? = null,
+    val detections: List<RawDetection> = emptyList(),
+)

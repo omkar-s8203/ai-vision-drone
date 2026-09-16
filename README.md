@@ -2,6 +2,10 @@
 
 Companion-computer vision/AI upgrade for an existing, already-flying RC drone (RC → receiver → flight controller (ArduPilot) → ESCs → motors — unchanged). Adds a Raspberry Pi 5 + Raspberry Pi AI Camera as a vision/AI companion computer, and a native Android Ground Station app, without replacing the flight controller or taking direct motor control.
 
+**Setting up real hardware? Start with [INSTALL.md](INSTALL.md)** - a
+from-scratch guide covering OS flashing, camera/AI stack, flight-controller
+wiring, power supply requirements, and the Android app.
+
 Full technical development plan (architecture, milestones, acceptance criteria, safety design): see the plan document referenced in project notes. High-level layout:
 
 ```

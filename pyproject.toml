@@ -5,6 +5,7 @@ description = "Raspberry Pi companion-computer vision/AI stack for the AI Vision
 requires-python = ">=3.11"
 dependencies = [
     "pymavlink>=2.4",
+    "pyserial>=3.5",  # required by pymavlink for real serial (not UDP) connections
     "opencv-python-headless>=4.9",
     "numpy>=1.26",
     "websockets>=12.0",

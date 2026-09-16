@@ -26,17 +26,29 @@ class Picamera2IMX500Camera(CameraBase):
     Only importable/usable on a Raspberry Pi with picamera2 + the imx500
     stack installed. Detection runs on-sensor; this class just pulls frames
     and their attached inference metadata.
+
+    Confirmed against real hardware (not guessed): `picamera2.devices.IMX500`
+    is constructed from the .rpk model path and owns `camera_num`; frames
+    come from `Picamera2.capture_metadata()` (not `capture_request()`), and
+    `IMX500.get_outputs(metadata, add_batch=True)` returns the raw tensor
+    list - or None on frames before the on-sensor network has produced its
+    first result (normal for the first ~second after start()). Coordinate
+    conversion needs both `metadata` and the `Picamera2` instance, so all
+    three (imx500, outputs, metadata, picam2) are bundled into
+    `raw_detection_output` for IMX500Detector to unpack.
     """
 
-    def __init__(self, width: int, height: int, target_fps: int) -> None:
+    def __init__(self, model_path: str, width: int, height: int, target_fps: int) -> None:
         try:
             from picamera2 import Picamera2  # type: ignore
+            from picamera2.devices import IMX500  # type: ignore
         except ImportError as exc:
             raise RuntimeError(
                 "picamera2 is not available - Picamera2IMX500Camera only runs on a "
                 "Raspberry Pi with the imx500 camera stack installed. Use SyntheticCamera "
                 "for development/simulation."
             ) from exc
+        self.imx500 = IMX500(model_path)
         self._Picamera2 = Picamera2
         self.width = width
         self.height = height
@@ -44,25 +56,23 @@ class Picamera2IMX500Camera(CameraBase):
         self._picam2 = None
 
     async def frames(self) -> AsyncIterator[Frame]:
-        self._picam2 = self._Picamera2()
-        config = self._picam2.create_video_configuration(
-            main={"size": (self.width, self.height)}
+        self._picam2 = self._Picamera2(self.imx500.camera_num)
+        config = self._picam2.create_preview_configuration(
+            main={"size": (self.width, self.height)},
+            controls={"FrameRate": self.target_fps},
+            buffer_count=12,
         )
-        self._picam2.configure(config)
-        self._picam2.start()
+        self._picam2.start(config, show_preview=False)
         try:
             period = 1.0 / self.target_fps
             while True:
-                request = self._picam2.capture_request()
-                try:
-                    metadata = request.get_metadata()
-                finally:
-                    request.release()
+                metadata = self._picam2.capture_metadata()
+                outputs = self.imx500.get_outputs(metadata, add_batch=True)
                 yield Frame(
                     ts=time.monotonic(),
                     width=self.width,
                     height=self.height,
-                    raw_detection_output=metadata,
+                    raw_detection_output=(self.imx500, outputs, metadata, self._picam2),
                 )
                 await asyncio.sleep(period)
         finally:

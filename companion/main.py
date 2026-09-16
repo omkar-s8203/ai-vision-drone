@@ -387,11 +387,13 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
     calib_cfg = load_yaml("camera_calibration.yaml")
 
     camera = Picamera2IMX500Camera(
+        model_path=hardware_cfg["camera"]["imx500_model_path"],
         width=hardware_cfg["camera"]["width"],
         height=hardware_cfg["camera"]["height"],
         target_fps=hardware_cfg["camera"]["target_fps"],
     )
-    detector = IMX500Detector(class_names={0: "person", 2: "car"})
+    intrinsics = camera.imx500.network_intrinsics
+    detector = IMX500Detector(class_names=intrinsics.labels)
     tracker = IouKalmanTracker()
     distance_estimator = DistanceEstimator(CameraIntrinsics.from_dict(calib_cfg))
     follow_controller = FollowController(follow_cfg)

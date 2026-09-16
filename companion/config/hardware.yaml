@@ -10,3 +10,7 @@ camera:
   width: 1280
   height: 720
   target_fps: 30
+  # SSD MobileNetV2 FPN-Lite, COCO-pretrained, on-sensor NMS - confirmed
+  # working against real IMX500 hardware (docs plan M2). 90 labels, 0-indexed
+  # directly (no background offset) - see IMX500Detector.
+  imx500_model_path: /usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk

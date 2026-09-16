@@ -377,6 +377,7 @@ def build_sim_orchestrator() -> tuple[CompanionOrchestrator, "object"]:
 
 
 def build_hardware_orchestrator() -> CompanionOrchestrator:
+    from companion.comms.video_pipeline import AiortcVideoPipeline
     from companion.vision.camera import Picamera2IMX500Camera
     from companion.vision.detector import IMX500Detector
 
@@ -404,13 +405,22 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
     supervisor = SafetySupervisor(watchdog)
     transport = WebSocketTransport(network_cfg["ws_host"], network_cfg["ws_port"])
     link = GroundStationLink(transport)
-    recorder = SessionRecorder(Path("/var/log/ai-vision-drone/sessions"))
+    recorder = SessionRecorder(Path.home() / "ai-vision-drone-logs" / "sessions")
+
+    try:
+        video_pipeline = AiortcVideoPipeline(
+            frame_source=camera.get_latest_frame, fps=hardware_cfg["camera"]["target_fps"]
+        )
+    except RuntimeError:
+        log.warning("aiortc not installed - hardware mode running without video")
+        video_pipeline = None
 
     return CompanionOrchestrator(
         camera=camera, detector=detector, tracker=tracker,
         distance_estimator=distance_estimator, follow_controller=follow_controller,
         approach_controller=approach_controller, mavlink=mavlink, rc_monitor=rc_monitor,
         supervisor=supervisor, watchdog=watchdog, link=link, recorder=recorder,
+        video_pipeline=video_pipeline,
     )
 
 

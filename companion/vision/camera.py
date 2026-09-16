@@ -54,11 +54,18 @@ class Picamera2IMX500Camera(CameraBase):
         self.height = height
         self.target_fps = target_fps
         self._picam2 = None
+        self.last_frame_array = None  # BGR uint8 array, for the video pipeline's frame_source
+
+    def get_latest_frame(self):
+        """Synchronous accessor for the most recent captured image - used as
+        the video pipeline's frame_source callback, which runs outside this
+        class's own async frame loop (docs plan M5/M6 hardware wiring)."""
+        return self.last_frame_array
 
     async def frames(self) -> AsyncIterator[Frame]:
         self._picam2 = self._Picamera2(self.imx500.camera_num)
         config = self._picam2.create_preview_configuration(
-            main={"size": (self.width, self.height)},
+            main={"size": (self.width, self.height), "format": "BGR888"},
             controls={"FrameRate": self.target_fps},
             buffer_count=12,
         )
@@ -68,6 +75,7 @@ class Picamera2IMX500Camera(CameraBase):
             while True:
                 metadata = self._picam2.capture_metadata()
                 outputs = self.imx500.get_outputs(metadata, add_batch=True)
+                self.last_frame_array = self._picam2.capture_array("main")
                 yield Frame(
                     ts=time.monotonic(),
                     width=self.width,

@@ -41,9 +41,12 @@ class MavlinkBridge:
     never passes through this bridge or the Pi at all).
     """
 
-    def __init__(self, connection_string: str, source_system: int = 1) -> None:
+    def __init__(
+        self, connection_string: str, source_system: int = 1, baud: Optional[int] = None
+    ) -> None:
         self.connection_string = connection_string
         self.source_system = source_system
+        self.baud = baud
         self._conn = None
         self.telemetry = TelemetrySnapshot()
 
@@ -52,9 +55,10 @@ class MavlinkBridge:
         return self._conn is not None
 
     def connect(self) -> None:
-        self._conn = mavutil.mavlink_connection(
-            self.connection_string, source_system=self.source_system
-        )
+        kwargs: dict = {"source_system": self.source_system}
+        if self.baud is not None:
+            kwargs["baud"] = self.baud
+        self._conn = mavutil.mavlink_connection(self.connection_string, **kwargs)
 
     def prime_udp_peer(self, host: str, port: int) -> None:
         """Sim/dev-only helper: pymavlink's connected ('udpout') sockets

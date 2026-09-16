@@ -399,7 +399,9 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
     distance_estimator = DistanceEstimator(CameraIntrinsics.from_dict(calib_cfg))
     follow_controller = FollowController(follow_cfg)
     approach_controller = ApproachTestController(approach_cfg)
-    mavlink = MavlinkBridge(hardware_cfg["mavlink"]["connection"])
+    mavlink = MavlinkBridge(
+        hardware_cfg["mavlink"]["connection"], baud=hardware_cfg["mavlink"]["baud"]
+    )
     rc_monitor = RcOverrideMonitor(deadband=approach_cfg["rc_override_deadband"])
     watchdog = HeartbeatWatchdog(timeout_s=2.0)
     supervisor = SafetySupervisor(watchdog)

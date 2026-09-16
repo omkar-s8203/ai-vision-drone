@@ -52,6 +52,17 @@ message and `target_select`'s new `point: true` payload shape. These
 compile-clean by inspection but haven't been through a real Android Studio
 build yet - expect the usual round of paste-back-the-error fixes.
 
+**Newest, not yet build-verified**: arm/disarm (with a confirmation dialog
+before arming), an FC flight-mode dropdown, and a video-record toggle with a
+live duration readout, all in the new `FlightControlDock.kt` - wired through
+`GroundStationClient.sendArmCommand`/`sendSetFlightMode`/`sendRecordCommand`
+and `MainViewModel.setArmed`/`setFlightMode`/`toggleRecording`. Also a
+ground-control-style dark theme (`ui/theme/Theme.kt`, `DroneColors`) applied
+across `MainActivity`, `HealthPanel`, `TelemetryPanel`, `ModeControls`, and
+`AbortButton` - card-based panels, a status-color palette (green/amber/red),
+and `material-icons-extended` added to `build.gradle.kts` for icon buttons.
+None of this has been through a real Android Studio build yet.
+
 ## Layout
 
 ```
@@ -63,9 +74,11 @@ app/src/main/java/com/aivisiondrone/groundstation/
                 DetectionsOverlay.kt (all live detections, labeled),
                 TrackingOverlay.kt (the one actively-tracked box),
                 ModeControls.kt (mode buttons + separation/altitude sliders),
-                AbortButton.kt
+                FlightControlDock.kt (arm/disarm, FC mode dropdown, record
+                toggle), AbortButton.kt
   telemetry/    TelemetryModels.kt, TelemetryPanel.kt, HealthPanel.kt
-  ui/           GroundStationScreen.kt (top-level layout)
+  ui/           GroundStationScreen.kt (top-level layout),
+                theme/Theme.kt (dark ground-control color scheme)
   MainActivity.kt, MainViewModel.kt (MVVM glue)
 
 app/src/androidTest/java/com/aivisiondrone/groundstation/

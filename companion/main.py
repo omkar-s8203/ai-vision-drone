@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 from companion.comms.transport import WebSocketTransport
+from companion.comms.video_recorder import VideoRecorder
 from companion.comms.ws_server import GroundStationLink
 from companion.config.loader import load_yaml
 from companion.guidance.approach_test import ApproachInputs, ApproachTestController
@@ -74,6 +75,7 @@ class CompanionOrchestrator:
         recorder: SessionRecorder,
         contact_sensor: Optional[ContactSensor] = None,
         video_pipeline: Optional["VideoPipeline"] = None,
+        video_recorder: Optional[VideoRecorder] = None,
         reacquire_timeout_s: float = 2.0,
     ) -> None:
         self.camera = camera
@@ -90,15 +92,20 @@ class CompanionOrchestrator:
         self.recorder = recorder
         self.contact_sensor = contact_sensor or NullContactSensor()
         self.video_pipeline = video_pipeline
+        self.video_recorder = video_recorder
 
         self.requested_mode = SupervisorState.IDLE
         self._pending_selection: Optional[tuple] = None  # ("bbox", BBox) or ("point", x, y)
         self._last_frame_ts: Optional[float] = None
         self._recent_frame_ts: list[float] = []
+        self._frame_size: Optional[tuple[int, int]] = None  # (width, height) of the latest frame
 
         self.link.on_target_selected(self._on_target_selected)
         self.link.on_mode_command(self._on_mode_command)
         self.link.on_abort(self._on_abort)
+        self.link.on_arm_command(self._on_arm_command)
+        self.link.on_set_flight_mode(self._on_set_flight_mode)
+        self.link.on_record_command(self._on_record_command)
         if self.video_pipeline is not None:
             self.link.on_webrtc_offer(self._on_webrtc_offer_sync)
 
@@ -150,6 +157,43 @@ class CompanionOrchestrator:
         self.state_machine.stop()
         self.recorder.record("abort", reason=payload.get("reason"))
 
+    def _on_arm_command(self, payload: dict) -> None:
+        """Arm/disarm is an administrative FC command, not a guidance
+        setpoint - it goes straight to the FC like a standard GCS would send
+        it, bypassing the Safety Supervisor's guidance gate (that gate only
+        concerns itself with velocity setpoints during active AI guidance)."""
+        armed = bool(payload.get("armed", False))
+        self.mavlink.arm(armed)
+        self.recorder.record("arm_command", armed=armed)
+
+    def _on_set_flight_mode(self, payload: dict) -> None:
+        mode = str(payload.get("mode", ""))
+        ok = self.mavlink.set_mode(mode)
+        self.recorder.record("set_flight_mode", mode=mode, accepted=ok)
+
+    def _on_record_command(self, payload: dict) -> None:
+        asyncio.create_task(self._handle_record_command(bool(payload.get("recording", False))))
+
+    async def _handle_record_command(self, want_recording: bool) -> None:
+        if self.video_recorder is None:
+            return
+        if want_recording and not self.video_recorder.is_recording:
+            width, height = self._frame_size or (
+                self.camera.width if hasattr(self.camera, "width") else 1280,
+                self.camera.height if hasattr(self.camera, "height") else 720,
+            )
+            path = self.video_recorder.start(width=width, height=height)
+            self.recorder.record("record_start", path=str(path))
+        elif not want_recording and self.video_recorder.is_recording:
+            path = self.video_recorder.stop()
+            self.recorder.record("record_stop", path=str(path) if path else None)
+        await self.link.send_recording_state(
+            {
+                "recording": self.video_recorder.is_recording,
+                "duration_s": self.video_recorder.duration_s,
+            }
+        )
+
     async def start(self) -> None:
         await self.link.start()
         if not self.mavlink.is_connected:
@@ -167,6 +211,9 @@ class CompanionOrchestrator:
         self._recent_frame_ts.append(time.monotonic())
         if len(self._recent_frame_ts) > 30:
             self._recent_frame_ts.pop(0)
+        self._frame_size = (frame.width, frame.height)
+        if self.video_recorder is not None and self.video_recorder.is_recording:
+            self.video_recorder.write(self.camera.get_latest_frame())
         detections = self.detector.parse(frame.raw_detection_output, frame.ts)
 
         if self._pending_selection is not None and self.state_machine.state == TrackingState.IDLE:
@@ -320,6 +367,7 @@ class CompanionOrchestrator:
             "tracker_ok": "tracker" not in stale,
             "mavlink_ok": "mavlink" not in stale,
             "video_ok": self.video_pipeline is not None,
+            "recording": self.video_recorder.is_recording if self.video_recorder else False,
             "fps": self._current_fps(),
             # latency_ms/temperature_c need real pipeline timing and Pi
             # thermal-sensor access respectively - out of scope in sim,
@@ -444,6 +492,10 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
     transport = WebSocketTransport(network_cfg["ws_host"], network_cfg["ws_port"])
     link = GroundStationLink(transport)
     recorder = SessionRecorder(Path.home() / "ai-vision-drone-logs" / "sessions")
+    video_recorder = VideoRecorder(
+        Path.home() / "ai-vision-drone-logs" / "recordings",
+        fps=hardware_cfg["camera"]["target_fps"],
+    )
 
     try:
         video_pipeline = AiortcVideoPipeline(
@@ -458,7 +510,7 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
         distance_estimator=distance_estimator, follow_controller=follow_controller,
         approach_controller=approach_controller, mavlink=mavlink, rc_monitor=rc_monitor,
         supervisor=supervisor, watchdog=watchdog, link=link, recorder=recorder,
-        video_pipeline=video_pipeline,
+        video_pipeline=video_pipeline, video_recorder=video_recorder,
     )
 
 

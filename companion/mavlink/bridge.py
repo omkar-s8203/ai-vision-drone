@@ -16,6 +16,23 @@ TYPE_MASK_VELOCITY_AND_YAW_RATE = (
     | (1 << 10)  # ignore yaw angle
 )
 
+# ArduCopter custom_mode numbers for the flight modes exposed in the
+# Ground Station's mode selector - a deliberate subset of all of ArduCopter's
+# modes, not exhaustive (e.g. no FLIP/THROW/ZIGZAG - not relevant here).
+ARDUCOPTER_MODE_TO_NUMBER: dict[str, int] = {
+    "STABILIZE": 0,
+    "ALT_HOLD": 2,
+    "AUTO": 3,
+    "GUIDED": 4,
+    "LOITER": 5,
+    "RTL": 6,
+    "CIRCLE": 7,
+    "LAND": 9,
+    "POSHOLD": 16,
+    "BRAKE": 17,
+    "SMART_RTL": 21,
+}
+
 
 @dataclass
 class TelemetrySnapshot:
@@ -126,6 +143,38 @@ class MavlinkBridge:
             self.telemetry.rc_channels = {
                 i: getattr(msg, f"chan{i}_raw") for i in range(1, 9)
             }
+
+    def arm(self, armed: bool) -> None:
+        """Sends MAV_CMD_COMPONENT_ARM_DISARM - a direct, standard GCS
+        command (the same thing Mission Planner/QGroundControl send), not
+        gated by the Safety Supervisor. That gate exists specifically for
+        autonomous guidance velocity setpoints during Follow/Approach-Test,
+        not administrative FC commands - the FC's own pre-arm safety checks
+        are the real guard against an unsafe arm. Never force-arms (no
+        pre-arm-check bypass)."""
+        assert self._conn is not None, "call connect() first"
+        self._conn.mav.command_long_send(
+            self._conn.target_system,
+            self._conn.target_component,
+            mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+            0,
+            1 if armed else 0,
+            0, 0, 0, 0, 0, 0,
+        )
+
+    def set_mode(self, mode_name: str) -> bool:
+        """Sends SET_MODE for a named ArduCopter flight mode. Returns False
+        (a no-op) for an unrecognized name rather than guessing."""
+        mode_number = ARDUCOPTER_MODE_TO_NUMBER.get(mode_name.upper())
+        if mode_number is None:
+            return False
+        assert self._conn is not None, "call connect() first"
+        self._conn.mav.set_mode_send(
+            self._conn.target_system,
+            mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+            mode_number,
+        )
+        return True
 
     def send_velocity_setpoint(
         self, vx: float, vy: float, vz: float, yaw_rate: float, guidance_allowed: bool

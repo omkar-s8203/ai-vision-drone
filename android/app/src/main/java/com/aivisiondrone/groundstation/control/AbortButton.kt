@@ -1,8 +1,12 @@
 package com.aivisiondrone.groundstation.control
 
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -19,9 +23,15 @@ import androidx.compose.ui.unit.dp
 fun AbortButton(onAbort: () -> Unit, modifier: Modifier = Modifier) {
     Button(
         onClick = onAbort,
+        shape = RoundedCornerShape(28.dp),
         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
         modifier = modifier.padding(8.dp),
     ) {
-        Text("STOP / ABORT", style = MaterialTheme.typography.titleMedium, color = Color.White)
+        Icon(Icons.Filled.Warning, contentDescription = null, tint = Color.White)
+        Text(
+            "  STOP / ABORT",
+            style = MaterialTheme.typography.titleMedium,
+            color = Color.White,
+        )
     }
 }

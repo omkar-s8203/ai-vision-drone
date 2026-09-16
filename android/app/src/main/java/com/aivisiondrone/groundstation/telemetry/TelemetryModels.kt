@@ -18,9 +18,18 @@ data class HealthState(
     val trackerOk: Boolean = false,
     val mavlinkOk: Boolean = false,
     val videoOk: Boolean = false,
+    val recording: Boolean = false,
     val fps: Double? = null,
     val latencyMs: Double? = null,
     val temperatureC: Double? = null,
+)
+
+/** Local recording indicator - seeded from the health payload's `recording`
+ * flag on (re)connect, then kept live by dedicated recording_state messages
+ * so the duration counter updates without waiting for the next health tick. */
+data class RecordingState(
+    val recording: Boolean = false,
+    val durationS: Double = 0.0,
 )
 
 data class TargetBBox(val x: Double, val y: Double, val w: Double, val h: Double)

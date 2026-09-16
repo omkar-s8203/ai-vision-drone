@@ -123,6 +123,20 @@ class GroundStationClient(private val client: OkHttpClient = OkHttpClient()) {
         send(MessageType.ABORT, JSONObject().put("reason", reason))
     }
 
+    /** Administrative FC command - arm/disarm goes straight to the flight
+     * controller like a standard GCS, independent of AI guidance state. */
+    fun sendArmCommand(armed: Boolean) {
+        send(MessageType.ARM_COMMAND, JSONObject().put("armed", armed))
+    }
+
+    fun sendSetFlightMode(mode: String) {
+        send(MessageType.SET_FLIGHT_MODE, JSONObject().put("mode", mode))
+    }
+
+    fun sendRecordCommand(recording: Boolean) {
+        send(MessageType.RECORD_COMMAND, JSONObject().put("recording", recording))
+    }
+
     fun sendWebRtcOffer(sdp: String, sdpType: String) {
         send(
             MessageType.WEBRTC_OFFER,

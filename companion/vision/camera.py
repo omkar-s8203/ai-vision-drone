@@ -19,6 +19,14 @@ class CameraBase:
         raise NotImplementedError
         yield  # pragma: no cover - makes this an async generator for type checkers
 
+    def get_latest_frame(self):
+        """Optional: returns the most recent captured image array (BGR
+        uint8), or None if this backend doesn't expose one (e.g.
+        SyntheticCamera has no real image data). Used by the video pipeline
+        and video recorder, both of which need actual pixels, not just
+        detection metadata."""
+        return None
+
 
 class Picamera2IMX500Camera(CameraBase):
     """Real hardware camera backend - Raspberry Pi AI Camera (Sony IMX500).

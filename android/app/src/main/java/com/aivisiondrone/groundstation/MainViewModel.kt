@@ -13,6 +13,7 @@ import com.aivisiondrone.groundstation.control.DroneMode
 import com.aivisiondrone.groundstation.telemetry.DetectionsState
 import com.aivisiondrone.groundstation.telemetry.HealthState
 import com.aivisiondrone.groundstation.telemetry.RawDetection
+import com.aivisiondrone.groundstation.telemetry.RecordingState
 import com.aivisiondrone.groundstation.telemetry.TargetBBox
 import com.aivisiondrone.groundstation.telemetry.TelemetryState
 import com.aivisiondrone.groundstation.telemetry.TrackingState
@@ -60,6 +61,9 @@ class MainViewModel : ViewModel() {
 
     private val _followAltitudeM = MutableStateFlow(10f)
     val followAltitudeM = _followAltitudeM.asStateFlow()
+
+    private val _recording = MutableStateFlow(RecordingState())
+    val recording = _recording.asStateFlow()
 
     private val _remoteVideoTrack = MutableStateFlow<VideoTrack?>(null)
     val remoteVideoTrack = _remoteVideoTrack.asStateFlow()
@@ -137,6 +141,21 @@ class MainViewModel : ViewModel() {
         client.sendAbort("operator")
     }
 
+    /** Administrative FC command, independent of AI guidance mode - the
+     * confirmation dialog before an arm request lives in the UI layer
+     * (GroundStationScreen), not here. */
+    fun setArmed(armed: Boolean) {
+        client.sendArmCommand(armed)
+    }
+
+    fun setFlightMode(mode: String) {
+        client.sendSetFlightMode(mode)
+    }
+
+    fun toggleRecording() {
+        client.sendRecordCommand(!_recording.value.recording)
+    }
+
     override fun onCleared() {
         disconnect()
     }
@@ -144,9 +163,22 @@ class MainViewModel : ViewModel() {
     private fun handleEnvelope(envelope: Envelope) {
         when (envelope.type) {
             MessageType.TELEMETRY -> _telemetry.value = parseTelemetry(envelope.payload)
-            MessageType.HEALTH -> _health.value = parseHealth(envelope.payload)
+            MessageType.HEALTH -> {
+                val health = parseHealth(envelope.payload)
+                _health.value = health
+                // Seeds recording state (e.g. after a reconnect) without
+                // waiting for a recording_state message the Pi has no
+                // reason to resend on its own.
+                if (_recording.value.recording != health.recording) {
+                    _recording.value = RecordingState(recording = health.recording)
+                }
+            }
             MessageType.TRACKING_UPDATE -> _tracking.value = parseTracking(envelope.payload)
             MessageType.DETECTIONS_UPDATE -> _detections.value = parseDetections(envelope.payload)
+            MessageType.RECORDING_STATE -> _recording.value = RecordingState(
+                recording = envelope.payload.optBoolean("recording", false),
+                durationS = envelope.payload.optDoubleOrNull("duration_s") ?: 0.0,
+            )
             MessageType.WEBRTC_ANSWER -> {
                 envelope.payload.optStringOrNull("sdp")?.let { webRtcClient?.onRemoteAnswer(it) }
             }
@@ -171,6 +203,7 @@ class MainViewModel : ViewModel() {
         trackerOk = p.optBoolean("tracker_ok", false),
         mavlinkOk = p.optBoolean("mavlink_ok", false),
         videoOk = p.optBoolean("video_ok", false),
+        recording = p.optBoolean("recording", false),
         fps = p.optDoubleOrNull("fps"),
         latencyMs = p.optDoubleOrNull("latency_ms"),
         temperatureC = p.optDoubleOrNull("temperature_c"),

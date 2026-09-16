@@ -4,11 +4,12 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import com.aivisiondrone.groundstation.ui.GroundStationScreen
+import com.aivisiondrone.groundstation.ui.theme.DroneGroundStationTheme
 import org.webrtc.EglBase
 
 class MainActivity : ComponentActivity() {
@@ -20,8 +21,8 @@ class MainActivity : ComponentActivity() {
         eglBase = EglBase.create()
 
         setContent {
-            MaterialTheme {
-                Surface(modifier = Modifier) {
+            DroneGroundStationTheme {
+                Surface(modifier = Modifier.fillMaxSize()) {
                     val eglBaseState = remember { eglBase }
                     GroundStationScreen(
                         viewModel = viewModel,

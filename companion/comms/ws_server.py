@@ -15,10 +15,7 @@ class GroundStationLink:
     def __init__(self, transport: Transport) -> None:
         self.transport = transport
         self._seq = SequenceCounter()
-        self._on_target_selected: Optional[Callable[[dict], None]] = None
-        self._on_mode_command: Optional[Callable[[dict], None]] = None
-        self._on_abort: Optional[Callable[[dict], None]] = None
-        self._on_webrtc_offer: Optional[Callable[[dict], None]] = None
+        self._handlers: dict[str, Callable[[dict], None]] = {}
         transport.on_message(self._dispatch)
 
     async def start(self) -> None:
@@ -28,32 +25,39 @@ class GroundStationLink:
         await self.transport.stop()
 
     def on_target_selected(self, handler: Callable[[dict], None]) -> None:
-        self._on_target_selected = handler
+        self._handlers[MessageType.TARGET_SELECT] = handler
 
     def on_mode_command(self, handler: Callable[[dict], None]) -> None:
-        self._on_mode_command = handler
+        self._handlers[MessageType.MODE_COMMAND] = handler
 
     def on_abort(self, handler: Callable[[dict], None]) -> None:
-        self._on_abort = handler
+        self._handlers[MessageType.ABORT] = handler
+
+    def on_arm_command(self, handler: Callable[[dict], None]) -> None:
+        """handler receives {"armed": bool}."""
+        self._handlers[MessageType.ARM_COMMAND] = handler
+
+    def on_set_flight_mode(self, handler: Callable[[dict], None]) -> None:
+        """handler receives {"mode": str} - an ArduCopter mode name."""
+        self._handlers[MessageType.SET_FLIGHT_MODE] = handler
+
+    def on_record_command(self, handler: Callable[[dict], None]) -> None:
+        """handler receives {"recording": bool}."""
+        self._handlers[MessageType.RECORD_COMMAND] = handler
 
     def on_webrtc_offer(self, handler: Callable[[dict], None]) -> None:
         """handler receives {"sdp": ..., "sdp_type": ...} and is responsible
         for calling send_webrtc_answer() with the resulting answer."""
-        self._on_webrtc_offer = handler
+        self._handlers[MessageType.WEBRTC_OFFER] = handler
 
     def _dispatch(self, raw: str) -> None:
         try:
             envelope = Envelope.from_json(raw)
         except Exception:
             return
-        if envelope.type == MessageType.TARGET_SELECT and self._on_target_selected:
-            self._on_target_selected(envelope.payload)
-        elif envelope.type == MessageType.MODE_COMMAND and self._on_mode_command:
-            self._on_mode_command(envelope.payload)
-        elif envelope.type == MessageType.ABORT and self._on_abort:
-            self._on_abort(envelope.payload)
-        elif envelope.type == MessageType.WEBRTC_OFFER and self._on_webrtc_offer:
-            self._on_webrtc_offer(envelope.payload)
+        handler = self._handlers.get(envelope.type)
+        if handler is not None:
+            handler(envelope.payload)
 
     async def send_webrtc_answer(self, sdp: str, sdp_type: str) -> None:
         await self._send(MessageType.WEBRTC_ANSWER, {"sdp": sdp, "sdp_type": sdp_type})
@@ -69,6 +73,9 @@ class GroundStationLink:
 
     async def send_health(self, payload: dict) -> None:
         await self._send(MessageType.HEALTH, payload)
+
+    async def send_recording_state(self, payload: dict) -> None:
+        await self._send(MessageType.RECORDING_STATE, payload)
 
     async def _send(self, msg_type: str, payload: dict) -> None:
         envelope = make_envelope(msg_type, payload, self._seq.next())

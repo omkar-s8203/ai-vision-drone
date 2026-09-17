@@ -63,8 +63,8 @@ knowledge assumed before hardware existed to check against:
 
 Real camera video (not the sim's synthetic rectangle) streamed live over
 WebRTC to a real Android phone, through our own `AiortcVideoPipeline` and
-`Picamera2IMX500Camera.get_latest_frame()`. Two real bugs found and fixed
-along the way:
+`Picamera2IMX500Camera.get_latest_frame()`. Real bugs found and fixed along
+the way:
 
 - **Inverted color channels**: picamera2's stream format names are inverted
   relative to the numpy channel order they actually produce. Requesting
@@ -74,6 +74,19 @@ along the way:
   fixed in `Picamera2IMX500Camera` accordingly.
 - **`SessionRecorder` pointed at `/var/log/...`**, which a non-root user
   can't write to - moved to `~/ai-vision-drone-logs`.
+- **Camera loop was double-pacing itself, capping ~30 FPS configured down
+  to ~15 FPS observed** - reported live from real hardware. Root cause:
+  `Picamera2IMX500Camera.frames()` configures the sensor's own hardware
+  `FrameRate` control to `target_fps`, and `capture_metadata()` is a
+  *blocking* call that already waits for the next frame at that hardware
+  pace - it IS the pacing mechanism. The loop then also did
+  `await asyncio.sleep(1.0 / target_fps)` after every iteration, adding a
+  second full frame period on top of the one already spent blocking in
+  `capture_metadata()`, roughly halving actual throughput. A configured 30
+  FPS was mechanically guaranteed to deliver ~15 FPS regardless of any
+  other tuning - fixed by removing the redundant sleep entirely (a bare
+  `asyncio.sleep(0)` remains, purely to yield to the event loop between
+  frames, not to pace anything).
 
 ### Power supply is not optional - confirmed by a real crash
 

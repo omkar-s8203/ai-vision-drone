@@ -85,8 +85,15 @@ class Picamera2IMX500Camera(CameraBase):
         )
         self._picam2.start(config, show_preview=False)
         try:
-            period = 1.0 / self.target_fps
             while True:
+                # capture_metadata() blocks until the next frame is ready at
+                # the hardware FrameRate configured above - it IS the pacing
+                # mechanism. A real bug found in the field: this loop used to
+                # also `await asyncio.sleep(1.0 / target_fps)` after every
+                # iteration, adding a second full frame period on top of the
+                # one already spent blocking here and roughly halving actual
+                # throughput (a configured 30 FPS was only ever delivering
+                # ~15 FPS). Do not add a sleep back here.
                 metadata = self._picam2.capture_metadata()
                 outputs = self.imx500.get_outputs(metadata, add_batch=True)
                 self.last_frame_array = self._picam2.capture_array("main")
@@ -96,7 +103,7 @@ class Picamera2IMX500Camera(CameraBase):
                     height=self.height,
                     raw_detection_output=(self.imx500, outputs, metadata, self._picam2),
                 )
-                await asyncio.sleep(period)
+                await asyncio.sleep(0)  # yield control to the event loop between frames
         finally:
             self._picam2.stop()
 
@@ -125,6 +132,7 @@ class SyntheticCamera(CameraBase):
     async def frames(self) -> AsyncIterator[Frame]:
         period = 1.0 / self.target_fps
         start = time.monotonic()
+        next_frame_at = start
         while True:
             ts = time.monotonic() - start
             yield Frame(
@@ -133,4 +141,15 @@ class SyntheticCamera(CameraBase):
                 height=self.height,
                 raw_detection_output=self.detection_source(ts),
             )
-            await asyncio.sleep(period)
+            # Fixed-rate (not fixed-delay) scheduling: advance the target by
+            # exactly one period rather than sleeping a full period after
+            # whatever this iteration's own work already cost, so per-frame
+            # overhead doesn't compound into a lower actual rate than
+            # target_fps (see Picamera2IMX500Camera.frames() for the real
+            # version of this bug found on hardware).
+            next_frame_at += period
+            sleep_s = next_frame_at - time.monotonic()
+            if sleep_s > 0:
+                await asyncio.sleep(sleep_s)
+            else:
+                next_frame_at = time.monotonic()

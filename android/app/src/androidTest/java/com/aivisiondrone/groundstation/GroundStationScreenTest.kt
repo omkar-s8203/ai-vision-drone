@@ -1,7 +1,6 @@
 package com.aivisiondrone.groundstation
 
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot

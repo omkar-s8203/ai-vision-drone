@@ -70,8 +70,21 @@ dependencies {
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 
+    // The BOM above only aligns versions for the `implementation`/`api`
+    // configurations - androidTestImplementation needs its own copy of the
+    // platform() import, or version-less Compose test artifacts here (like
+    // ui-test-junit4) fail to resolve at all ("Could not find
+    // androidx.compose.ui:ui-test-junit4:" with a blank version).
+    androidTestImplementation(platform("androidx.compose:compose-bom:2025.12.01"))
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    // ui-test-junit4 provides the JUnit4 rule (createAndroidComposeRule);
+    // the finder functions (onNodeWithText, onRoot, ...) and the
+    // SemanticsNodeInteraction class (whose assertExists()/assertIsDisplayed()
+    // etc. are member methods, not top-level imports, in this version) live
+    // in this module - declared explicitly rather than assuming it always
+    // arrives transitively.
+    androidTestImplementation("androidx.compose.ui:ui-test")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

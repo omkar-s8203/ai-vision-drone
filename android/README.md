@@ -46,6 +46,26 @@ Fixed so far:
   the orbit-ring feature - a real `Unresolved reference 'TrackingState'`
   (plus a cascade of ~20 follow-on errors on every field access) caught by
   a real Gradle build.
+- **`Could not find androidx.compose.ui:ui-test-junit4:` (blank version)**
+  when building the androidTest APK - the Compose BOM
+  (`platform("androidx.compose:compose-bom:...")`) was only applied to the
+  main `implementation` configuration; `androidTestImplementation` needs
+  its own `platform(...)` line or version-less Compose test artifacts have
+  no version to resolve against. Fixed by adding the BOM to
+  `androidTestImplementation` too.
+- **`Unresolved reference 'assertExists'`** in `GroundStationScreenTest.kt`,
+  even after the BOM fix above and with sibling test functions
+  (`onNodeWithText`, `performClick`, etc.) compiling fine - confirmed by
+  extracting and grepping the actual resolved `ui-test` jar's bytecode
+  (`SemanticsNodeInteraction.class`) that `assertExists()`/
+  `assertDoesNotExist()` are member methods on `SemanticsNodeInteraction`
+  in this Compose version, not top-level extension functions in
+  `AssertionsKt` anymore - the `.assertExists()` call sites were always
+  fine, the now-invalid `import androidx.compose.ui.test.assertExists`
+  line was the only problem. Also added an explicit
+  `androidTestImplementation("androidx.compose.ui:ui-test")` alongside
+  `ui-test-junit4` while investigating, since it shouldn't be assumed to
+  always arrive transitively.
 
 Confirmed live end-to-end against **real hardware** (not just sim): real
 camera video, real on-sensor AI detection, and real MAVLink telemetry from

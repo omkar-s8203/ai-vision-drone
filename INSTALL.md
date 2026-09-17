@@ -67,11 +67,18 @@ git clone https://github.com/omkar-s8203/ai-vision-drone.git
 cd ai-vision-drone
 python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
-pip install pymavlink pyserial websockets pyyaml numpy aiortc av future
+pip install -e ".[video]"
 ```
 
 `--system-site-packages` is required - it lets the venv see the
-apt-installed `picamera2`/`libcamera` bindings, which can't come from pip.
+apt-installed `picamera2`/`libcamera` bindings, which can't come from pip
+(that's why `picamera2` is deliberately *not* in the `pip install` above -
+see the `pi` extra in `pyproject.toml`, which exists for documentation but
+isn't meant to be pip-installed on the Pi). Installing with `-e ".[video]"`
+reads the dependency list straight from `pyproject.toml` (including
+`opencv-python-headless`, needed for local video recording) instead of a
+hand-typed list that can drift out of sync - see "Updating" below for why
+this matters when you pull new changes.
 
 ## 5. Flight controller wiring (MAVLink)
 
@@ -154,6 +161,73 @@ Pi's IP (`hostname -I`) - you'll need it for the Android app.
 You should see: `Link: CONNECTED`, live camera video, live detection boxes
 on anything the AI recognizes, and (once the FC is wired per step 5) real
 telemetry in the top-right panel instead of `--` placeholders.
+
+## 9. Updating after code changes
+
+Whenever the code changes (a new feature, a bug fix, anything Claude Code
+does in this repo gets committed and pushed to
+`github.com/omkar-s8203/ai-vision-drone` on `master`), both the Pi and the
+Android app need to be brought up to date separately - a `git push` from
+the dev machine doesn't push to either of them automatically.
+
+### Pi (companion code)
+
+If it's running in the `tmux` session from step 7:
+
+```
+tmux attach -t companion
+# Ctrl+C to stop the running process
+cd ~/ai-vision-drone
+git pull
+pip install -e ".[video]"   # only does real work if dependencies changed
+COMPANION_MODE=hardware python3 -m companion.main
+```
+
+`pip install -e ".[video]"` is safe to run every time even when nothing
+changed - pip no-ops instantly if the installed versions already satisfy
+`pyproject.toml`. Skipping it after a change that *did* add a dependency
+(like `opencv-python-headless` was, for local video recording) is the
+classic way to hit a confusing `ModuleNotFoundError` right after a pull -
+just always run it. New/changed `.yaml` files under `companion/config/`
+need no separate step - `git pull` updates them directly since they're
+tracked files, not generated ones.
+
+If you've since turned this into a proper systemd service (see M15 in the
+root README - not done yet as of this writing), the equivalent is:
+```
+git pull
+pip install -e ".[video]"
+sudo systemctl restart ai-vision-drone   # or whatever unit name you used
+```
+
+### Android app
+
+The Android project lives in the same repo, so update it the same way,
+then rebuild:
+
+**Via Android Studio** (simplest): `git pull` (or let Android Studio's own
+VCS pull do it), then hit **Run** - it rebuilds and reinstalls onto a
+connected device/emulator in one step, and Gradle only recompiles files
+that actually changed.
+
+**Via command line**, if you have a JDK 17+ and an Android SDK installed
+(check `android/local.properties` for `sdk.dir`, and
+`android/gradle/wrapper/gradle-wrapper.properties` for the exact Gradle
+version it expects):
+```
+cd android
+git pull
+./gradlew assembleDebug          # Linux/macOS
+# or, from this Windows dev machine, the Gradle distribution used to build
+# this project directly (see android/README.md for how it was located)
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb shell am start -n com.aivisiondrone.groundstation/.MainActivity
+```
+
+A build failure right after pulling a UI change is normal here - see
+`android/README.md`'s "Fixed so far" list for the pattern of real errors
+this project has hit (missing imports, deprecated APIs, version mismatches)
+and how each was diagnosed from the actual Gradle error output.
 
 ## Troubleshooting quick reference
 

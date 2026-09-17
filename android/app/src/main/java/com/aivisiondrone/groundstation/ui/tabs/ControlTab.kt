@@ -14,20 +14,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.aivisiondrone.groundstation.MainViewModel
 import com.aivisiondrone.groundstation.control.FlightControlDock
-import com.aivisiondrone.groundstation.telemetry.RecordingState
 import com.aivisiondrone.groundstation.telemetry.TelemetryPanel
 import com.aivisiondrone.groundstation.telemetry.TelemetryState
 import com.aivisiondrone.groundstation.ui.theme.DroneColors
 
-/** Direct flight-controller commands - arm/disarm, FC flight mode, and
- * video recording - given their own full screen rather than squeezed
- * beneath the video, since these are the highest-consequence actions in
- * the app (arming spins the motors). */
+/** Direct flight-controller commands - arm/disarm and FC flight mode -
+ * given their own full screen rather than squeezed beneath the video,
+ * since these are the highest-consequence actions in the app (arming spins
+ * the motors). Video recording lives on the Fly tab instead, next to the
+ * camera view it actually controls. */
 @Composable
 fun ControlTab(
     viewModel: MainViewModel,
     telemetry: TelemetryState,
-    recording: RecordingState,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -46,11 +45,8 @@ fun ControlTab(
         FlightControlDock(
             armed = telemetry.armed,
             flightMode = telemetry.flightMode,
-            recording = recording.recording,
-            recordingDurationS = recording.durationS,
             onArmChanged = { viewModel.setArmed(it) },
             onFlightModeSelected = { viewModel.setFlightMode(it) },
-            onToggleRecording = { viewModel.toggleRecording() },
             modifier = Modifier.fillMaxWidth(),
         )
         Text(

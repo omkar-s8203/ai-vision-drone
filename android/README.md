@@ -82,14 +82,15 @@ message and `target_select`'s new `point: true` payload shape. These
 compile-clean by inspection but haven't been through a real Android Studio
 build yet - expect the usual round of paste-back-the-error fixes.
 
-Arm/disarm (with a confirmation dialog before arming), an FC flight-mode
-dropdown, and a video-record toggle with a live duration readout, all in
-`FlightControlDock.kt` - wired through
-`GroundStationClient.sendArmCommand`/`sendSetFlightMode`/`sendRecordCommand`
-and `MainViewModel.setArmed`/`setFlightMode`/`toggleRecording`. A
-ground-control-style dark theme (`ui/theme/Theme.kt`, `DroneColors`) is
-applied across the app - card-based panels, a status-color palette
-(green/amber/red), and `material-icons-extended` for icon buttons.
+Arm/disarm (with a confirmation dialog before arming) and an FC flight-mode
+dropdown, in `FlightControlDock.kt` - wired through
+`GroundStationClient.sendArmCommand`/`sendSetFlightMode` and
+`MainViewModel.setArmed`/`setFlightMode`. (The video-record toggle
+originally lived here too but has since moved to `RecordButton.kt` on the
+Fly tab - see below.) A ground-control-style dark theme
+(`ui/theme/Theme.kt`, `DroneColors`) is applied across the app - card-based
+panels, a status-color palette (green/amber/red), and
+`material-icons-extended` for icon buttons.
 
 **Build-verified** (real `gradle assembleDebug` + installed and launched on
 a physical device, no crash on launch): the full DJI-Fly-style restructure
@@ -119,9 +120,9 @@ proximity_guard.py`: any detection, not just the tracked target, closer
 than `min_obstacle_distance_m` forces the Safety Supervisor to SAFE).
 Installed and launched successfully on the same physical device as before.
 
-**Newest, build-verified but not installed on a device this round** (the
-test device was disconnected when this landed - `gradle assembleDebug`
-still succeeded cleanly): two new **Dronie**/**Parabola** smart-shot modes
+**Build-verified but not installed on a device this round** (the test
+device was disconnected when this landed - `gradle assembleDebug` still
+succeeded cleanly): two new **Dronie**/**Parabola** smart-shot modes
 (`DroneMode.DRONIE`/`.PARABOLA` in `ModeControls.kt`, sending `mode: "dronie"`/
 `"parabola"` like any other mode) - one-shot cinematic camera moves (DJI
 "QuickShot" equivalent) implemented by `companion/guidance/smart_shot.py`
@@ -130,6 +131,38 @@ locked on the target via the same yaw PID Follow/Orbit use, then stops
 itself - the Android UI doesn't yet auto-revert the mode selector back to
 Normal RC when a shot finishes (a known minor gap, same as Approach-Test's
 existing behavior).
+
+**Real-device feedback fixes** (reported live from an actual install on a
+remote-controller-mounted display, not just this dev machine's build
+checks): some buttons were getting clipped/hidden on that device's
+screen. Root-caused to fixed-width side-by-side layouts that squeeze
+(rather than wrap or scroll) when the available width is narrower than
+assumed - not a single bug but a pattern, so it's fixed everywhere it
+appeared:
+- `FlightControlDock.kt` restructured from a 3-wide Row (arm/disarm + FC
+  mode dropdown + record button) into a full-width vertical stack of just
+  arm/disarm and the FC mode dropdown - stacking removes the failure mode
+  entirely regardless of screen width, and reads cleaner besides.
+- `SettingsTab.kt`'s Connect/Disconnect buttons now use `Modifier.weight(1f)`
+  each instead of wrapping their own content width, so they always share
+  the available row width instead of one potentially overflowing.
+- `TargetActionSheet.kt`'s Track/Follow/Orbit chip row now scrolls
+  horizontally instead of clipping if it doesn't fit.
+- **Video recording moved out of the Control tab entirely** and onto the
+  Fly tab as a new dedicated `RecordButton.kt` (bottom-left of the video
+  view, mirroring the abort button's position on the opposite corner) -
+  per feedback that the record control should live on the main screen next
+  to the camera view, not in a separate settings-style tab. Also settings
+  (Pi host/port) now persist to `SharedPreferences` across app relaunches
+  instead of resetting to the hardcoded defaults every time.
+- **Video recording itself found and fixed a real backend bug** while
+  investigating the "not working" report: `cv2.VideoWriter` never raises on
+  failure to open a codec - it just returns a writer whose `isOpened()` is
+  `False`, so a naive implementation reports "recording" successfully
+  while silently writing nothing. `companion/comms/video_recorder.py` now
+  checks `isOpened()` and falls back through `mp4v` → `XVID` → `MJPG`
+  before giving up, and `main.py` only reports `recording: true` to the
+  app if a codec actually opened.
 
 ## Layout
 
@@ -146,16 +179,19 @@ app/src/main/java/com/aivisiondrone/groundstation/
                 obstacle too close, RC override, target lost),
                 ModeControls.kt (mode buttons, incl. Dronie/Parabola smart
                 shots, + follow/orbit sliders),
-                FlightControlDock.kt (arm/disarm, FC mode dropdown, record
-                toggle), AbortButton.kt
+                FlightControlDock.kt (arm/disarm, FC mode dropdown - a
+                full-width vertical stack, not a Row, for narrow-screen
+                safety), RecordButton.kt (local video record toggle),
+                AbortButton.kt
   telemetry/    TelemetryModels.kt, TelemetryPanel.kt, HealthPanel.kt
   ui/           GroundStationScreen.kt (Scaffold + bottom nav/side rail
                 host), AppTab.kt, LinkStatusChip.kt,
                 theme/Theme.kt (dark ground-control color scheme)
-  ui/tabs/      FlyTab.kt (video + overlays + quick action sheet),
-                ControlTab.kt (FlightControlDock, full screen),
-                AiModesTab.kt (ModeControls + live detections list),
-                SettingsTab.kt (Pi host/port connection)
+  ui/tabs/      FlyTab.kt (video + overlays + quick action sheet + the
+                main-screen RecordButton), ControlTab.kt (FlightControlDock,
+                full screen), AiModesTab.kt (ModeControls + live detections
+                list), SettingsTab.kt (Pi host/port connection, persisted
+                to SharedPreferences)
   MainActivity.kt, MainViewModel.kt (MVVM glue)
 
 app/src/androidTest/java/com/aivisiondrone/groundstation/
@@ -183,3 +219,13 @@ app/src/androidTest/java/com/aivisiondrone/groundstation/
   no emulator/device to run instrumented tests on; run via Android
   Studio's test runner or `./gradlew connectedAndroidTest` on a connected
   device.
+- ~~Pi host/port reset to hardcoded defaults every relaunch~~ - fixed:
+  `SettingsTab.kt` now persists both to `SharedPreferences`, saved when
+  Connect is tapped.
+- Mode selector doesn't auto-revert to Normal RC when a Dronie/Parabola
+  smart shot finishes on the Pi side, or when Approach-Test reaches
+  `STOPPED_AT_BOUNDARY`/`ABORTED` - the Pi already reports
+  `supervisor_state` in `tracking_update`, but `MainViewModel` doesn't
+  parse or react to it yet. Cosmetic only (doesn't affect safety - guidance
+  genuinely does stop on the Pi side either way), but worth fixing for a
+  clean UI.

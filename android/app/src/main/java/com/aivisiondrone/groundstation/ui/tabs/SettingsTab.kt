@@ -33,10 +33,15 @@ import org.webrtc.EglBase
 
 private const val DEFAULT_HOST = "192.168.4.1" // typical Pi-as-WiFi-AP gateway address
 private const val DEFAULT_PORT = 8765 // matches companion/config/network.yaml ws_port
+private const val PREFS_NAME = "ground_station_prefs"
+private const val PREF_HOST = "pi_host"
+private const val PREF_PORT = "pi_port"
 
 /** Connection settings - the Pi's host/port and connect/disconnect, kept
  * out of the main flight view so the video surface doesn't have to make
- * room for a text field the operator only touches once per session. */
+ * room for a text field the operator only touches once per session.
+ * Host/port are persisted to SharedPreferences on Connect so the operator
+ * doesn't have to retype them every launch (previously reset every time). */
 @Composable
 fun SettingsTab(
     viewModel: MainViewModel,
@@ -45,8 +50,9 @@ fun SettingsTab(
     linkState: LinkState,
     modifier: Modifier = Modifier,
 ) {
-    var host by remember { mutableStateOf(DEFAULT_HOST) }
-    var port by remember { mutableStateOf(DEFAULT_PORT.toString()) }
+    val prefs = remember { context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
+    var host by remember { mutableStateOf(prefs.getString(PREF_HOST, DEFAULT_HOST) ?: DEFAULT_HOST) }
+    var port by remember { mutableStateOf(prefs.getInt(PREF_PORT, DEFAULT_PORT).toString()) }
 
     Column(
         modifier = modifier
@@ -78,12 +84,21 @@ fun SettingsTab(
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(focusedTextColor = DroneColors.TextPrimary, unfocusedTextColor = DroneColors.TextPrimary),
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
                     Button(
-                        onClick = { port.toIntOrNull()?.let { viewModel.connect(context, eglBase, host, it) } },
+                        onClick = {
+                            port.toIntOrNull()?.let { portInt ->
+                                prefs.edit().putString(PREF_HOST, host).putInt(PREF_PORT, portInt).apply()
+                                viewModel.connect(context, eglBase, host, portInt)
+                            }
+                        },
                         colors = ButtonDefaults.buttonColors(containerColor = DroneColors.Accent, contentColor = Color(0xFF00232A)),
+                        modifier = Modifier.weight(1f),
                     ) { Text("Connect") }
-                    OutlinedButton(onClick = { viewModel.disconnect() }) {
+                    OutlinedButton(onClick = { viewModel.disconnect() }, modifier = Modifier.weight(1f)) {
                         Text("Disconnect", color = DroneColors.TextPrimary)
                     }
                 }

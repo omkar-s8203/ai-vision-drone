@@ -25,12 +25,14 @@ import com.aivisiondrone.groundstation.MainViewModel
 import com.aivisiondrone.groundstation.control.DetectionsOverlay
 import com.aivisiondrone.groundstation.control.DroneMode
 import com.aivisiondrone.groundstation.control.GuidanceWarningBanner
+import com.aivisiondrone.groundstation.control.RecordButton
 import com.aivisiondrone.groundstation.control.TargetActionSheet
 import com.aivisiondrone.groundstation.control.TargetSelectionOverlay
 import com.aivisiondrone.groundstation.control.TrackingOverlay
 import com.aivisiondrone.groundstation.telemetry.DetectionsState
 import com.aivisiondrone.groundstation.telemetry.HealthPanel
 import com.aivisiondrone.groundstation.telemetry.HealthState
+import com.aivisiondrone.groundstation.telemetry.RecordingState
 import com.aivisiondrone.groundstation.telemetry.TelemetryPanel
 import com.aivisiondrone.groundstation.telemetry.TelemetryState
 import com.aivisiondrone.groundstation.telemetry.TrackingState
@@ -62,6 +64,8 @@ fun FlyTab(
     mode: DroneMode,
     remoteVideoTrack: VideoTrack?,
     showTargetActionSheet: Boolean,
+    recording: RecordingState,
+    onToggleRecording: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var rendererRef by remember { mutableStateOf<SurfaceViewRenderer?>(null) }
@@ -141,6 +145,15 @@ fun FlyTab(
         TelemetryPanel(
             telemetry = telemetry,
             modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
+        )
+
+        RecordButton(
+            recording = recording.recording,
+            durationS = recording.durationS,
+            onClick = onToggleRecording,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(16.dp),
         )
 
         tracking.guidanceReason?.let { reason ->

@@ -79,12 +79,13 @@ fun GroundStationScreen(viewModel: MainViewModel, eglBase: EglBase, context: Con
                     mode = mode,
                     remoteVideoTrack = remoteVideoTrack,
                     showTargetActionSheet = showTargetActionSheet,
+                    recording = recording,
+                    onToggleRecording = { viewModel.toggleRecording() },
                     modifier = contentModifier,
                 )
                 AppTab.CONTROL -> ControlTab(
                     viewModel = viewModel,
                     telemetry = telemetry,
-                    recording = recording,
                     modifier = contentModifier,
                 )
                 AppTab.AI -> AiModesTab(

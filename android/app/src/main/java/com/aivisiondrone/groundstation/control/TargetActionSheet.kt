@@ -2,10 +2,12 @@ package com.aivisiondrone.groundstation.control
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Autorenew
@@ -50,7 +52,9 @@ fun TargetActionSheet(
                 style = MaterialTheme.typography.labelLarge,
             )
             Row(
-                modifier = Modifier.padding(top = 10.dp, bottom = 6.dp),
+                modifier = Modifier
+                    .padding(top = 10.dp, bottom = 6.dp)
+                    .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 ActionChip(icon = Icons.Filled.CenterFocusStrong, label = "Track", onClick = onTrack)

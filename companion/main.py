@@ -216,7 +216,11 @@ class CompanionOrchestrator:
                 self.camera.height if hasattr(self.camera, "height") else 720,
             )
             path = self.video_recorder.start(width=width, height=height)
-            self.recorder.record("record_start", path=str(path))
+            if path is not None:
+                self.recorder.record("record_start", path=str(path))
+            else:
+                log.error("VideoRecorder failed to open any codec - recording did not start")
+                self.recorder.record("record_start_failed")
         elif not want_recording and self.video_recorder.is_recording:
             path = self.video_recorder.stop()
             self.recorder.record("record_stop", path=str(path) if path else None)

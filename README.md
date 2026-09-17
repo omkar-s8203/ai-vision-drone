@@ -45,10 +45,16 @@ The flight controller remains the sole flight authority at all times. RC overrid
 | M15 | Deployment & Monitoring | Orchestrator runs standalone (`python -m companion.main`) in both sim and hardware mode, confirmed on real Pi. Systemd unit (`deploy/ai-vision-drone.service`) now written - auto-starts on boot, `Restart=on-failure` on crash - see INSTALL.md step 7a. Not yet confirmed surviving an actual power-cycle test on the Pi | 55% |
 | M16 | Future Scalability | Design notes only (not implementation-gated) | n/a |
 
-Test suite: `.venv/Scripts/python -m pytest -q` → 136 passed. Android: real
+Test suite: `.venv/Scripts/python -m pytest -q` → 138 passed. Android: real
 `gradle assembleDebug` builds clean; the app has run on a physical device
 (Android SDK/Gradle distribution found locally and used directly, bypassing
-the earlier "no Android SDK here" limitation).
+the earlier "no Android SDK here" limitation). First real-device usage
+feedback (from a remote-controller-mounted display, not just this dev
+machine) also landed and got fixed: clipped/hidden buttons from
+fixed-width layouts (now full-width stacks or scrollable rows throughout),
+video recording moved to a dedicated main-screen button, settings
+persistence, and a real `cv2.VideoWriter` silent-failure bug in the
+recording backend.
 
 ## What's next
 

@@ -24,7 +24,7 @@ The flight controller remains the sole flight authority at all times. RC overrid
 
 ## Progress
 
-**~62% - camera, AI, video, and MAVLink are all confirmed working end-to-end on real hardware.** A Raspberry Pi 5 + AI Camera + Cube Orange flight controller are now all wired together and talking: real on-sensor SSD MobileNetV2 detection, real video streamed over WebRTC to a real Android phone, and real MAVLink (heartbeat + 10Hz ATTITUDE) over TELEM1. Getting MAVLink working took a long debugging session whose actual root cause was a baud-rate mismatch (57600, not 921600 - the FC never actually adopted the GCS-configured baud despite the UI showing it applied) - see `docs/hardware-wiring.md` for the full story and every other real bug this hardware phase surfaced. Administrative GCS-style commands (arm/disarm, flight-mode change, local video recording) and a ground-control-style Android UI redesign just landed on the Python side (fully tested) and the Android side (not yet build-verified). Mounting on the aircraft and RC-override transmitter configuration haven't happened yet.
+**~63% - camera, AI, video, and MAVLink are all confirmed working end-to-end on real hardware.** A Raspberry Pi 5 + AI Camera + Cube Orange flight controller are now all wired together and talking: real on-sensor SSD MobileNetV2 detection, real video streamed over WebRTC to a real Android phone, and real MAVLink (heartbeat + 10Hz ATTITUDE) over TELEM1. Getting MAVLink working took a long debugging session whose actual root cause was a baud-rate mismatch (57600, not 921600 - the FC never actually adopted the GCS-configured baud despite the UI showing it applied) - see `docs/hardware-wiring.md` for the full story and every other real bug this hardware phase surfaced. Administrative GCS-style commands (arm/disarm, flight-mode change, local video recording), a new Orbit guidance mode (DJI "circle shot" equivalent), and a full DJI-Fly-style tabbed Android redesign just landed on the Python side (fully tested) and the Android side (not yet build-verified). Mounting on the aircraft and RC-override transmitter configuration haven't happened yet.
 
 | # | Milestone | Status | % |
 |---|-----------|--------|---|
@@ -33,9 +33,9 @@ The flight controller remains the sole flight authority at all times. RC overrid
 | M3 | Tracking, Target Selection, Reacquisition | Implemented, unit-tested, confirmed live from a real phone (sim + now real camera). ByteTrack swap-in still a stub | 85% |
 | M4 | Distance Estimation | Vision (pinhole) estimator implemented + tested. Rangefinder hardware addition still open (see plan) | 50% |
 | M5 | Video Streaming & Pi↔Android Comms | **Confirmed live on real hardware**: real camera video, correct colors, over real WebRTC/ICE to a real phone. Local on-Pi video recording (`VideoRecorder`, independent of the WebRTC feed) now implemented and unit-tested. GStreamer hardware-encode path still stubbed (current path is the CPU-heavy software-encode "quick bringup" one, which caused one crash on inadequate power - see hardware-wiring.md) | 85% |
-| M6 | Android Ground Station App | Builds, runs, every screen/control confirmed live, now including real (not just sim) video. New arm/disarm, flight-mode selector, and record-video controls plus a ground-control-style dark theme (`FlightControlDock.kt`, `ui/theme/Theme.kt`) just added but not yet build-verified. Instrumented UI tests written but not yet run (no emulator here - see `android/README.md`) | 80% |
+| M6 | Android Ground Station App | Builds, runs, every screen/control confirmed live in the previous single-screen layout. Just restructured into a DJI-Fly-style 4-tab layout (Fly/Control/AI Modes/Settings) plus a tap-to-select quick action sheet (Track/Follow/Orbit) and an orbit-ring overlay - a large change, not yet build-verified (one real build error already found and fixed - see android/README.md). Instrumented UI tests updated for the new tabs but not yet run (no emulator here) | 75% |
 | M7 | MAVLink / Flight-Controller / RC Override | **Real MAVLink link confirmed working**: heartbeat + 10Hz ATTITUDE over TELEM1 @ 57600 baud with a real Cube Orange. Administrative `arm()`/`set_mode()` commands added and unit-tested, wired end-to-end from the Android arm/mode controls through `GroundStationLink`/`CompanionOrchestrator`. `FLTMODE_CH` RC-override switch not yet configured on the transmitter - that's the one piece of this milestone still open | 82% |
-| M8 | Follow-Mode | Controller implemented, unit + integration tested against mock FC, confirmed live end-to-end from the Android app including the live separation override (sim) | 70% |
+| M8 | Follow-Mode / Orbit-Mode | Follow controller implemented, unit + integration tested against mock FC, confirmed live end-to-end from the Android app including the live separation override (sim). New `OrbitController` (DJI-style circle/point-of-interest shot) implemented and unit-tested (Python side); Android-side Orbit mode not yet build-verified | 68% |
 | M9 | Controlled Approach-Test | Controller + every abort condition implemented, unit-tested, confirmed live from the Android app (sim) | 70% |
 | M10 | Safety Architecture & Watchdog | Supervisor + heartbeat/systemd watchdogs implemented, fault-injection-style unit tests passing, abort's reset-to-idle confirmed live (sim) | 75% |
 | M11 | Logging | Structured JSON logging + session recorder implemented and wired in | 70% |
@@ -45,14 +45,16 @@ The flight controller remains the sole flight authority at all times. RC overrid
 | M15 | Deployment & Monitoring | Orchestrator runs standalone (`python -m companion.main`) in both sim and hardware mode, confirmed on real Pi; systemd unit file not yet written | 35% |
 | M16 | Future Scalability | Design notes only (not implementation-gated) | n/a |
 
-Test suite: `.venv/Scripts/python -m pytest -q` → 103 passed.
+Test suite: `.venv/Scripts/python -m pytest -q` → 112 passed.
 
 ## What's next
 
-1. **Build-verify the Android changes** - arm/disarm, flight-mode dropdown,
-   record-video toggle, and the new dark ground-control theme are written
-   but this dev environment has no Android SDK; the usual paste-back-the-
-   error cycle is needed to get these through a real Android Studio build.
+1. **Build-verify the Android changes** - the new 4-tab layout, orbit mode,
+   target action sheet, arm/disarm, flight-mode dropdown, record-video
+   toggle, and the dark ground-control theme are all written but this dev
+   environment has no Android SDK; the usual paste-back-the-error cycle is
+   needed to get these through a real Android Studio build (one real error
+   already found and fixed: an invalid `ExposedDropdownMenu` import).
 2. **Run `companion.main` in hardware mode with the FC actually connected** -
    so far we've only proven the camera/video path and the MAVLink link
    separately; running them together is the next real integration test

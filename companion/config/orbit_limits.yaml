@@ -1,0 +1,22 @@
+max_speed_mps: 3.0
+orbit_radius_m: 8.0
+min_radius_m: 3.0
+max_radius_m: 20.0
+# degrees/second the drone sweeps around the target - 15 deg/s completes a
+# full circle in 24s, a reasonable default "quickshot"-style orbit speed.
+angular_speed_dps: 15.0
+# 1 = clockwise (strafe right while facing the target), -1 = counter-clockwise
+direction: 1
+# null = fall back to pixel-framing vertical control, same convention as
+# follow_limits.yaml's target_altitude_m.
+target_altitude_m: null
+min_altitude_m: 2.0
+max_altitude_m: 30.0
+lateral_deadband_px: 20
+vertical_deadband_px: 20
+
+pid:
+  distance: {kp: 0.6, ki: 0.0, kd: 0.15}
+  lateral: {kp: 0.004, ki: 0.0, kd: 0.001}
+  vertical: {kp: 0.004, ki: 0.0, kd: 0.001}
+  altitude: {kp: 0.5, ki: 0.0, kd: 0.1}

@@ -29,9 +29,10 @@ fun AbortButton(onAbort: () -> Unit, modifier: Modifier = Modifier) {
     ) {
         Icon(Icons.Filled.Warning, contentDescription = null, tint = Color.White)
         Text(
-            "  STOP / ABORT",
+            "STOP / ABORT",
             style = MaterialTheme.typography.titleMedium,
             color = Color.White,
+            modifier = Modifier.padding(start = 6.dp),
         )
     }
 }

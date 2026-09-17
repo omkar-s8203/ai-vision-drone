@@ -112,10 +112,14 @@ class GroundStationClient(private val client: OkHttpClient = OkHttpClient()) {
         mode: String,
         followSeparationM: Double? = null,
         followAltitudeM: Double? = null,
+        orbitRadiusM: Double? = null,
+        orbitAltitudeM: Double? = null,
     ) {
         val payload = JSONObject().put("mode", mode)
         if (followSeparationM != null) payload.put("follow_separation_m", followSeparationM)
         if (followAltitudeM != null) payload.put("follow_altitude_m", followAltitudeM)
+        if (orbitRadiusM != null) payload.put("orbit_radius_m", orbitRadiusM)
+        if (orbitAltitudeM != null) payload.put("orbit_altitude_m", orbitAltitudeM)
         send(MessageType.MODE_COMMAND, payload)
     }
 

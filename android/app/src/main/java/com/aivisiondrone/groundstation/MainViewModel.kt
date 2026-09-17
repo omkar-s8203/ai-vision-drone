@@ -62,8 +62,19 @@ class MainViewModel : ViewModel() {
     private val _followAltitudeM = MutableStateFlow(10f)
     val followAltitudeM = _followAltitudeM.asStateFlow()
 
+    private val _orbitRadiusM = MutableStateFlow(8f)
+    val orbitRadiusM = _orbitRadiusM.asStateFlow()
+
+    private val _orbitAltitudeM = MutableStateFlow(10f)
+    val orbitAltitudeM = _orbitAltitudeM.asStateFlow()
+
     private val _recording = MutableStateFlow(RecordingState())
     val recording = _recording.asStateFlow()
+
+    /** True right after a tap-select, until the operator picks Track/
+     * Follow/Orbit (or cancels) from the DJI-style quick action sheet. */
+    private val _showTargetActionSheet = MutableStateFlow(false)
+    val showTargetActionSheet = _showTargetActionSheet.asStateFlow()
 
     private val _remoteVideoTrack = MutableStateFlow<VideoTrack?>(null)
     val remoteVideoTrack = _remoteVideoTrack.asStateFlow()
@@ -105,19 +116,46 @@ class MainViewModel : ViewModel() {
 
     fun selectTarget(x: Double, y: Double, w: Double, h: Double) {
         client.sendTargetSelect(x, y, w, h)
+        setMode(DroneMode.TRACKING)
+        _showTargetActionSheet.value = true
     }
 
     /** Tap-to-select on one of the live detection boxes, instead of
-     * dragging out a new selection rectangle. */
+     * dragging out a new selection rectangle. Immediately locks tracking
+     * (like DJI's focus-track box snapping to the subject) and opens the
+     * quick action sheet so the operator picks what the drone should then
+     * do about it (Track only / Follow / Orbit). */
     fun selectTargetAtPoint(x: Double, y: Double) {
         client.sendTargetSelectAtPoint(x, y)
+        setMode(DroneMode.TRACKING)
+        _showTargetActionSheet.value = true
+    }
+
+    fun dismissTargetActionSheet() {
+        _showTargetActionSheet.value = false
+    }
+
+    /** Cancels the pending target lock entirely - equivalent to tapping
+     * Cancel on DJI's focus-track prompt. */
+    fun cancelTargetSelection() {
+        _showTargetActionSheet.value = false
+        abort()
     }
 
     fun setMode(newMode: DroneMode) {
         _mode.value = newMode
         val separation = if (newMode == DroneMode.FOLLOWING) _followSeparationM.value.toDouble() else null
-        val altitude = if (newMode == DroneMode.FOLLOWING) _followAltitudeM.value.toDouble() else null
-        client.sendModeCommand(newMode.wireValue, separation, altitude)
+        val followAltitude = if (newMode == DroneMode.FOLLOWING) _followAltitudeM.value.toDouble() else null
+        val orbitRadius = if (newMode == DroneMode.ORBITING) _orbitRadiusM.value.toDouble() else null
+        val orbitAltitude = if (newMode == DroneMode.ORBITING) _orbitAltitudeM.value.toDouble() else null
+        client.sendModeCommand(newMode.wireValue, separation, followAltitude, orbitRadius, orbitAltitude)
+    }
+
+    /** Chooses an action from the quick action sheet after a tap-select -
+     * thin wrapper over setMode() that also closes the sheet. */
+    fun chooseTargetAction(newMode: DroneMode) {
+        _showTargetActionSheet.value = false
+        setMode(newMode)
     }
 
     fun setFollowSeparation(meters: Float) {
@@ -136,8 +174,29 @@ class MainViewModel : ViewModel() {
         }
     }
 
+    fun setOrbitRadius(meters: Float) {
+        _orbitRadiusM.value = meters
+        if (_mode.value == DroneMode.ORBITING) {
+            client.sendModeCommand(
+                DroneMode.ORBITING.wireValue, orbitRadiusM = meters.toDouble(),
+                orbitAltitudeM = _orbitAltitudeM.value.toDouble(),
+            )
+        }
+    }
+
+    fun setOrbitAltitude(meters: Float) {
+        _orbitAltitudeM.value = meters
+        if (_mode.value == DroneMode.ORBITING) {
+            client.sendModeCommand(
+                DroneMode.ORBITING.wireValue, orbitRadiusM = _orbitRadiusM.value.toDouble(),
+                orbitAltitudeM = meters.toDouble(),
+            )
+        }
+    }
+
     fun abort() {
         _mode.value = DroneMode.IDLE
+        _showTargetActionSheet.value = false
         client.sendAbort("operator")
     }
 

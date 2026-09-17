@@ -14,6 +14,7 @@ class SupervisorState(Enum):
     IDLE = auto()
     TRACKING = auto()
     FOLLOWING = auto()
+    ORBITING = auto()
     APPROACHING = auto()
     SAFE = auto()  # fault or pilot override in effect - guidance disabled
 
@@ -66,11 +67,16 @@ class SafetySupervisor:
 
         if inputs.tracking_state == TrackingState.TARGET_LOST and inputs.requested_state in (
             SupervisorState.FOLLOWING,
+            SupervisorState.ORBITING,
             SupervisorState.APPROACHING,
         ):
             self.state = SupervisorState.SAFE
             return SupervisorDecision(self.state, False, "target_lost")
 
         self.state = inputs.requested_state
-        allowed = self.state in (SupervisorState.FOLLOWING, SupervisorState.APPROACHING)
+        allowed = self.state in (
+            SupervisorState.FOLLOWING,
+            SupervisorState.ORBITING,
+            SupervisorState.APPROACHING,
+        )
         return SupervisorDecision(self.state, allowed, None)

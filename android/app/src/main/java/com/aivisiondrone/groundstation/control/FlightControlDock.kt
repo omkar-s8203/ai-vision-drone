@@ -173,8 +173,8 @@ private fun RowScope.ArmDisarmButton(armed: Boolean, onClick: () -> Unit, modifi
     ) {
         Icon(Icons.Filled.FlightTakeoff, contentDescription = null, modifier = Modifier.size(18.dp))
         Text(
-            text = if (armed) "  DISARM" else "  ARM",
-            modifier = Modifier.padding(start = 4.dp),
+            text = if (armed) "DISARM" else "ARM",
+            modifier = Modifier.padding(start = 6.dp),
         )
     }
 }

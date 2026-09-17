@@ -36,6 +36,12 @@ Fixed so far:
   match), and `compileSdk` to 35. `targetSdk` deliberately left at 34 for
   now - that's a separate, larger decision (new runtime behavior opt-in)
   from just compiling against newer APIs.
+- **`Unresolved reference 'ExposedDropdownMenu'`** in `FlightControlDock.kt`
+  - `ExposedDropdownMenu` is a member function of Material3's
+  `ExposedDropdownMenuBoxScope`, not a top-level composable, so importing it
+  from `androidx.compose.material3` fails. The call site inside
+  `ExposedDropdownMenuBox`'s content lambda already resolves it correctly
+  via the implicit receiver - the fix was simply deleting the bad import.
 
 Confirmed live end-to-end against **real hardware** (not just sim): real
 camera video, real on-sensor AI detection, and real MAVLink telemetry from
@@ -52,16 +58,32 @@ message and `target_select`'s new `point: true` payload shape. These
 compile-clean by inspection but haven't been through a real Android Studio
 build yet - expect the usual round of paste-back-the-error fixes.
 
-**Newest, not yet build-verified**: arm/disarm (with a confirmation dialog
-before arming), an FC flight-mode dropdown, and a video-record toggle with a
-live duration readout, all in the new `FlightControlDock.kt` - wired through
+Arm/disarm (with a confirmation dialog before arming), an FC flight-mode
+dropdown, and a video-record toggle with a live duration readout, all in
+`FlightControlDock.kt` - wired through
 `GroundStationClient.sendArmCommand`/`sendSetFlightMode`/`sendRecordCommand`
-and `MainViewModel.setArmed`/`setFlightMode`/`toggleRecording`. Also a
-ground-control-style dark theme (`ui/theme/Theme.kt`, `DroneColors`) applied
-across `MainActivity`, `HealthPanel`, `TelemetryPanel`, `ModeControls`, and
-`AbortButton` - card-based panels, a status-color palette (green/amber/red),
-and `material-icons-extended` added to `build.gradle.kts` for icon buttons.
-None of this has been through a real Android Studio build yet.
+and `MainViewModel.setArmed`/`setFlightMode`/`toggleRecording`. A
+ground-control-style dark theme (`ui/theme/Theme.kt`, `DroneColors`) is
+applied across the app - card-based panels, a status-color palette
+(green/amber/red), and `material-icons-extended` for icon buttons.
+
+**Newest, not yet build-verified**: full DJI-Fly-style restructure into four
+tabs (`GroundStationScreen.kt` now hosts a bottom `NavigationBar` on phones
+or a side `NavigationRail` on tablets/wide screens, switching between
+`ui/tabs/FlyTab.kt`, `ControlTab.kt`, `AiModesTab.kt`, `SettingsTab.kt`) -
+the video/selection view, direct FC control, AI guidance modes, and
+connection settings each get their own screen instead of one crowded
+layout. The emergency abort button is rendered outside all tab content so
+it stays reachable no matter which tab is open. Also new: an **Orbit**
+guidance mode (the DJI "circle"/point-of-interest shot) - `DroneMode.ORBITING`
+sends `orbit_radius_m`/`orbit_altitude_m` on `mode_command`
+(`companion/guidance/orbit.py` on the Pi side), `TrackingOverlay.kt` draws a
+rotating dashed circle around the target while orbiting, and a new
+`TargetActionSheet.kt` pops up right after a tap/drag target selection
+(DJI's focus-track flow) offering Track/Follow/Orbit/Cancel instead of
+requiring a trip to a separate mode screen. None of this has been through a
+real Android Studio build yet - the four-tab restructure in particular
+touches almost every screen, so expect a real round of build errors.
 
 ## Layout
 
@@ -72,18 +94,25 @@ app/src/main/java/com/aivisiondrone/groundstation/
   video/        WebRtcClient.kt (receive-only WebRTC peer connection)
   control/      TargetSelectionOverlay.kt (tap-to-select + drag-to-select),
                 DetectionsOverlay.kt (all live detections, labeled),
-                TrackingOverlay.kt (the one actively-tracked box),
-                ModeControls.kt (mode buttons + separation/altitude sliders),
+                TrackingOverlay.kt (tracked box + rotating orbit ring),
+                TargetActionSheet.kt (Track/Follow/Orbit/Cancel quick menu),
+                ModeControls.kt (mode buttons + follow/orbit sliders),
                 FlightControlDock.kt (arm/disarm, FC mode dropdown, record
                 toggle), AbortButton.kt
   telemetry/    TelemetryModels.kt, TelemetryPanel.kt, HealthPanel.kt
-  ui/           GroundStationScreen.kt (top-level layout),
+  ui/           GroundStationScreen.kt (Scaffold + bottom nav/side rail
+                host), AppTab.kt, LinkStatusChip.kt,
                 theme/Theme.kt (dark ground-control color scheme)
+  ui/tabs/      FlyTab.kt (video + overlays + quick action sheet),
+                ControlTab.kt (FlightControlDock, full screen),
+                AiModesTab.kt (ModeControls + live detections list),
+                SettingsTab.kt (Pi host/port connection)
   MainActivity.kt, MainViewModel.kt (MVVM glue)
 
 app/src/androidTest/java/com/aivisiondrone/groundstation/
   GroundStationScreenTest.kt (instrumented Compose UI tests - abort
-  reachability, mode controls, drag-gesture smoke test)
+  reachability across every tab, mode controls in the AI Modes tab,
+  flight control dock in the Control tab, drag-gesture smoke test)
 ```
 
 ## Known gaps

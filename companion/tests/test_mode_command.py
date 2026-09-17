@@ -5,6 +5,7 @@ from companion.config.loader import load_yaml
 from companion.guidance.approach_test import ApproachTestController
 from companion.guidance.distance import CameraIntrinsics, DistanceEstimator
 from companion.guidance.follow import FollowController
+from companion.guidance.orbit import OrbitController
 from companion.logging_.session_recorder import SessionRecorder
 from companion.main import CompanionOrchestrator
 from companion.mavlink.bridge import MavlinkBridge
@@ -20,6 +21,7 @@ from companion.vision.detector import BBox, Detection, PassthroughDetector
 
 def _build_minimal_orchestrator(tmp_path):
     follow_cfg = load_yaml("follow_limits.yaml")
+    orbit_cfg = load_yaml("orbit_limits.yaml")
     approach_cfg = load_yaml("approach_limits.yaml")
     calib_cfg = load_yaml("camera_calibration.yaml")
     watchdog = HeartbeatWatchdog(timeout_s=2.0)
@@ -31,6 +33,7 @@ def _build_minimal_orchestrator(tmp_path):
         tracker=IouKalmanTracker(),
         distance_estimator=DistanceEstimator(CameraIntrinsics.from_dict(calib_cfg)),
         follow_controller=FollowController(follow_cfg),
+        orbit_controller=OrbitController(orbit_cfg),
         approach_controller=ApproachTestController(approach_cfg),
         mavlink=MavlinkBridge("udpin:127.0.0.1:14680"),
         rc_monitor=RcOverrideMonitor(deadband=approach_cfg["rc_override_deadband"]),

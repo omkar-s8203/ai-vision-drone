@@ -24,6 +24,7 @@ from companion.config.loader import load_yaml
 from companion.guidance.approach_test import ApproachInputs, ApproachTestController
 from companion.guidance.distance import CameraIntrinsics, DistanceEstimator
 from companion.guidance.follow import FollowController
+from companion.guidance.orbit import OrbitController
 from companion.logging_.session_recorder import SessionRecorder
 from companion.logging_.setup import configure_logging
 from companion.mavlink.bridge import MavlinkBridge
@@ -52,6 +53,7 @@ MODE_COMMAND_MAP = {
     "idle": SupervisorState.IDLE,
     "tracking": SupervisorState.TRACKING,
     "follow": SupervisorState.FOLLOWING,
+    "orbit": SupervisorState.ORBITING,
     "approach": SupervisorState.APPROACHING,
 }
 
@@ -66,6 +68,7 @@ class CompanionOrchestrator:
         tracker: Tracker,
         distance_estimator: DistanceEstimator,
         follow_controller: FollowController,
+        orbit_controller: OrbitController,
         approach_controller: ApproachTestController,
         mavlink: MavlinkBridge,
         rc_monitor: RcOverrideMonitor,
@@ -83,6 +86,7 @@ class CompanionOrchestrator:
         self.state_machine = TrackingStateMachine(tracker, reacquire_timeout_s)
         self.distance_estimator = distance_estimator
         self.follow = follow_controller
+        self.orbit = orbit_controller
         self.approach = approach_controller
         self.mavlink = mavlink
         self.rc_monitor = rc_monitor
@@ -144,11 +148,19 @@ class CompanionOrchestrator:
         altitude = payload.get("follow_altitude_m")
         if altitude is not None:
             self.follow.limits["target_altitude_m"] = float(altitude)
+        orbit_radius = payload.get("orbit_radius_m")
+        if orbit_radius is not None:
+            self.orbit.limits["orbit_radius_m"] = float(orbit_radius)
+        orbit_altitude = payload.get("orbit_altitude_m")
+        if orbit_altitude is not None:
+            self.orbit.limits["target_altitude_m"] = float(orbit_altitude)
         self.recorder.record(
             "mode_command",
             mode=mode.name,
             follow_separation_m=separation,
             follow_altitude_m=altitude,
+            orbit_radius_m=orbit_radius,
+            orbit_altitude_m=orbit_altitude,
         )
 
     def _on_abort(self, payload: dict) -> None:
@@ -261,6 +273,15 @@ class CompanionOrchestrator:
         command = None
         if decision.state == SupervisorState.FOLLOWING and self.state_machine.target is not None:
             command = self.follow.compute(
+                self.state_machine.target,
+                distance_m,
+                frame.width,
+                frame.height,
+                dt,
+                current_altitude_m=self.mavlink.telemetry.alt_m,
+            )
+        elif decision.state == SupervisorState.ORBITING and self.state_machine.target is not None:
+            command = self.orbit.compute(
                 self.state_machine.target,
                 distance_m,
                 frame.width,
@@ -403,6 +424,7 @@ def build_sim_orchestrator() -> tuple[CompanionOrchestrator, "object"]:
     hardware_cfg = load_yaml("hardware.yaml")
     network_cfg = load_yaml("network.yaml")
     follow_cfg = load_yaml("follow_limits.yaml")
+    orbit_cfg = load_yaml("orbit_limits.yaml")
     approach_cfg = load_yaml("approach_limits.yaml")
     calib_cfg = load_yaml("camera_calibration.yaml")
 
@@ -419,6 +441,7 @@ def build_sim_orchestrator() -> tuple[CompanionOrchestrator, "object"]:
     tracker = IouKalmanTracker()
     distance_estimator = DistanceEstimator(CameraIntrinsics.from_dict(calib_cfg))
     follow_controller = FollowController(follow_cfg)
+    orbit_controller = OrbitController(orbit_cfg)
     approach_controller = ApproachTestController(approach_cfg)
 
     mock_fc = MockFlightController(f"udpin:127.0.0.1:{SIM_FC_UDP_PORT}")
@@ -453,6 +476,7 @@ def build_sim_orchestrator() -> tuple[CompanionOrchestrator, "object"]:
     orchestrator = CompanionOrchestrator(
         camera=camera, detector=detector, tracker=tracker,
         distance_estimator=distance_estimator, follow_controller=follow_controller,
+        orbit_controller=orbit_controller,
         approach_controller=approach_controller, mavlink=mavlink, rc_monitor=rc_monitor,
         supervisor=supervisor, watchdog=watchdog, link=link, recorder=recorder,
         video_pipeline=video_pipeline,
@@ -468,6 +492,7 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
     hardware_cfg = load_yaml("hardware.yaml")
     network_cfg = load_yaml("network.yaml")
     follow_cfg = load_yaml("follow_limits.yaml")
+    orbit_cfg = load_yaml("orbit_limits.yaml")
     approach_cfg = load_yaml("approach_limits.yaml")
     calib_cfg = load_yaml("camera_calibration.yaml")
 
@@ -482,6 +507,7 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
     tracker = IouKalmanTracker()
     distance_estimator = DistanceEstimator(CameraIntrinsics.from_dict(calib_cfg))
     follow_controller = FollowController(follow_cfg)
+    orbit_controller = OrbitController(orbit_cfg)
     approach_controller = ApproachTestController(approach_cfg)
     mavlink = MavlinkBridge(
         hardware_cfg["mavlink"]["connection"], baud=hardware_cfg["mavlink"]["baud"]
@@ -508,6 +534,7 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
     return CompanionOrchestrator(
         camera=camera, detector=detector, tracker=tracker,
         distance_estimator=distance_estimator, follow_controller=follow_controller,
+        orbit_controller=orbit_controller,
         approach_controller=approach_controller, mavlink=mavlink, rc_monitor=rc_monitor,
         supervisor=supervisor, watchdog=watchdog, link=link, recorder=recorder,
         video_pipeline=video_pipeline, video_recorder=video_recorder,

@@ -11,6 +11,7 @@ from companion.config.loader import load_yaml
 from companion.guidance.approach_test import ApproachTestController
 from companion.guidance.distance import CameraIntrinsics, DistanceEstimator
 from companion.guidance.follow import FollowController
+from companion.guidance.orbit import OrbitController
 from companion.logging_.session_recorder import SessionRecorder
 from companion.main import CompanionOrchestrator
 from companion.mavlink.bridge import MavlinkBridge
@@ -31,6 +32,7 @@ async def test_orchestrator_routes_webrtc_offer_through_to_a_real_answer(tmp_pat
     (see test_video_pipeline.py) or the message routing in isolation (see
     test_ws_server.py)."""
     follow_cfg = load_yaml("follow_limits.yaml")
+    orbit_cfg = load_yaml("orbit_limits.yaml")
     approach_cfg = load_yaml("approach_limits.yaml")
     calib_cfg = load_yaml("camera_calibration.yaml")
 
@@ -47,6 +49,7 @@ async def test_orchestrator_routes_webrtc_offer_through_to_a_real_answer(tmp_pat
         tracker=IouKalmanTracker(),
         distance_estimator=DistanceEstimator(CameraIntrinsics.from_dict(calib_cfg)),
         follow_controller=FollowController(follow_cfg),
+        orbit_controller=OrbitController(orbit_cfg),
         approach_controller=ApproachTestController(approach_cfg),
         mavlink=MavlinkBridge("udpin:127.0.0.1:14670"),
         rc_monitor=RcOverrideMonitor(deadband=approach_cfg["rc_override_deadband"]),

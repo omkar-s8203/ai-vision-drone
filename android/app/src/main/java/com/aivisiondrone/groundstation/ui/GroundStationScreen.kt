@@ -1,23 +1,21 @@
 package com.aivisiondrone.groundstation.ui
 
 import android.content.Context
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.NavigationRailItemDefaults
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -25,31 +23,27 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.toSize
-import androidx.compose.ui.viewinterop.AndroidView
 import com.aivisiondrone.groundstation.MainViewModel
-import com.aivisiondrone.groundstation.comms.LinkState
 import com.aivisiondrone.groundstation.control.AbortButton
-import com.aivisiondrone.groundstation.control.DetectionsOverlay
-import com.aivisiondrone.groundstation.control.FlightControlDock
-import com.aivisiondrone.groundstation.control.ModeControls
-import com.aivisiondrone.groundstation.control.TargetSelectionOverlay
-import com.aivisiondrone.groundstation.control.TrackingOverlay
-import com.aivisiondrone.groundstation.telemetry.HealthPanel
-import com.aivisiondrone.groundstation.telemetry.TelemetryPanel
 import com.aivisiondrone.groundstation.ui.theme.DroneColors
+import com.aivisiondrone.groundstation.ui.tabs.AiModesTab
+import com.aivisiondrone.groundstation.ui.tabs.ControlTab
+import com.aivisiondrone.groundstation.ui.tabs.FlyTab
+import com.aivisiondrone.groundstation.ui.tabs.SettingsTab
 import org.webrtc.EglBase
-import org.webrtc.SurfaceViewRenderer
 
-private const val DEFAULT_HOST = "192.168.4.1" // typical Pi-as-WiFi-AP gateway address
-private const val DEFAULT_PORT = 8765 // matches companion/config/network.yaml ws_port
-private const val ASSUMED_VIDEO_WIDTH = 1280.0
-private const val ASSUMED_VIDEO_HEIGHT = 720.0
+/** Width above which we switch from a bottom nav bar to a side nav rail -
+ * standard Material breakpoint for "the screen is wide enough that a
+ * bottom bar wastes vertical space" (tablets, foldables opened flat). */
+private val WIDE_SCREEN_BREAKPOINT = 600.dp
 
+/**
+ * Top-level ground-station layout: a DJI-Fly-style tabbed structure (Fly /
+ * Control / AI Modes / Settings) instead of one crowded screen, with the
+ * emergency abort button kept outside all tab content so it is reachable
+ * no matter which tab is open (docs plan M6).
+ */
 @Composable
 fun GroundStationScreen(viewModel: MainViewModel, eglBase: EglBase, context: Context) {
     val linkState by viewModel.linkState.collectAsState()
@@ -60,160 +54,118 @@ fun GroundStationScreen(viewModel: MainViewModel, eglBase: EglBase, context: Con
     val mode by viewModel.mode.collectAsState()
     val followSeparation by viewModel.followSeparationM.collectAsState()
     val followAltitude by viewModel.followAltitudeM.collectAsState()
+    val orbitRadius by viewModel.orbitRadiusM.collectAsState()
+    val orbitAltitude by viewModel.orbitAltitudeM.collectAsState()
     val remoteVideoTrack by viewModel.remoteVideoTrack.collectAsState()
     val recording by viewModel.recording.collectAsState()
+    val showTargetActionSheet by viewModel.showTargetActionSheet.collectAsState()
 
-    var host by remember { mutableStateOf(DEFAULT_HOST) }
-    var port by remember { mutableStateOf(DEFAULT_PORT.toString()) }
-    var rendererRef by remember { mutableStateOf<SurfaceViewRenderer?>(null) }
-    var overlaySizePx by remember { mutableStateOf(Size.Zero) }
+    var selectedTab by remember { mutableStateOf(AppTab.FLY) }
 
-    val videoWidth = tracking.imageWidth?.toDouble() ?: ASSUMED_VIDEO_WIDTH
-    val videoHeight = tracking.imageHeight?.toDouble() ?: ASSUMED_VIDEO_HEIGHT
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val isWideScreen = maxWidth >= WIDE_SCREEN_BREAKPOINT
 
-    DisposableEffect(remoteVideoTrack, rendererRef) {
-        val renderer = rendererRef
-        val track = remoteVideoTrack
-        if (renderer != null && track != null) {
-            track.addSink(renderer)
-        }
-        onDispose {
-            if (renderer != null && track != null) {
-                track.removeSink(renderer)
+        val content: @Composable (Modifier) -> Unit = { contentModifier ->
+            when (selectedTab) {
+                AppTab.FLY -> FlyTab(
+                    viewModel = viewModel,
+                    eglBase = eglBase,
+                    context = context,
+                    linkState = linkState,
+                    telemetry = telemetry,
+                    health = health,
+                    tracking = tracking,
+                    detections = detections,
+                    mode = mode,
+                    remoteVideoTrack = remoteVideoTrack,
+                    showTargetActionSheet = showTargetActionSheet,
+                    modifier = contentModifier,
+                )
+                AppTab.CONTROL -> ControlTab(
+                    viewModel = viewModel,
+                    telemetry = telemetry,
+                    recording = recording,
+                    modifier = contentModifier,
+                )
+                AppTab.AI -> AiModesTab(
+                    viewModel = viewModel,
+                    mode = mode,
+                    followSeparationM = followSeparation,
+                    followAltitudeM = followAltitude,
+                    orbitRadiusM = orbitRadius,
+                    orbitAltitudeM = orbitAltitude,
+                    tracking = tracking,
+                    detections = detections,
+                    modifier = contentModifier,
+                )
+                AppTab.SETTINGS -> SettingsTab(
+                    viewModel = viewModel,
+                    eglBase = eglBase,
+                    context = context,
+                    linkState = linkState,
+                    modifier = contentModifier,
+                )
             }
         }
-    }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .onSizeChanged { overlaySizePx = it.toSize() },
-    ) {
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { ctx ->
-                SurfaceViewRenderer(ctx).apply {
-                    init(eglBase.eglBaseContext, null)
-                    setMirror(false)
-                    rendererRef = this
-                }
-            },
-        )
-
-        DetectionsOverlay(detections = detections, modifier = Modifier.fillMaxSize())
-
-        TargetSelectionOverlay(
-            modifier = Modifier.fillMaxSize(),
-            onTapSelect = { point ->
-                if (overlaySizePx.width > 0f && overlaySizePx.height > 0f) {
-                    val scaleX = videoWidth / overlaySizePx.width
-                    val scaleY = videoHeight / overlaySizePx.height
-                    viewModel.selectTargetAtPoint(x = point.x * scaleX, y = point.y * scaleY)
-                }
-            },
-            onSelectionComplete = { rect: Rect ->
-                if (overlaySizePx.width > 0f && overlaySizePx.height > 0f) {
-                    val scaleX = videoWidth / overlaySizePx.width
-                    val scaleY = videoHeight / overlaySizePx.height
-                    viewModel.selectTarget(
-                        x = rect.left * scaleX,
-                        y = rect.top * scaleY,
-                        w = rect.width * scaleX,
-                        h = rect.height * scaleY,
-                    )
-                }
-            },
-        )
-
-        TrackingOverlay(tracking = tracking, modifier = Modifier.fillMaxSize())
-
-        Column(
-            modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            HealthPanel(health = health)
-            LinkStatusChip(linkState = linkState)
-        }
-
-        TelemetryPanel(
-            telemetry = telemetry,
-            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
-        )
-
-        AbortButton(onAbort = { viewModel.abort() }, modifier = Modifier.align(Alignment.BottomEnd))
-
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            if (linkState != LinkState.CONNECTED) {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = DroneColors.Surface.copy(alpha = 0.92f)),
-                ) {
-                    Row(
-                        modifier = Modifier.padding(10.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        OutlinedTextField(
-                            value = host,
-                            onValueChange = { host = it },
-                            label = { Text("Pi host") },
-                            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = DroneColors.TextPrimary, unfocusedTextColor = DroneColors.TextPrimary),
+        if (isWideScreen) {
+            Row(modifier = Modifier.fillMaxSize()) {
+                NavigationRail(containerColor = DroneColors.Surface) {
+                    AppTab.entries.forEach { tab ->
+                        NavigationRailItem(
+                            selected = tab == selectedTab,
+                            onClick = { selectedTab = tab },
+                            icon = { Icon(tab.icon, contentDescription = tab.label) },
+                            label = { Text(tab.label) },
+                            colors = NavigationRailItemDefaults.colors(
+                                selectedIconColor = DroneColors.Accent,
+                                selectedTextColor = DroneColors.Accent,
+                                unselectedIconColor = DroneColors.TextSecondary,
+                                unselectedTextColor = DroneColors.TextSecondary,
+                                indicatorColor = DroneColors.SurfaceElevated,
+                            ),
                         )
-                        OutlinedTextField(
-                            value = port,
-                            onValueChange = { port = it },
-                            label = { Text("Port") },
-                            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = DroneColors.TextPrimary, unfocusedTextColor = DroneColors.TextPrimary),
-                        )
-                        Button(
-                            onClick = { port.toIntOrNull()?.let { viewModel.connect(context, eglBase, host, it) } },
-                            colors = ButtonDefaults.buttonColors(containerColor = DroneColors.Accent, contentColor = androidx.compose.ui.graphics.Color(0xFF00232A)),
-                        ) { Text("Connect") }
                     }
                 }
+                Box(modifier = Modifier.fillMaxSize()) {
+                    content(Modifier.fillMaxSize())
+                    AbortButton(
+                        onAbort = { viewModel.abort() },
+                        modifier = Modifier.align(Alignment.BottomEnd),
+                    )
+                }
             }
-            FlightControlDock(
-                armed = telemetry.armed,
-                flightMode = telemetry.flightMode,
-                recording = recording.recording,
-                recordingDurationS = recording.durationS,
-                onArmChanged = { viewModel.setArmed(it) },
-                onFlightModeSelected = { viewModel.setFlightMode(it) },
-                onToggleRecording = { viewModel.toggleRecording() },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            ModeControls(
-                currentMode = mode,
-                followSeparationM = followSeparation,
-                followAltitudeM = followAltitude,
-                onModeSelected = { viewModel.setMode(it) },
-                onFollowSeparationChanged = { viewModel.setFollowSeparation(it) },
-                onFollowAltitudeChanged = { viewModel.setFollowAltitude(it) },
-            )
+        } else {
+            Scaffold(
+                bottomBar = {
+                    NavigationBar(containerColor = DroneColors.Surface) {
+                        AppTab.entries.forEach { tab ->
+                            NavigationBarItem(
+                                selected = tab == selectedTab,
+                                onClick = { selectedTab = tab },
+                                icon = { Icon(tab.icon, contentDescription = tab.label) },
+                                label = { Text(tab.label) },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = DroneColors.Accent,
+                                    selectedTextColor = DroneColors.Accent,
+                                    unselectedIconColor = DroneColors.TextSecondary,
+                                    unselectedTextColor = DroneColors.TextSecondary,
+                                    indicatorColor = DroneColors.SurfaceElevated,
+                                ),
+                            )
+                        }
+                    }
+                },
+                containerColor = DroneColors.Background,
+            ) { paddingValues ->
+                Box(modifier = Modifier.padding(paddingValues).fillMaxSize()) {
+                    content(Modifier.fillMaxSize())
+                    AbortButton(
+                        onAbort = { viewModel.abort() },
+                        modifier = Modifier.align(Alignment.BottomEnd),
+                    )
+                }
+            }
         }
-    }
-}
-
-@Composable
-private fun LinkStatusChip(linkState: LinkState) {
-    val color = when (linkState) {
-        LinkState.CONNECTED -> DroneColors.Safe
-        LinkState.CONNECTING -> DroneColors.Warning
-        LinkState.DISCONNECTED -> DroneColors.Danger
-    }
-    Card(
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = DroneColors.Overlay),
-    ) {
-        Text(
-            text = "LINK: ${linkState.name}",
-            color = color,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-        )
     }
 }

@@ -7,6 +7,7 @@ from companion.config.loader import load_yaml
 from companion.guidance.approach_test import ApproachTestController
 from companion.guidance.distance import CameraIntrinsics, DistanceEstimator
 from companion.guidance.follow import FollowController
+from companion.guidance.orbit import OrbitController
 from companion.logging_.session_recorder import SessionRecorder
 from companion.main import CompanionOrchestrator
 from companion.mavlink.bridge import MavlinkBridge
@@ -32,6 +33,7 @@ async def test_follow_mode_sends_setpoints_then_rc_override_halts_them(tmp_path)
     pilot's RC override immediately and unconditionally halts guidance
     output, per the project's non-negotiable safety requirement."""
     follow_cfg = load_yaml("follow_limits.yaml")
+    orbit_cfg = load_yaml("orbit_limits.yaml")
     approach_cfg = load_yaml("approach_limits.yaml")
     calib_cfg = load_yaml("camera_calibration.yaml")
 
@@ -59,6 +61,7 @@ async def test_follow_mode_sends_setpoints_then_rc_override_halts_them(tmp_path)
         tracker=IouKalmanTracker(),
         distance_estimator=DistanceEstimator(CameraIntrinsics.from_dict(calib_cfg)),
         follow_controller=FollowController(follow_cfg),
+        orbit_controller=OrbitController(orbit_cfg),
         approach_controller=ApproachTestController(approach_cfg),
         mavlink=mavlink,
         rc_monitor=RcOverrideMonitor(deadband=approach_cfg["rc_override_deadband"]),

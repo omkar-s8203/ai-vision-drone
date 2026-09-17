@@ -1,0 +1,8 @@
+# Appearance-based target memory (companion/tracking/appearance.py) - "AI
+# learning mode": when a target is selected, a lightweight color-histogram
+# signature is captured; if the target is fully lost (TARGET_LOST, not just
+# the tracker's own short in-frame REACQUIRE window), new detections are
+# compared against it each frame so the same target can be auto-relocked
+# without a re-tap. Only meaningful with a real camera frame source
+# (hardware mode) - a no-op in sim, same as VideoRecorder.
+min_similarity: 0.65

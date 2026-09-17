@@ -39,6 +39,7 @@ from companion.safety.supervisor import (
     SupervisorState,
 )
 from companion.safety.watchdog import HeartbeatWatchdog, SystemdWatchdog
+from companion.tracking.appearance import AppearanceMemory
 from companion.tracking.base import Tracker
 from companion.tracking.iou_tracker import IouKalmanTracker
 from companion.tracking.state import TrackingState, TrackingStateMachine
@@ -89,6 +90,7 @@ class CompanionOrchestrator:
         video_pipeline: Optional["VideoPipeline"] = None,
         video_recorder: Optional[VideoRecorder] = None,
         smart_shot_controller: Optional[SmartShotController] = None,
+        appearance_memory: Optional[AppearanceMemory] = None,
         reacquire_timeout_s: float = 2.0,
         min_obstacle_distance_m: float = 2.0,
     ) -> None:
@@ -100,6 +102,7 @@ class CompanionOrchestrator:
         self.orbit = orbit_controller
         self.approach = approach_controller
         self.smart_shot = smart_shot_controller or SmartShotController(load_yaml("smart_shot_limits.yaml"))
+        self.appearance = appearance_memory or AppearanceMemory(**load_yaml("reidentification.yaml"))
         self.min_obstacle_distance_m = min_obstacle_distance_m
         self.mavlink = mavlink
         self.rc_monitor = rc_monitor
@@ -188,6 +191,7 @@ class CompanionOrchestrator:
         self.approach.stop()
         self.smart_shot.stop()
         self.state_machine.stop()
+        self.appearance.forget()
         self.recorder.record("abort", reason=payload.get("reason"))
 
     def _on_arm_command(self, payload: dict) -> None:
@@ -240,6 +244,15 @@ class CompanionOrchestrator:
         )
         await self._perception_loop()
 
+    def _camera_frame(self):
+        """Safe accessor for the camera's latest real pixel array - `camera`
+        can be None in tests that drive process_frame() directly without a
+        real camera backend, and CameraBase.get_latest_frame() itself
+        already returns None for backends with no real image data (sim)."""
+        if self.camera is None:
+            return None
+        return self.camera.get_latest_frame()
+
     async def process_frame(self, frame) -> dict:
         """Runs one full perception -> tracking -> guidance -> safety cycle
         for a single frame. Split out from `_perception_loop` so tests can
@@ -250,7 +263,7 @@ class CompanionOrchestrator:
             self._recent_frame_ts.pop(0)
         self._frame_size = (frame.width, frame.height)
         if self.video_recorder is not None and self.video_recorder.is_recording:
-            self.video_recorder.write(self.camera.get_latest_frame())
+            self.video_recorder.write(self._camera_frame())
         detections = self.detector.parse(frame.raw_detection_output, frame.ts)
 
         if self._pending_selection is not None and self.state_machine.state == TrackingState.IDLE:
@@ -262,10 +275,24 @@ class CompanionOrchestrator:
                 det = select_target(detections, bbox)
             if det is not None:
                 self.state_machine.start(frame.ts, det)
+                self.appearance.learn(self._camera_frame(), self.state_machine.target)
             self._pending_selection = None
 
         tracking_state = self.state_machine.update(frame.ts, detections)
         self.watchdog.beat("tracker")
+
+        if tracking_state == TrackingState.TARGET_LOST and self.appearance.has_signature:
+            # "AI learning mode": the tracker's own REACQUIRE window (above)
+            # is short and motion/IoU-based - this is the longer-term
+            # fallback once a target has genuinely left frame and come
+            # back, matched by remembered appearance instead of requiring
+            # the operator to re-tap it.
+            rematch = self.appearance.find_match(self._camera_frame(), detections)
+            if rematch is not None:
+                self.state_machine.start(frame.ts, rematch)
+                self.appearance.learn(self._camera_frame(), self.state_machine.target)
+                tracking_state = self.state_machine.state
+                self.recorder.record("appearance_reacquired", class_name=rematch.class_name)
 
         distance_m = None
         if self.state_machine.target is not None:

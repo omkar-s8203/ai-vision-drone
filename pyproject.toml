@@ -32,6 +32,16 @@ dev = [
 testpaths = ["companion/tests"]
 asyncio_mode = "auto"
 
+[tool.setuptools.packages.find]
+# Repo root also has sim/ (dev-only test harness) and android/ (a separate
+# Kotlin/Gradle project, not Python at all) as top-level directories -
+# setuptools' automatic discovery refuses to guess between them ("Multiple
+# top-level packages discovered in a flat-layout") and fails the build
+# entirely. Only companion/ is meant to be installed; sim/ is imported via
+# the working directory being on sys.path when running `python -m
+# companion.main` from the repo root in sim mode, not via this package.
+include = ["companion*"]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"

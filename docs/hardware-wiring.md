@@ -143,6 +143,42 @@ regulation, not just the Pi.
   the FC) is already wired to those same pins, since the two signals are
   then expected to be independent, not correlated.
 
+## Software deployment on the Pi (real bugs found)
+
+Getting `pip install -e ".[video]"` and `python -m companion.main` running
+cleanly on real Pi hardware (as opposed to this dev machine, where both
+had already been exercised) surfaced two more real bugs, neither hardware
+related:
+
+- **`pip install -e ".[video]"` failed outright**: `error: Multiple
+  top-level packages discovered in a flat-layout: ['sim', 'android',
+  'companion']`. `pyproject.toml` had no explicit package list, so
+  setuptools' automatic discovery refused to guess between `companion/`
+  (the actual Python package), `sim/` (a dev-only test harness, imported
+  via the working directory being on `sys.path` when running from the repo
+  root - never meant to be pip-installed), and `android/` (a separate
+  Kotlin/Gradle project, not Python at all). Fixed with an explicit
+  `[tool.setuptools.packages.find] include = ["companion*"]`. Until this
+  landed, the install silently never happened, so `import websockets`
+  (and everything else in `pyproject.toml`) failed with
+  `ModuleNotFoundError` - the actual bug was one screen up from that error.
+- **Two different venvs, both literally named `mavlink-venv`**, one at
+  `~/ai-vision-drone/mavlink-venv` (created with `--system-site-packages`,
+  can see the apt-installed `picamera2`) and one at `~/mavlink-venv`
+  (created without it, can't). Since a shell prompt only shows a venv's
+  directory *basename* (`(mavlink-venv)`), both looked identical at a
+  glance, and activating the wrong one produced
+  `ModuleNotFoundError: No module named 'picamera2'` that looked like a
+  missing system package even though `picamera2` was correctly installed
+  via `apt` the whole time. Diagnosed by comparing `sys.prefix` and each
+  venv's `pyvenv.cfg` (`include-system-site-packages`) directly rather than
+  trusting the prompt. **Lesson: if a venv looks broken in a way that
+  contradicts what you already verified system-wide, check `sys.prefix` /
+  `echo $VIRTUAL_ENV` before assuming the system package installation is
+  wrong** - the deploy/`ai-vision-drone.service` systemd unit now pins an
+  absolute path to the correct venv specifically to avoid this class of
+  mistake recurring at boot time.
+
 ## Open items
 
 - **Power source for flight**: Pi is currently bench-powered from a wall

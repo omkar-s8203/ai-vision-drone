@@ -150,6 +150,56 @@ Detach with `Ctrl+B` then `D`; reattach later with `tmux attach -t companion`.
 You should see `server listening on 0.0.0.0:8765` with no errors. Note the
 Pi's IP (`hostname -I`) - you'll need it for the Android app.
 
+## 7a. Auto-start on boot (systemd)
+
+Once step 7 works manually, make it survive reboots and crashes instead of
+needing a `tmux` session kept alive by hand:
+
+```
+sudo cp deploy/ai-vision-drone.service /etc/systemd/system/
+sudo systemctl daemon-reload
+```
+
+**Before enabling it**, open `/etc/systemd/system/ai-vision-drone.service`
+and check three lines actually match your setup:
+```
+User=omkar
+WorkingDirectory=/home/omkar/ai-vision-drone
+ExecStart=/home/omkar/ai-vision-drone/mavlink-venv/bin/python3 -m companion.main
+```
+The `ExecStart` path in particular must point at the **venv that was
+actually created with `--system-site-packages`** (needed for `picamera2`) -
+if you have more than one venv lying around, verify with:
+```
+grep include-system-site-packages /path/to/your/venv/pyvenv.cfg
+```
+(this exact mix-up - two differently-located venvs both literally named
+the same thing, only one of them able to see `picamera2` - is a real
+mistake made during this project's own bring-up; see
+`docs/hardware-wiring.md` for the full story).
+
+Then enable and start it:
+```
+sudo systemctl enable --now ai-vision-drone
+sudo systemctl status ai-vision-drone
+```
+`status` should show `active (running)`. Watch its logs live with:
+```
+journalctl -u ai-vision-drone -f
+```
+
+If you were also running it manually in `tmux`, stop that session first
+(`Ctrl+C` inside it) - the IMX500 camera can only be opened by one process
+at a time, and the systemd-managed instance will otherwise fail to start
+with a "Device or resource busy" error (see the troubleshooting table).
+
+Common commands going forward:
+```
+sudo systemctl restart ai-vision-drone   # after a code update (see step 9)
+sudo systemctl stop ai-vision-drone      # to free the camera for manual testing
+sudo systemctl disable ai-vision-drone   # to stop it auto-starting on boot
+```
+
 ## 8. Android Ground Station app
 
 1. Open `android/` in Android Studio.
@@ -172,14 +222,25 @@ the dev machine doesn't push to either of them automatically.
 
 ### Pi (companion code)
 
-If it's running in the `tmux` session from step 7:
+**If it's running under systemd** (step 7a):
+```
+cd ~/ai-vision-drone
+git pull
+pip install -e ".[video]"   # safe to always run - see note below
+sudo systemctl restart ai-vision-drone
+journalctl -u ai-vision-drone -f   # confirm it came back up cleanly
+```
+`pip install` needs to run as whichever user/venv the service uses (i.e.
+with that venv active), not as root - activate it first, or call that
+venv's `pip` by full path.
 
+**If it's still running manually in the `tmux` session from step 7:**
 ```
 tmux attach -t companion
 # Ctrl+C to stop the running process
 cd ~/ai-vision-drone
 git pull
-pip install -e ".[video]"   # only does real work if dependencies changed
+pip install -e ".[video]"
 COMPANION_MODE=hardware python3 -m companion.main
 ```
 
@@ -191,14 +252,6 @@ classic way to hit a confusing `ModuleNotFoundError` right after a pull -
 just always run it. New/changed `.yaml` files under `companion/config/`
 need no separate step - `git pull` updates them directly since they're
 tracked files, not generated ones.
-
-If you've since turned this into a proper systemd service (see M15 in the
-root README - not done yet as of this writing), the equivalent is:
-```
-git pull
-pip install -e ".[video]"
-sudo systemctl restart ai-vision-drone   # or whatever unit name you used
-```
 
 ### Android app
 
@@ -235,7 +288,9 @@ and how each was diagnosed from the actual Gradle error output.
 |---|---|
 | No heartbeat / zero bytes on `/dev/serial0` | Baud mismatch - try 57600 even if you set something else on the FC; verify with `cat /dev/serial0 \| od -An -tx1` for raw bytes before assuming wiring is wrong |
 | `ModuleNotFoundError: No module named 'pymavlink'` (or similar) | The venv isn't activated in this shell - `source ~/ai-vision-drone/.venv/bin/activate` |
-| `Device or resource busy` from the IMX500 | Another process already has the camera open - check for a leftover `tmux` session (`tmux ls`) or process (`pgrep -af companion.main`) |
+| `error: Multiple top-level packages discovered in a flat-layout` from `pip install -e` | Already fixed in this repo (`pyproject.toml`'s `[tool.setuptools.packages.find]`) - if you see this, `git pull` to get the fix |
+| `ModuleNotFoundError: No module named 'picamera2'` even though `dpkg -l \| grep picamera2` shows it installed | Wrong venv active, or the active one wasn't created with `--system-site-packages`. Check with `echo $VIRTUAL_ENV` and `grep include-system-site-packages "$VIRTUAL_ENV/pyvenv.cfg"` - don't trust the `(name)` in your prompt if you have more than one venv sharing that name (see docs/hardware-wiring.md) |
+| `Device or resource busy` from the IMX500 | Another process already has the camera open - check for a leftover `tmux` session (`tmux ls`), a running systemd service (`systemctl status ai-vision-drone`), or process (`pgrep -af companion.main`) - only one can hold the camera at a time |
 | Pi freezes/red-LED-only under video load | Under-voltage - check power supply (need 5V/5A), run `vcgencmd get_throttled` (non-zero = a real power/thermal event was detected) |
 | Video colors look wrong (blue-tinted) | Already fixed in this repo - `Picamera2IMX500Camera` requests `"RGB888"` specifically because picamera2's format names are inverted relative to actual channel order; if you see this, make sure you're on the latest `git pull` |
 | Can't reach the Pi's WebSocket from the phone | Confirm both are on the same WiFi network/subnet; a laptop building the Android app is not necessarily on the same network as the Pi |

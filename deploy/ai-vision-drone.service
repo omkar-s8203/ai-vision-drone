@@ -1,0 +1,35 @@
+[Unit]
+Description=AI Vision Drone companion (vision/AI/guidance stack)
+# Not a hard requirement (the companion should still come up and wait even
+# without network yet), but avoids racing the WiFi/network stack on boot
+# for the WebSocket/video server.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=omkar
+Group=omkar
+WorkingDirectory=/home/omkar/ai-vision-drone
+Environment=COMPANION_MODE=hardware
+# Adjust this path if your venv has a different name/location - see
+# INSTALL.md step 4. Must be the venv actually created with
+# --system-site-packages (picamera2 lives in system site-packages, not pip).
+ExecStart=/home/omkar/ai-vision-drone/mavlink-venv/bin/python3 -m companion.main
+
+# Crash recovery - if the process dies (exception, killed, etc.) systemd
+# brings it back. Deliberately does NOT auto-resume Follow/Orbit/Approach
+# guidance on restart: CompanionOrchestrator always starts in IDLE
+# (docs plan M10 - restart must never come back up already flying a
+# guidance mode with no operator confirmation).
+Restart=on-failure
+RestartSec=3
+
+# Keep the companion's own log lines out of the fixed-size systemd journal
+# and in the app's own rotating file logs (companion/logging_/setup.py
+# already configures that) - avoid double-logging noise.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

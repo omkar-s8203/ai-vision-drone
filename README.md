@@ -42,7 +42,7 @@ The flight controller remains the sole flight authority at all times. RC overrid
 | M12 | Performance Optimization | Not started (deliberately deferred until correctness is proven, per plan) | 0% |
 | M13 | Testing Strategy & Simulation-Before-Flight | Synthetic target generator + mock flight controller + full end-to-end integration tests all passing (75/75 tests), backed by live device tests (sim) and now live hardware tests (real camera/detection/video/MAVLink) | 82% |
 | M14 | Real-Flight Testing Stages | Not started - blocked on drone mounting | 0% |
-| M15 | Deployment & Monitoring | Orchestrator runs standalone (`python -m companion.main`) in both sim and hardware mode, confirmed on real Pi; systemd unit file not yet written | 35% |
+| M15 | Deployment & Monitoring | Orchestrator runs standalone (`python -m companion.main`) in both sim and hardware mode, confirmed on real Pi. Systemd unit (`deploy/ai-vision-drone.service`) now written - auto-starts on boot, `Restart=on-failure` on crash - see INSTALL.md step 7a. Not yet confirmed surviving an actual power-cycle test on the Pi | 55% |
 | M16 | Future Scalability | Design notes only (not implementation-gated) | n/a |
 
 Test suite: `.venv/Scripts/python -m pytest -q` → 136 passed. Android: real

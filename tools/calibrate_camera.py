@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+"""Camera intrinsics calibration for the vision-only distance estimator
+(docs plan M4). Fits fx/fy/cx/cy from a set of checkerboard photos taken
+with the actual Raspberry Pi AI Camera, at the actual resolution it runs at
+(see companion/config/hardware.yaml's camera.width/height) - intrinsics are
+resolution-specific, so recalibrate if that resolution ever changes.
+
+How to capture the photos (on the Pi):
+    rpicam-still -o calib_01.jpg --width 1280 --height 720
+    (repeat 15-20 times, moving/tilting a printed checkerboard pattern
+    around the frame - corners, edges, and different distances/angles all
+    matter for a good fit; a single frontal shot is not enough)
+
+Usage:
+    python tools/calibrate_camera.py --images "calib_photos/*.jpg" \
+        --board-cols 9 --board-rows 6
+
+    --board-cols/--board-rows count INNER corners (where four squares
+    meet), not the number of squares - a standard 10x7-square printed
+    checkerboard has 9x6 inner corners, which is why those are the
+    defaults.
+
+Writes companion/config/camera_calibration.yaml directly - the fallback
+pinhole distance estimator (companion/guidance/distance.py) reads it. Pass
+--dry-run to see the fitted result without overwriting the file.
+"""
+
+from __future__ import annotations
+
+import argparse
+import glob
+from pathlib import Path
+from typing import Optional
+
+import cv2
+import numpy as np
+import yaml
+
+CONFIG_PATH = Path(__file__).resolve().parent.parent / "companion" / "config" / "camera_calibration.yaml"
+MIN_USABLE_IMAGES = 5
+
+
+def find_corners(
+    image_paths: list[str], board_size: tuple[int, int]
+) -> tuple[list[np.ndarray], list[np.ndarray], Optional[tuple[int, int]]]:
+    """Returns (object_points, image_points, image_size) for every image
+    where the checkerboard was actually detected. Images that can't be
+    read, don't match the first image's resolution, or don't show a
+    detectable checkerboard are skipped with a printed reason, not treated
+    as fatal - a few bad shots in a batch of 15-20 is normal and expected.
+    """
+    objp = np.zeros((board_size[0] * board_size[1], 3), np.float32)
+    objp[:, :2] = np.mgrid[0 : board_size[0], 0 : board_size[1]].T.reshape(-1, 2)
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+
+    object_points: list[np.ndarray] = []
+    image_points: list[np.ndarray] = []
+    image_size: Optional[tuple[int, int]] = None
+
+    for path in image_paths:
+        image = cv2.imread(path)
+        if image is None:
+            print(f"  skip {path}: could not read image")
+            continue
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        this_size = (gray.shape[1], gray.shape[0])  # (width, height)
+        if image_size is None:
+            image_size = this_size
+        elif this_size != image_size:
+            print(
+                f"  skip {path}: resolution {this_size[0]}x{this_size[1]} doesn't match "
+                f"the first image's {image_size[0]}x{image_size[1]} - all calibration photos "
+                "must be the same resolution as the camera's actual configured stream"
+            )
+            continue
+
+        found, corners = cv2.findChessboardCorners(gray, board_size)
+        if not found:
+            print(f"  skip {path}: checkerboard not detected")
+            continue
+
+        refined = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
+        object_points.append(objp)
+        image_points.append(refined)
+        print(f"  ok   {path}")
+
+    print(f"\n{len(object_points)}/{len(image_paths)} images used")
+    return object_points, image_points, image_size
+
+
+def calibrate(
+    object_points: list[np.ndarray], image_points: list[np.ndarray], image_size: tuple[int, int]
+) -> dict:
+    if len(object_points) < MIN_USABLE_IMAGES:
+        raise SystemExit(
+            f"Only {len(object_points)} usable image(s) - need at least {MIN_USABLE_IMAGES}, ideally "
+            "15-20 covering different angles/distances/positions in frame. See the module "
+            "docstring for how to capture a good set."
+        )
+
+    reproj_error, camera_matrix, _dist_coeffs, _rvecs, _tvecs = cv2.calibrateCamera(
+        object_points, image_points, image_size, None, None
+    )
+
+    fx, fy = float(camera_matrix[0, 0]), float(camera_matrix[1, 1])
+    cx, cy = float(camera_matrix[0, 2]), float(camera_matrix[1, 2])
+
+    print(
+        f"\nReprojection error: {reproj_error:.3f} px "
+        f"({'good' if reproj_error < 0.5 else 'high - consider recapturing with more/better-varied images'})"
+    )
+    print(f"fx={fx:.1f}  fy={fy:.1f}  cx={cx:.1f}  cy={cy:.1f}")
+
+    return {
+        "image_width": image_size[0],
+        "image_height": image_size[1],
+        "fx": round(fx, 2),
+        "fy": round(fy, 2),
+        "cx": round(cx, 2),
+        "cy": round(cy, 2),
+    }
+
+
+def write_config(result: dict, out_path: Path) -> None:
+    header = (
+        "# Generated by tools/calibrate_camera.py - real fitted intrinsics, not a\n"
+        "# placeholder. Re-run if the camera's configured resolution\n"
+        "# (companion/config/hardware.yaml's camera.width/height) ever changes - these\n"
+        "# values are resolution-specific.\n"
+    )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(header + yaml.safe_dump(result, sort_keys=False))
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument(
+        "--images", required=True, help='Glob pattern for calibration photos, e.g. "calib_photos/*.jpg"'
+    )
+    parser.add_argument("--board-cols", type=int, default=9, help="Inner corners across the board's width (default: 9)")
+    parser.add_argument("--board-rows", type=int, default=6, help="Inner corners across the board's height (default: 6)")
+    parser.add_argument(
+        "--out", type=Path, default=CONFIG_PATH,
+        help="Where to write the resulting YAML (default: companion/config/camera_calibration.yaml)",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="Print the result without overwriting the config file")
+    args = parser.parse_args()
+
+    image_paths = sorted(glob.glob(args.images))
+    if not image_paths:
+        raise SystemExit(f"No files matched --images {args.images!r}")
+
+    print(f"Found {len(image_paths)} candidate images\n")
+    object_points, image_points, image_size = find_corners(image_paths, (args.board_cols, args.board_rows))
+    if image_size is None:
+        raise SystemExit("No readable images found - check --images glob pattern")
+
+    result = calibrate(object_points, image_points, image_size)
+
+    if args.dry_run:
+        print("\n--dry-run: not writing the config file. Result:")
+        print(yaml.safe_dump(result, sort_keys=False))
+        return
+
+    write_config(result, args.out)
+    print(f"\nWrote {args.out}")
+
+
+if __name__ == "__main__":
+    main()

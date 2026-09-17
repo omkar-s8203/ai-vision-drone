@@ -14,6 +14,7 @@ COPTER_MODE_TO_NUMBER = {
     "LOITER": 5,
     "RTL": 6,
 }
+COPTER_NUMBER_TO_MODE = {number: name for name, number in COPTER_MODE_TO_NUMBER.items()}
 
 
 class MockFlightController:
@@ -90,8 +91,17 @@ class MockFlightController:
             msg = self._conn.recv_match(blocking=False)
             if msg is None:
                 break
-            if msg.get_type() == "SET_POSITION_TARGET_LOCAL_NED":
+            msg_type = msg.get_type()
+            if msg_type == "SET_POSITION_TARGET_LOCAL_NED":
                 self.received_setpoints.append((msg.vx, msg.vy, msg.vz, msg.yaw_rate))
+            elif msg_type == "COMMAND_LONG" and msg.command == mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM:
+                # Real ArduPilot would reject an arm request with pre-arm
+                # checks failing etc. - this mock always accepts it, which
+                # is fine for testing that the command reaches the FC at
+                # all, not for testing ArduPilot's own arming logic.
+                self.armed = bool(msg.param1)
+            elif msg_type == "SET_MODE":
+                self.fc_mode = COPTER_NUMBER_TO_MODE.get(msg.custom_mode, self.fc_mode)
 
     async def run(self, rate_hz: float = 4.0) -> None:
         period = 1.0 / rate_hz

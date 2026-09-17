@@ -31,7 +31,7 @@ The flight controller remains the sole flight authority at all times. RC overrid
 | M1 | Hardware Integration & Pi Setup | Pi 5 + AI Camera + flight controller all wired and confirmed working together on a bench. Drone mounting, flight-battery power source, and weight/thermal checks not done yet | 50% |
 | M2 | AI Camera / Detection | **Confirmed on real hardware** end-to-end through our own code, not a demo script | 85% |
 | M3 | Tracking, Target Selection, Reacquisition | Implemented, unit-tested, confirmed live from a real phone (sim + now real camera). New appearance-based re-identification (`companion/tracking/appearance.py`, "AI learning mode"): a color-histogram signature is captured on target selection, and if the target is fully lost (not just the tracker's own short in-frame REACQUIRE window), new detections are matched against it each frame so the same target auto-relocks without a re-tap - unit- and integration-tested, hardware-only (needs real pixel data). ByteTrack swap-in still a stub | 88% |
-| M4 | Distance Estimation | Vision (pinhole) estimator implemented + tested, now also feeding the obstacle-proximity safety check (M10). Rangefinder hardware addition still open (see plan) | 55% |
+| M4 | Distance Estimation | Vision (pinhole) estimator implemented + tested, now also feeding the obstacle-proximity safety check (M10). `tools/calibrate_camera.py` written and unit-tested (checkerboard-based intrinsics fit, matches `CameraIntrinsics`/`camera_calibration.yaml` exactly) - not yet run against real Pi camera photos, so the config still holds placeholder values. Rangefinder hardware addition still open (see plan) | 62% |
 | M5 | Video Streaming & Pi↔Android Comms | **Confirmed live on real hardware**: real camera video, correct colors, over real WebRTC/ICE to a real phone. Local on-Pi video recording (`VideoRecorder`, independent of the WebRTC feed) now implemented, unit-tested, and hardened against a real silent-failure codec bug. Real frame-rate bug found and fixed: the camera loop was double-pacing itself (a redundant `asyncio.sleep()` on top of the hardware capture call already blocking at the configured rate), halving a configured 30 FPS down to ~15 FPS observed - see hardware-wiring.md. GStreamer hardware-encode path still stubbed (current path is the CPU-heavy software-encode "quick bringup" one, which caused one crash on inadequate power) | 87% |
 | M6 | Android Ground Station App | **Build-verified**: real `gradle assembleDebug` succeeded and the app has been installed and running on a physical device across several rounds of changes (three real compile/layout errors found and fixed this way - see android/README.md). Restructured into a DJI-Fly-style 4-tab layout (Fly/Control/AI Modes/Settings), a tap-to-select quick action sheet, an orbit-ring overlay, a guidance-warning banner, and Dronie/Parabola mode buttons. Not yet functionally verified against a live companion session (sim or hardware) | 83% |
 | M7 | MAVLink / Flight-Controller / RC Override | **Real MAVLink link confirmed working**: heartbeat + 10Hz ATTITUDE over TELEM1 @ 57600 baud with a real Cube Orange. Administrative `arm()`/`set_mode()` commands added and unit-tested, wired end-to-end from the Android arm/mode controls through `GroundStationLink`/`CompanionOrchestrator`. `FLTMODE_CH` RC-override switch not yet configured on the transmitter - that's the one piece of this milestone still open | 82% |
@@ -40,12 +40,12 @@ The flight controller remains the sole flight authority at all times. RC overrid
 | M10 | Safety Architecture & Watchdog | Supervisor + heartbeat/systemd watchdogs implemented, fault-injection-style unit tests passing, abort's reset-to-idle confirmed live (sim). Cross-mode obstacle-proximity guard (`companion/safety/proximity_guard.py`): any detected object closer than `min_obstacle_distance_m`, not just the tracked target, forces the Supervisor to SAFE - unit-tested, and surfaced to the operator via a visible warning banner in the Android app | 80% |
 | M11 | Logging | Structured JSON logging + session recorder implemented and wired in | 70% |
 | M12 | Performance Optimization | Not started (deliberately deferred until correctness is proven, per plan) | 0% |
-| M13 | Testing Strategy & Simulation-Before-Flight | Synthetic target generator + mock flight controller + full end-to-end integration tests all passing (75/75 tests), backed by live device tests (sim) and now live hardware tests (real camera/detection/video/MAVLink) | 82% |
+| M13 | Testing Strategy & Simulation-Before-Flight | Synthetic target generator + mock flight controller + full end-to-end integration tests all passing (160/160 tests), backed by live device tests (sim) and live hardware tests (real camera/detection/video/MAVLink). New: a real end-to-end test drives the actual JSON wire protocol over a real WebSocket + real MAVLink to a real (mock) FC (`test_integration_websocket.py`) - every other integration test used an in-process fake transport, so this is the first automated proof the wire protocol itself (not just the Python objects behind it) works; `MockFlightController` also now reflects real arm/set-mode MAVLink commands, not just guidance setpoints | 86% |
 | M14 | Real-Flight Testing Stages | Not started - blocked on drone mounting | 0% |
 | M15 | Deployment & Monitoring | Orchestrator runs standalone (`python -m companion.main`) in both sim and hardware mode, confirmed on real Pi. Systemd unit (`deploy/ai-vision-drone.service`) now written - auto-starts on boot, `Restart=on-failure` on crash - see INSTALL.md step 7a. Not yet confirmed surviving an actual power-cycle test on the Pi | 55% |
 | M16 | Future Scalability | Design notes only (not implementation-gated) | n/a |
 
-Test suite: `.venv/Scripts/python -m pytest -q` → 153 passed. Android: real
+Test suite: `.venv/Scripts/python -m pytest -q` → 160 passed. Android: real
 `gradle assembleDebug` builds clean; the app has run on a physical device
 (Android SDK/Gradle distribution found locally and used directly, bypassing
 the earlier "no Android SDK here" limitation). First real-device usage
@@ -59,11 +59,13 @@ configured 30 FPS down to ~15 FPS).
 
 ## What's next
 
-1. **Functionally verify the Android app against a live companion** - the
-   4-tab layout, Orbit/Dronie/Parabola modes, target action sheet,
-   arm/disarm, flight-mode dropdown, record-video toggle, and the
-   obstacle-warning banner all build and launch cleanly, but none of it has
-   been exercised against a running companion session yet (connect to
+1. **Functionally verify the Android app itself against a live companion** -
+   a real WebSocket/MAVLink client (this test suite's new
+   `test_integration_websocket.py`) now proves the *protocol and backend*
+   work end-to-end, but the Android app's own UI (4-tab layout,
+   Orbit/Dronie/Parabola modes, target action sheet, arm/disarm,
+   flight-mode dropdown, record-video toggle, obstacle-warning banner) is
+   still only build-verified, not exercised live (connect the real app to
    `COMPANION_MODE=sim` and walk through each tab for real).
 2. **Run `companion.main` in hardware mode with the FC actually connected** -
    so far we've only proven the camera/video path and the MAVLink link
@@ -74,9 +76,11 @@ configured 30 FPS down to ~15 FPS).
    safety-critical override chain is real, not just sim-tested.
 4. Get a heatsink/fan for the Pi 5 before further sustained video-mode
    testing - confirmed running hot/marginal under combined AI+video load.
-5. Real distance calibration (`tools/calibrate_camera.py` isn't written
-   yet) and the M4 rangefinder hardware decision, before Follow/Approach-Test
-   get anywhere near a real flight.
+5. **Run `tools/calibrate_camera.py` against real checkerboard photos taken
+   with the actual Pi camera** (the tool itself is written and tested, just
+   never run against real hardware images) and make the M4 rangefinder
+   hardware decision, before Follow/Approach-Test get anywhere near a real
+   flight.
 6. Mounting on the aircraft, weight/power/thermal checks, then the staged
    real-flight testing sequence in the plan (M14) - props-off bench first.
 

@@ -1,0 +1,10 @@
+# Cross-mode safety limits (apply during Follow/Orbit/Approach alike),
+# separate from each guidance controller's own tuning limits.
+#
+# min_obstacle_distance_m: if ANY currently detected object (not just the
+# tracked target) is estimated closer than this, the Safety Supervisor
+# forces SAFE and all guidance output stops - a fast-closing obstacle is
+# just as dangerous as the followed subject getting too close. Uses the
+# same vision/rangefinder DistanceEstimator as Follow/Orbit, so it inherits
+# the same accuracy caveats (see docs plan M4) - deliberately conservative.
+min_obstacle_distance_m: 2.0

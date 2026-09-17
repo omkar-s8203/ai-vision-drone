@@ -1,3 +1,4 @@
+from companion.safety.proximity_guard import ObstacleAlert
 from companion.safety.supervisor import REQUIRED_SUBSYSTEMS, SafetySupervisor, SupervisorInputs, SupervisorState
 from companion.safety.watchdog import HeartbeatWatchdog
 from companion.tracking.state import TrackingState
@@ -87,3 +88,28 @@ def test_idle_request_never_allows_guidance():
     decision = supervisor.evaluate(base_inputs(requested_state=SupervisorState.IDLE))
     assert decision.state == SupervisorState.IDLE
     assert decision.guidance_allowed is False
+
+
+def test_obstacle_too_close_forces_safe():
+    supervisor = SafetySupervisor(fresh_watchdog())
+    alert = ObstacleAlert(class_name="wall", distance_m=1.2)
+    decision = supervisor.evaluate(base_inputs(obstacle_alert=alert))
+    assert decision.state == SupervisorState.SAFE
+    assert decision.guidance_allowed is False
+    assert decision.reason == "obstacle_too_close:wall:1.2m"
+
+
+def test_no_obstacle_alert_allows_guidance():
+    supervisor = SafetySupervisor(fresh_watchdog())
+    decision = supervisor.evaluate(base_inputs(obstacle_alert=None))
+    assert decision.guidance_allowed is True
+
+
+def test_obstacle_alert_takes_priority_over_comms_lost_reason():
+    """Order matters for the reported reason (both force SAFE either way) -
+    the more physically urgent obstacle warning should be visible in logs/
+    telemetry even if comms happens to be down in the same frame."""
+    supervisor = SafetySupervisor(fresh_watchdog())
+    alert = ObstacleAlert(class_name="person", distance_m=0.8)
+    decision = supervisor.evaluate(base_inputs(obstacle_alert=alert, comms_alive=False))
+    assert decision.reason == "obstacle_too_close:person:0.8m"

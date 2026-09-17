@@ -42,6 +42,10 @@ Fixed so far:
   from `androidx.compose.material3` fails. The call site inside
   `ExposedDropdownMenuBox`'s content lambda already resolves it correctly
   via the implicit receiver - the fix was simply deleting the bad import.
+- **Missing `TrackingState` import** in `TrackingOverlay.kt` after adding
+  the orbit-ring feature - a real `Unresolved reference 'TrackingState'`
+  (plus a cascade of ~20 follow-on errors on every field access) caught by
+  a real Gradle build.
 
 Confirmed live end-to-end against **real hardware** (not just sim): real
 camera video, real on-sensor AI detection, and real MAVLink telemetry from
@@ -67,23 +71,32 @@ ground-control-style dark theme (`ui/theme/Theme.kt`, `DroneColors`) is
 applied across the app - card-based panels, a status-color palette
 (green/amber/red), and `material-icons-extended` for icon buttons.
 
-**Newest, not yet build-verified**: full DJI-Fly-style restructure into four
-tabs (`GroundStationScreen.kt` now hosts a bottom `NavigationBar` on phones
-or a side `NavigationRail` on tablets/wide screens, switching between
-`ui/tabs/FlyTab.kt`, `ControlTab.kt`, `AiModesTab.kt`, `SettingsTab.kt`) -
-the video/selection view, direct FC control, AI guidance modes, and
-connection settings each get their own screen instead of one crowded
-layout. The emergency abort button is rendered outside all tab content so
-it stays reachable no matter which tab is open. Also new: an **Orbit**
-guidance mode (the DJI "circle"/point-of-interest shot) - `DroneMode.ORBITING`
-sends `orbit_radius_m`/`orbit_altitude_m` on `mode_command`
-(`companion/guidance/orbit.py` on the Pi side), `TrackingOverlay.kt` draws a
-rotating dashed circle around the target while orbiting, and a new
-`TargetActionSheet.kt` pops up right after a tap/drag target selection
-(DJI's focus-track flow) offering Track/Follow/Orbit/Cancel instead of
-requiring a trip to a separate mode screen. None of this has been through a
-real Android Studio build yet - the four-tab restructure in particular
-touches almost every screen, so expect a real round of build errors.
+**Build-verified** (real `gradle assembleDebug` + installed and launched on
+a physical device, no crash on launch): the full DJI-Fly-style restructure
+into four tabs (`GroundStationScreen.kt` now hosts a bottom `NavigationBar`
+on phones or a side `NavigationRail` on tablets/wide screens, switching
+between `ui/tabs/FlyTab.kt`, `ControlTab.kt`, `AiModesTab.kt`,
+`SettingsTab.kt`) - the video/selection view, direct FC control, AI
+guidance modes, and connection settings each get their own screen instead
+of one crowded layout. The emergency abort button is rendered outside all
+tab content so it stays reachable no matter which tab is open. Also
+build-verified: an **Orbit** guidance mode (the DJI "circle"/
+point-of-interest shot) - `DroneMode.ORBITING` sends `orbit_radius_m`/
+`orbit_altitude_m` on `mode_command` (`companion/guidance/orbit.py` on the
+Pi side), `TrackingOverlay.kt` draws a rotating dashed circle around the
+target while orbiting, and `TargetActionSheet.kt` pops up right after a
+tap/drag target selection (DJI's focus-track flow) offering
+Track/Follow/Orbit/Cancel. **Not yet functionally verified** - launch was
+confirmed crash-free, but no live session against a running companion (sim
+or hardware) has exercised the new tabs/modes end-to-end yet.
+
+**Newest, not yet build-verified**: `GuidanceWarningBanner.kt` surfaces the
+Safety Supervisor's `guidance_reason` (previously parsed into
+`TrackingState.guidanceReason` but never actually displayed anywhere) as a
+visible on-screen warning in the Fly tab whenever guidance is blocked -
+including the new obstacle-proximity trip (`companion/safety/
+proximity_guard.py`: any detection, not just the tracked target, closer
+than `min_obstacle_distance_m` forces the Safety Supervisor to SAFE).
 
 ## Layout
 
@@ -96,6 +109,8 @@ app/src/main/java/com/aivisiondrone/groundstation/
                 DetectionsOverlay.kt (all live detections, labeled),
                 TrackingOverlay.kt (tracked box + rotating orbit ring),
                 TargetActionSheet.kt (Track/Follow/Orbit/Cancel quick menu),
+                GuidanceWarningBanner.kt (shows why guidance stopped, e.g.
+                obstacle too close, RC override, target lost),
                 ModeControls.kt (mode buttons + follow/orbit sliders),
                 FlightControlDock.kt (arm/disarm, FC mode dropdown, record
                 toggle), AbortButton.kt

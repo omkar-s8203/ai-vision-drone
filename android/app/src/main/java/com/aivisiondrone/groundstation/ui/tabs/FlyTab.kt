@@ -24,6 +24,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.aivisiondrone.groundstation.MainViewModel
 import com.aivisiondrone.groundstation.control.DetectionsOverlay
 import com.aivisiondrone.groundstation.control.DroneMode
+import com.aivisiondrone.groundstation.control.GuidanceWarningBanner
 import com.aivisiondrone.groundstation.control.TargetActionSheet
 import com.aivisiondrone.groundstation.control.TargetSelectionOverlay
 import com.aivisiondrone.groundstation.control.TrackingOverlay
@@ -141,6 +142,15 @@ fun FlyTab(
             telemetry = telemetry,
             modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
         )
+
+        tracking.guidanceReason?.let { reason ->
+            GuidanceWarningBanner(
+                reason = reason,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 64.dp),
+            )
+        }
 
         if (showTargetActionSheet) {
             TargetActionSheet(

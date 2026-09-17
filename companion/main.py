@@ -30,6 +30,7 @@ from companion.logging_.setup import configure_logging
 from companion.mavlink.bridge import MavlinkBridge
 from companion.mavlink.rc_monitor import RcOverrideMonitor
 from companion.safety.contact_sensor import ContactSensor, NullContactSensor
+from companion.safety.proximity_guard import check_proximity
 from companion.safety.supervisor import (
     REQUIRED_SUBSYSTEMS,
     SafetySupervisor,
@@ -80,6 +81,7 @@ class CompanionOrchestrator:
         video_pipeline: Optional["VideoPipeline"] = None,
         video_recorder: Optional[VideoRecorder] = None,
         reacquire_timeout_s: float = 2.0,
+        min_obstacle_distance_m: float = 2.0,
     ) -> None:
         self.camera = camera
         self.detector = detector
@@ -88,6 +90,7 @@ class CompanionOrchestrator:
         self.follow = follow_controller
         self.orbit = orbit_controller
         self.approach = approach_controller
+        self.min_obstacle_distance_m = min_obstacle_distance_m
         self.mavlink = mavlink
         self.rc_monitor = rc_monitor
         self.supervisor = supervisor
@@ -256,6 +259,12 @@ class CompanionOrchestrator:
         if comms_alive:
             self.watchdog.beat("comms")
 
+        obstacle_alert = check_proximity(detections, self.distance_estimator, self.min_obstacle_distance_m)
+        if obstacle_alert is not None:
+            self.recorder.record(
+                "obstacle_alert", class_name=obstacle_alert.class_name, distance_m=obstacle_alert.distance_m
+            )
+
         decision = self.supervisor.evaluate(
             SupervisorInputs(
                 fc_mode=self.mavlink.telemetry.fc_mode,
@@ -264,6 +273,7 @@ class CompanionOrchestrator:
                 tracking_state=tracking_state,
                 comms_alive=comms_alive,
                 requested_state=self.requested_mode,
+                obstacle_alert=obstacle_alert,
             )
         )
 
@@ -427,6 +437,7 @@ def build_sim_orchestrator() -> tuple[CompanionOrchestrator, "object"]:
     orbit_cfg = load_yaml("orbit_limits.yaml")
     approach_cfg = load_yaml("approach_limits.yaml")
     calib_cfg = load_yaml("camera_calibration.yaml")
+    safety_cfg = load_yaml("safety_limits.yaml")
 
     generator = SyntheticTargetGenerator(
         image_width=hardware_cfg["camera"]["width"], image_height=hardware_cfg["camera"]["height"]
@@ -480,6 +491,7 @@ def build_sim_orchestrator() -> tuple[CompanionOrchestrator, "object"]:
         approach_controller=approach_controller, mavlink=mavlink, rc_monitor=rc_monitor,
         supervisor=supervisor, watchdog=watchdog, link=link, recorder=recorder,
         video_pipeline=video_pipeline,
+        min_obstacle_distance_m=safety_cfg["min_obstacle_distance_m"],
     )
     return orchestrator, mock_fc
 
@@ -495,6 +507,7 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
     orbit_cfg = load_yaml("orbit_limits.yaml")
     approach_cfg = load_yaml("approach_limits.yaml")
     calib_cfg = load_yaml("camera_calibration.yaml")
+    safety_cfg = load_yaml("safety_limits.yaml")
 
     camera = Picamera2IMX500Camera(
         model_path=hardware_cfg["camera"]["imx500_model_path"],
@@ -538,6 +551,7 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
         approach_controller=approach_controller, mavlink=mavlink, rc_monitor=rc_monitor,
         supervisor=supervisor, watchdog=watchdog, link=link, recorder=recorder,
         video_pipeline=video_pipeline, video_recorder=video_recorder,
+        min_obstacle_distance_m=safety_cfg["min_obstacle_distance_m"],
     )
 
 

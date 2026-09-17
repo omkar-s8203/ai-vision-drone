@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.unit.dp
+import com.aivisiondrone.groundstation.telemetry.TrackingState
 import com.aivisiondrone.groundstation.ui.theme.DroneColors
 import kotlin.math.max
 

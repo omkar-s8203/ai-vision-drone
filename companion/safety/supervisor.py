@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Optional
 
+from companion.safety.proximity_guard import ObstacleAlert
 from companion.safety.watchdog import HeartbeatWatchdog
 from companion.tracking.state import TrackingState
 
@@ -27,6 +28,7 @@ class SupervisorInputs:
     tracking_state: TrackingState
     comms_alive: bool
     requested_state: SupervisorState
+    obstacle_alert: Optional[ObstacleAlert] = None
 
 
 @dataclass
@@ -38,9 +40,11 @@ class SupervisorDecision:
 
 class SafetySupervisor:
     """Single authority gating whether any guidance command may reach
-    MAVLink. Every guidance path (Follow, Approach-Test) must have its
-    output checked against `evaluate()` before it is sent - see docs plan
-    M10 and docs/safety-case.md.
+    MAVLink. Every guidance path (Follow, Orbit, Approach-Test) must have
+    its output checked against `evaluate()` before it is sent - see docs
+    plan M10 and docs/safety-case.md. Also applies a cross-mode obstacle
+    proximity check (companion/safety/proximity_guard.py) independent of
+    whichever guidance controller is active.
     """
 
     def __init__(self, watchdog: HeartbeatWatchdog) -> None:
@@ -56,6 +60,13 @@ class SafetySupervisor:
         if inputs.rc_override_active:
             self.state = SupervisorState.SAFE
             return SupervisorDecision(self.state, False, "rc_override")
+
+        if inputs.obstacle_alert is not None:
+            self.state = SupervisorState.SAFE
+            alert = inputs.obstacle_alert
+            return SupervisorDecision(
+                self.state, False, f"obstacle_too_close:{alert.class_name}:{alert.distance_m:.1f}m"
+            )
 
         if not inputs.comms_alive:
             self.state = SupervisorState.SAFE

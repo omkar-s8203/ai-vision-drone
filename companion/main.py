@@ -25,6 +25,7 @@ from companion.guidance.approach_test import ApproachInputs, ApproachTestControl
 from companion.guidance.distance import CameraIntrinsics, DistanceEstimator
 from companion.guidance.follow import FollowController
 from companion.guidance.orbit import OrbitController
+from companion.guidance.smart_shot import ShotType, SmartShotController, SmartShotState
 from companion.logging_.session_recorder import SessionRecorder
 from companion.logging_.setup import configure_logging
 from companion.mavlink.bridge import MavlinkBridge
@@ -56,6 +57,13 @@ MODE_COMMAND_MAP = {
     "follow": SupervisorState.FOLLOWING,
     "orbit": SupervisorState.ORBITING,
     "approach": SupervisorState.APPROACHING,
+    "dronie": SupervisorState.SMART_SHOT,
+    "parabola": SupervisorState.SMART_SHOT,
+}
+
+SHOT_TYPE_MAP = {
+    "dronie": ShotType.DRONIE,
+    "parabola": ShotType.PARABOLA,
 }
 
 AI_GUIDANCE_MODE_NAME = "GUIDED"
@@ -80,6 +88,7 @@ class CompanionOrchestrator:
         contact_sensor: Optional[ContactSensor] = None,
         video_pipeline: Optional["VideoPipeline"] = None,
         video_recorder: Optional[VideoRecorder] = None,
+        smart_shot_controller: Optional[SmartShotController] = None,
         reacquire_timeout_s: float = 2.0,
         min_obstacle_distance_m: float = 2.0,
     ) -> None:
@@ -90,6 +99,7 @@ class CompanionOrchestrator:
         self.follow = follow_controller
         self.orbit = orbit_controller
         self.approach = approach_controller
+        self.smart_shot = smart_shot_controller or SmartShotController(load_yaml("smart_shot_limits.yaml"))
         self.min_obstacle_distance_m = min_obstacle_distance_m
         self.mavlink = mavlink
         self.rc_monitor = rc_monitor
@@ -139,12 +149,19 @@ class CompanionOrchestrator:
             )
 
     def _on_mode_command(self, payload: dict) -> None:
-        mode = MODE_COMMAND_MAP.get(payload.get("mode", "idle"), SupervisorState.IDLE)
+        mode_str = payload.get("mode", "idle")
+        mode = MODE_COMMAND_MAP.get(mode_str, SupervisorState.IDLE)
         self.requested_mode = mode
         if mode == SupervisorState.APPROACHING:
             self.approach.start()
         else:
             self.approach.stop()
+        if mode == SupervisorState.SMART_SHOT:
+            shot_type = SHOT_TYPE_MAP.get(mode_str)
+            if shot_type is not None and not self.smart_shot.is_active:
+                self.smart_shot.start(shot_type)
+        else:
+            self.smart_shot.stop()
         separation = payload.get("follow_separation_m")
         if separation is not None:
             self.follow.limits["target_separation_m"] = float(separation)
@@ -169,6 +186,7 @@ class CompanionOrchestrator:
     def _on_abort(self, payload: dict) -> None:
         self.requested_mode = SupervisorState.IDLE
         self.approach.stop()
+        self.smart_shot.stop()
         self.state_machine.stop()
         self.recorder.record("abort", reason=payload.get("reason"))
 
@@ -313,6 +331,13 @@ class CompanionOrchestrator:
             command = result.command
             if result.abort_reason:
                 self.recorder.record("approach_abort", reason=result.abort_reason)
+        elif decision.state == SupervisorState.SMART_SHOT:
+            shot_result = self.smart_shot.update(
+                self.state_machine.target, frame.width, frame.height, dt
+            )
+            command = shot_result.command
+            if shot_result.state == SmartShotState.FINISHED:
+                self.recorder.record("smart_shot_finished")
 
         sent = False
         if command is not None and decision.guidance_allowed:
@@ -438,6 +463,7 @@ def build_sim_orchestrator() -> tuple[CompanionOrchestrator, "object"]:
     approach_cfg = load_yaml("approach_limits.yaml")
     calib_cfg = load_yaml("camera_calibration.yaml")
     safety_cfg = load_yaml("safety_limits.yaml")
+    smart_shot_cfg = load_yaml("smart_shot_limits.yaml")
 
     generator = SyntheticTargetGenerator(
         image_width=hardware_cfg["camera"]["width"], image_height=hardware_cfg["camera"]["height"]
@@ -454,6 +480,7 @@ def build_sim_orchestrator() -> tuple[CompanionOrchestrator, "object"]:
     follow_controller = FollowController(follow_cfg)
     orbit_controller = OrbitController(orbit_cfg)
     approach_controller = ApproachTestController(approach_cfg)
+    smart_shot_controller = SmartShotController(smart_shot_cfg)
 
     mock_fc = MockFlightController(f"udpin:127.0.0.1:{SIM_FC_UDP_PORT}")
     mock_fc.set_mode("GUIDED")
@@ -491,6 +518,7 @@ def build_sim_orchestrator() -> tuple[CompanionOrchestrator, "object"]:
         approach_controller=approach_controller, mavlink=mavlink, rc_monitor=rc_monitor,
         supervisor=supervisor, watchdog=watchdog, link=link, recorder=recorder,
         video_pipeline=video_pipeline,
+        smart_shot_controller=smart_shot_controller,
         min_obstacle_distance_m=safety_cfg["min_obstacle_distance_m"],
     )
     return orchestrator, mock_fc
@@ -508,6 +536,7 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
     approach_cfg = load_yaml("approach_limits.yaml")
     calib_cfg = load_yaml("camera_calibration.yaml")
     safety_cfg = load_yaml("safety_limits.yaml")
+    smart_shot_cfg = load_yaml("smart_shot_limits.yaml")
 
     camera = Picamera2IMX500Camera(
         model_path=hardware_cfg["camera"]["imx500_model_path"],
@@ -522,6 +551,7 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
     follow_controller = FollowController(follow_cfg)
     orbit_controller = OrbitController(orbit_cfg)
     approach_controller = ApproachTestController(approach_cfg)
+    smart_shot_controller = SmartShotController(smart_shot_cfg)
     mavlink = MavlinkBridge(
         hardware_cfg["mavlink"]["connection"], baud=hardware_cfg["mavlink"]["baud"]
     )
@@ -551,6 +581,7 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
         approach_controller=approach_controller, mavlink=mavlink, rc_monitor=rc_monitor,
         supervisor=supervisor, watchdog=watchdog, link=link, recorder=recorder,
         video_pipeline=video_pipeline, video_recorder=video_recorder,
+        smart_shot_controller=smart_shot_controller,
         min_obstacle_distance_m=safety_cfg["min_obstacle_distance_m"],
     )
 

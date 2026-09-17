@@ -17,6 +17,7 @@ class SupervisorState(Enum):
     FOLLOWING = auto()
     ORBITING = auto()
     APPROACHING = auto()
+    SMART_SHOT = auto()  # one-shot cinematic move (Dronie/Parabola) - see smart_shot.py
     SAFE = auto()  # fault or pilot override in effect - guidance disabled
 
 
@@ -80,6 +81,7 @@ class SafetySupervisor:
             SupervisorState.FOLLOWING,
             SupervisorState.ORBITING,
             SupervisorState.APPROACHING,
+            SupervisorState.SMART_SHOT,
         ):
             self.state = SupervisorState.SAFE
             return SupervisorDecision(self.state, False, "target_lost")
@@ -89,5 +91,6 @@ class SafetySupervisor:
             SupervisorState.FOLLOWING,
             SupervisorState.ORBITING,
             SupervisorState.APPROACHING,
+            SupervisorState.SMART_SHOT,
         )
         return SupervisorDecision(self.state, allowed, None)

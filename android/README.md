@@ -90,13 +90,26 @@ Track/Follow/Orbit/Cancel. **Not yet functionally verified** - launch was
 confirmed crash-free, but no live session against a running companion (sim
 or hardware) has exercised the new tabs/modes end-to-end yet.
 
-**Newest, not yet build-verified**: `GuidanceWarningBanner.kt` surfaces the
-Safety Supervisor's `guidance_reason` (previously parsed into
+**Build-verified**: `GuidanceWarningBanner.kt` surfaces the Safety
+Supervisor's `guidance_reason` (previously parsed into
 `TrackingState.guidanceReason` but never actually displayed anywhere) as a
 visible on-screen warning in the Fly tab whenever guidance is blocked -
-including the new obstacle-proximity trip (`companion/safety/
+including the obstacle-proximity trip (`companion/safety/
 proximity_guard.py`: any detection, not just the tracked target, closer
 than `min_obstacle_distance_m` forces the Safety Supervisor to SAFE).
+Installed and launched successfully on the same physical device as before.
+
+**Newest, build-verified but not installed on a device this round** (the
+test device was disconnected when this landed - `gradle assembleDebug`
+still succeeded cleanly): two new **Dronie**/**Parabola** smart-shot modes
+(`DroneMode.DRONIE`/`.PARABOLA` in `ModeControls.kt`, sending `mode: "dronie"`/
+`"parabola"` like any other mode) - one-shot cinematic camera moves (DJI
+"QuickShot" equivalent) implemented by `companion/guidance/smart_shot.py`
+on the Pi side. Each shot runs for a fixed duration, keeps the camera
+locked on the target via the same yaw PID Follow/Orbit use, then stops
+itself - the Android UI doesn't yet auto-revert the mode selector back to
+Normal RC when a shot finishes (a known minor gap, same as Approach-Test's
+existing behavior).
 
 ## Layout
 
@@ -111,7 +124,8 @@ app/src/main/java/com/aivisiondrone/groundstation/
                 TargetActionSheet.kt (Track/Follow/Orbit/Cancel quick menu),
                 GuidanceWarningBanner.kt (shows why guidance stopped, e.g.
                 obstacle too close, RC override, target lost),
-                ModeControls.kt (mode buttons + follow/orbit sliders),
+                ModeControls.kt (mode buttons, incl. Dronie/Parabola smart
+                shots, + follow/orbit sliders),
                 FlightControlDock.kt (arm/disarm, FC mode dropdown, record
                 toggle), AbortButton.kt
   telemetry/    TelemetryModels.kt, TelemetryPanel.kt, HealthPanel.kt

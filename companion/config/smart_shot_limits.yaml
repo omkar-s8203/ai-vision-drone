@@ -1,0 +1,13 @@
+# One-shot cinematic camera moves (DJI "QuickShot" equivalent) -
+# companion/guidance/smart_shot.py. Each shot runs for exactly duration_s
+# then stops itself; these are not continuous hold-state modes like
+# Follow/Orbit.
+duration_s: 6.0
+dronie_retreat_speed_mps: 3.0
+dronie_climb_speed_mps: 1.5
+parabola_speed_mps: 3.0
+parabola_climb_speed_mps: 2.0
+lateral_deadband_px: 20
+
+pid:
+  lateral: {kp: 0.004, ki: 0.0, kd: 0.001}

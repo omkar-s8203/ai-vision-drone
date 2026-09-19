@@ -223,16 +223,23 @@ just in-process Python calls.
 - No real SITL (ArduPilot software-in-the-loop) run exists for this
   project - `sim/mock_fc.py` is a lightweight MAVLink emulator, not real
   ArduPilot flight dynamics (see `sim/README.md`).
-- No bench test (props off, real hardware) of the full abort chain, or of
-  any guidance controller actually driving the real FC, has been performed
-  yet - this is the natural next step now that administrative MAVLink
-  commands are confirmed live. The `tracking_update` message now carries
-  the active controller's computed `commanded_vx_mps`/`vy_mps`/`vz_mps`/
-  `yaw_rate_rads` and `guidance_sent` live (Android's
-  `GuidanceCommandPanel`) specifically so this bench test has something to
-  watch before ever arming, per the plan's own staged procedure - the
-  dashboard itself is build-verified but has not yet been watched during
-  an actual dry-run.
-- No real-flight test has occurred - the plan's staged sequence (M14) is
-  entirely gated on the FLTMODE_CH hardware configuration and geofence
-  wiring gaps above being closed first.
+- **A bench test (props off, on the mounted aircraft) has now been done** -
+  M14 stage 1, confirming the full stack (camera, AI, video, MAVLink) runs
+  together on the actual airframe. This was explicitly a no-motion,
+  no-guidance-engaged step: it did not exercise the abort chain, and no
+  guidance controller was engaged, so it says nothing about whether
+  Follow/Orbit/Approach-Test can actually drive the real FC safely - that
+  is still the next, separate bench session to run, now with the live
+  dashboard (`tracking_update`'s `commanded_vx_mps`/`vy_mps`/`vz_mps`/
+  `yaw_rate_rads`/`guidance_sent`, Android's `GuidanceCommandPanel`) ready
+  to watch while props stay off.
+- No real-flight test (motors spinning, aircraft airborne) has occurred.
+  Per the plan's staged sequence (M14): stage 1 (bench, props off, done
+  above) and stage 2 (tethered/ground hover, Normal RC, Pi passive - no AI
+  guidance active) don't depend on `FLTMODE_CH` or the geofence signal at
+  all, since the Pi isn't driving anything yet in either. Stage 3 (free
+  flight, Normal RC, AI Tracking active but not driving) is the same.
+  **`FLTMODE_CH` and the real-ArduPilot-confirmed geofence signal become
+  load-bearing starting at stage 4** (Follow-mode actually flying) - that
+  stage, and everything after it, is correctly gated on both being closed
+  first; stages 1-3 are not.

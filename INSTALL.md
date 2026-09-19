@@ -299,3 +299,18 @@ See `docs/hardware-wiring.md` for the full story behind each of these (what
 was tried, what the actual root cause turned out to be), `docs/protocol.md`
 for the wire protocol, and `android/README.md` for Android-specific build
 notes.
+
+## Storage & maintenance
+
+Two things accumulate under `~/ai-vision-drone-logs/` on the Pi over time:
+
+- `sessions/*.jsonl` (structured event timeline, one file per run) -
+  self-managing: `SessionRecorder` automatically prunes to the most recent
+  50 sessions, oldest first, so this never fills the disk unattended.
+- `recordings/*.mp4`/`.avi` (local video footage from the record button) -
+  **not** auto-deleted, on purpose: unlike the session logs, this is
+  footage the operator explicitly chose to capture, so nothing in this
+  project ever deletes it without being asked. Offload/clear it manually
+  (`scp` it off, or `rm ~/ai-vision-drone-logs/recordings/*` once copied)
+  as part of routine field maintenance, especially before an extended
+  video-recording session on a full SD card.

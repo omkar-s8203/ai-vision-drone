@@ -29,6 +29,11 @@ import org.webrtc.VideoTrack
 
 private const val RECONNECT_DELAY_MS = 3000L
 
+// Mirrors the relevant subset of companion/safety/supervisor.py's
+// SupervisorState names - see the TRACKING_UPDATE handling below.
+private val SAFE_OR_IDLE_STATES = setOf("IDLE", "SAFE")
+private val ONE_SHOT_MODES = setOf(DroneMode.DRONIE, DroneMode.PARABOLA)
+
 /**
  * Ties the WebSocket control/telemetry channel and the WebRTC video channel
  * together into the state the Compose UI renders (docs plan M6). Video and
@@ -232,7 +237,22 @@ class MainViewModel : ViewModel() {
                     _recording.value = RecordingState(recording = health.recording)
                 }
             }
-            MessageType.TRACKING_UPDATE -> _tracking.value = parseTracking(envelope.payload)
+            MessageType.TRACKING_UPDATE -> {
+                val parsed = parseTracking(envelope.payload)
+                _tracking.value = parsed
+                // A Dronie/Parabola smart shot stops itself on the Pi side
+                // once its fixed duration elapses (companion/main.py resets
+                // requested_mode to IDLE when it finishes) - mirror that
+                // here so the mode selector doesn't keep showing the shot
+                // as active after it's actually done. Deliberately not
+                // done for Follow/Orbit/Approach: those can drop to SAFE
+                // transiently (e.g. a brief target loss) while still
+                // meaning to resume, so reverting the selector for them
+                // would be misleading, not helpful.
+                if (parsed.supervisorState in SAFE_OR_IDLE_STATES && _mode.value in ONE_SHOT_MODES) {
+                    _mode.value = DroneMode.IDLE
+                }
+            }
             MessageType.DETECTIONS_UPDATE -> _detections.value = parseDetections(envelope.payload)
             MessageType.RECORDING_STATE -> _recording.value = RecordingState(
                 recording = envelope.payload.optBoolean("recording", false),
@@ -282,6 +302,7 @@ class MainViewModel : ViewModel() {
             distanceM = p.optDoubleOrNull("distance_m"),
             guidanceAllowed = p.optBoolean("guidance_allowed", false),
             guidanceReason = p.optStringOrNull("guidance_reason"),
+            supervisorState = p.optStringOrNull("supervisor_state"),
         )
     }
 

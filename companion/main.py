@@ -368,6 +368,15 @@ class CompanionOrchestrator:
             )
             command = shot_result.command
             if shot_result.state == SmartShotState.FINISHED:
+                # Unlike Approach-Test's STOPPED_AT_BOUNDARY (a safety-
+                # relevant state deliberately left "stuck" until the
+                # operator explicitly decides what's next), a finished
+                # smart shot has no residual safety significance - drop
+                # straight back to IDLE so `supervisor_state` (sent to the
+                # app every frame) correctly reflects that guidance is over,
+                # instead of reporting SMART_SHOT forever with no command
+                # actually being sent.
+                self.requested_mode = SupervisorState.IDLE
                 self.recorder.record("smart_shot_finished")
 
         sent = False

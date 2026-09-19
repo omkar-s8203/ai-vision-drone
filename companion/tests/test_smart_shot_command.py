@@ -132,4 +132,10 @@ async def test_smart_shot_finishes_after_its_duration(tmp_path):
     )
 
     assert orchestrator.smart_shot.state == SmartShotState.FINISHED
+    # A finished shot has no residual safety significance (unlike
+    # Approach-Test's boundary stop, which deliberately stays "stuck") -
+    # requested_mode drops back to IDLE so supervisor_state (sent to the
+    # app every frame) doesn't keep reporting SMART_SHOT forever with no
+    # command actually being sent.
+    assert orchestrator.requested_mode == SupervisorState.IDLE
     recorder.close()

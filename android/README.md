@@ -128,9 +128,17 @@ succeeded cleanly): two new **Dronie**/**Parabola** smart-shot modes
 "QuickShot" equivalent) implemented by `companion/guidance/smart_shot.py`
 on the Pi side. Each shot runs for a fixed duration, keeps the camera
 locked on the target via the same yaw PID Follow/Orbit use, then stops
-itself - the Android UI doesn't yet auto-revert the mode selector back to
-Normal RC when a shot finishes (a known minor gap, same as Approach-Test's
-existing behavior).
+itself - **fixed**: `companion/main.py` now resets `requested_mode` to
+`IDLE` the moment a shot finishes (previously it stayed `SMART_SHOT`
+forever, sending no commands but never saying so), and
+`MainViewModel.kt` parses the new `supervisor_state` field on
+`tracking_update` and reverts its own mode selector back to Normal RC when
+it sees that happen - build-verified. Deliberately *not* done for
+Follow/Orbit/Approach-Test: those can drop to `SAFE` transiently (e.g. a
+brief target loss) while still meaning to resume, so auto-reverting their
+selector would be misleading, and Approach-Test's boundary stop is
+intentionally left "stuck" until the operator decides what's next (see
+`docs/safety-case.md`).
 
 **Real-device feedback fixes** (reported live from an actual install on a
 remote-controller-mounted display, not just this dev machine's build
@@ -222,10 +230,9 @@ app/src/androidTest/java/com/aivisiondrone/groundstation/
 - ~~Pi host/port reset to hardcoded defaults every relaunch~~ - fixed:
   `SettingsTab.kt` now persists both to `SharedPreferences`, saved when
   Connect is tapped.
-- Mode selector doesn't auto-revert to Normal RC when a Dronie/Parabola
-  smart shot finishes on the Pi side, or when Approach-Test reaches
-  `STOPPED_AT_BOUNDARY`/`ABORTED` - the Pi already reports
-  `supervisor_state` in `tracking_update`, but `MainViewModel` doesn't
-  parse or react to it yet. Cosmetic only (doesn't affect safety - guidance
-  genuinely does stop on the Pi side either way), but worth fixing for a
-  clean UI.
+- ~~Mode selector doesn't auto-revert to Normal RC when a Dronie/Parabola
+  smart shot finishes~~ - fixed on both ends: `companion/main.py` resets
+  `requested_mode` to `IDLE` when the shot finishes, and `MainViewModel`
+  now parses `supervisor_state` and mirrors that. Approach-Test's
+  `STOPPED_AT_BOUNDARY`/`ABORTED` deliberately still don't auto-revert -
+  see `docs/safety-case.md` for why that's intentional, not the same gap.

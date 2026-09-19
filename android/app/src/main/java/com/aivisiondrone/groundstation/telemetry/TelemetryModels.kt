@@ -44,6 +44,13 @@ data class TrackingState(
     val distanceM: Double? = null,
     val guidanceAllowed: Boolean = false,
     val guidanceReason: String? = null,
+    // Mirrors companion/safety/supervisor.py's SupervisorState name (IDLE,
+    // TRACKING, FOLLOWING, ORBITING, APPROACHING, SMART_SHOT, SAFE) - used
+    // to notice when the Pi has dropped out of a guidance mode on its own
+    // (a finished smart shot, an Approach-Test boundary stop, a forced
+    // SAFE) so the mode selector can reflect reality instead of staying
+    // stuck on whatever the operator last tapped.
+    val supervisorState: String? = null,
 )
 
 /** One live object detection before/independent of target selection - lets

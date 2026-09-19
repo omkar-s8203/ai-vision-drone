@@ -1,11 +1,205 @@
 # Safety Case
 
-Status: not yet written — this will be filled in during M7 (MAVLink/RC Override) and M10 (Safety Architecture & Watchdog).
+Status: living document, first written 2026-09-19 - reflects what's
+actually implemented and tested today, not the aspirational end state.
+Update this whenever a safety-relevant mechanism changes; treat a stale
+entry here as worse than no entry.
 
-This document will explicitly record, for each safety-relevant behavior:
-- The mechanism (e.g. RC override via `FLTMODE_CH`, hardware path independent of the Pi).
-- What triggers it.
-- What guarantees it does and does not provide.
-- The test (SITL, bench, or real-flight) that verifies it, and its pass record.
+Every guidance controller (Follow, Orbit, Approach-Test, Dronie/Parabola)
+only ever *proposes* a velocity setpoint. `SafetySupervisor.evaluate()`
+(`companion/safety/supervisor.py`) is the single point that decides whether
+that setpoint is actually allowed to reach `MavlinkBridge.send_velocity_
+setpoint()` - every mechanism below works by feeding an input into that one
+gate, not by patching guidance code individually. `SupervisorDecision.reason`
+is sent to the Android app in every `tracking_update` message and rendered
+as a visible on-screen warning (`GuidanceWarningBanner.kt`) - a triggered
+mechanism is never silent to the operator.
 
-Required entries (see the project plan): RC override, target-loss handling, comms-loss handling, MAVLink-failure handling, camera-failure handling, geofence, watchdog/fault-injection results.
+## RC override (hardware path)
+
+- **Mechanism**: the pilot's transmitter has a hardware mode switch mapped
+  to `FLTMODE_CH` on the flight controller. Flipping it changes the FC's
+  flight mode through the RC receiver directly - this path physically
+  never passes through the Pi, so it works even if the companion computer
+  is frozen, crashed, or powered off entirely. This is the actual
+  guarantee this whole project is built around; everything else here is a
+  software backstop on top of it.
+- **Software backstop**: `RcOverrideMonitor.is_overriding()`
+  (`companion/mavlink/rc_monitor.py`) watches `RC_CHANNELS` for stick
+  deflection beyond a deadband while AI guidance is active, and
+  `SafetySupervisor.evaluate()` forces `SAFE` (reason `"rc_override"`) the
+  moment it sees this - independent of and in addition to the hardware
+  path above.
+- **What this does and does not guarantee**: the hardware switch is
+  guaranteed to work regardless of Pi state. The software stick-deflection
+  backstop is a convenience for "the pilot grabbed the sticks without
+  touching the mode switch" - it depends on the Pi being alive and reading
+  `RC_CHANNELS`, so it is explicitly *not* a substitute for the hardware
+  switch.
+- **Status**: software backstop implemented and unit/integration tested.
+  **The hardware switch itself is not yet configured on the transmitter**
+  (`FLTMODE_CH` param) - see root README "What's next" #3. Until that's
+  done, the actual non-negotiable guarantee this project depends on is not
+  live on real hardware yet, only the software approximation of it is.
+- **Tests**: `test_rc_monitor.py` (deadband logic in isolation),
+  `test_safety_supervisor.py::test_rc_override_forces_safe`,
+  `test_approach_test.py::test_rc_override_aborts`,
+  `test_integration_sim.py::test_follow_mode_sends_setpoints_then_rc_override_halts_them`
+  (real MAVLink `RC_CHANNELS` from a mock FC, through the real bridge, to a
+  real halted setpoint stream) - all passing.
+
+## Target-loss handling
+
+- **Mechanism**: `TrackingStateMachine` (`companion/tracking/state.py`)
+  distinguishes a brief in-frame stumble (`REACQUIRE`, IoU/motion-based,
+  `reacquire_timeout_s` default 2.0s) from a genuine `TARGET_LOST`. Once
+  `TARGET_LOST`, `SafetySupervisor.evaluate()` forces `SAFE` (reason
+  `"target_lost"`) for any requested guidance mode - stale target
+  coordinates are never fed into a guidance controller.
+- **Appearance-based reacquisition** (`companion/tracking/appearance.py`)
+  can auto-relock the same target after `TARGET_LOST` by color-histogram
+  similarity, but only ever *proposes* a re-selection the same way a
+  fresh operator tap would - it does not bypass this gate.
+- **Guarantee**: no guidance command is ever computed from a target that
+  the tracker has stopped confidently reporting on.
+- **Tests**: `test_state_machine.py` (REACQUIRE/TARGET_LOST timing),
+  `test_safety_supervisor.py::test_target_lost_forces_safe_when_guidance_requested`
+  and `::test_target_lost_does_not_block_plain_tracking_request`,
+  `test_approach_test.py::test_target_lost_aborts`,
+  `test_appearance_reacquire.py` (the reacquisition path itself, including
+  that abort clears the remembered target instead of silently relocking
+  it) - all passing.
+
+## Comms-loss handling (Android link)
+
+- **Mechanism**: `GroundStationLink.is_connected` reflects whether the
+  WebSocket transport currently has a connected client. `SafetySupervisor.
+  evaluate()` forces `SAFE` (reason `"comms_lost"`) whenever it's False.
+- **Guarantee**: guidance cannot continue running with no operator able to
+  see telemetry or reach the abort button. It does **not** by itself stop
+  the aircraft or trigger RTL - it stops new guidance setpoints from being
+  sent, after which ArduPilot's own GUIDED-mode setpoint-timeout behavior
+  (holds position once setpoints stop arriving) is the actual backstop -
+  see "MAVLink link failure" below for why this project leans on that
+  ArduPilot behavior rather than re-implementing it.
+- **Tests**: `test_safety_supervisor.py::test_comms_lost_forces_safe`,
+  `test_approach_test.py::test_comms_lost_aborts` - passing. Not yet
+  tested against a real dropped WiFi link in the field (only the boolean
+  flag path is exercised).
+
+## MAVLink link / subsystem failure (watchdog)
+
+- **Mechanism**: `HeartbeatWatchdog` (`companion/safety/watchdog.py`)
+  tracks a last-seen timestamp per subsystem (`camera`, `tracker`,
+  `mavlink`, `comms`). `SafetySupervisor.evaluate()` checks
+  `REQUIRED_SUBSYSTEMS` first, before any other input, and forces `SAFE`
+  (reason `"stale_subsystems:<names>"`) if any of them haven't reported in
+  within `timeout_s`.
+- **Camera failure** and **MAVLink failure** are both instances of this
+  same mechanism, not separate code paths - if the camera stops producing
+  frames or the MAVLink link stops delivering messages, the corresponding
+  heartbeat goes stale and this gate trips.
+- **Process-level backstop**: `deploy/ai-vision-drone.service`
+  (`Restart=on-failure`) restarts the whole companion process if it
+  crashes outright, always coming back up in `IDLE` - it never
+  auto-resumes a guidance mode after a restart. `SystemdWatchdog`
+  (`companion/safety/watchdog.py`) is wired to send `WATCHDOG=1` if
+  `sdnotify` happens to be installed, but the unit intentionally uses
+  `Type=simple` (not `Type=notify`) because the code never sends the
+  `READY=1` notification `Type=notify` requires - so this specific
+  systemd-level hang-detection path is not actually active today, only
+  crash-restart is (see `docs/hardware-wiring.md` if this needs revisiting).
+- **Guarantee**: guidance stops within one `HeartbeatWatchdog.timeout_s`
+  window of any required subsystem going quiet, not just on an outright
+  exception.
+- **Tests**: `test_watchdog.py` (staleness logic in isolation),
+  `test_safety_supervisor.py::test_stale_subsystem_forces_safe` (a genuine
+  fault-injection style test: only 3 of 4 required subsystems beaten) -
+  passing. Not yet a live power-cycle/kill-the-process test on real
+  hardware (see README M15 status).
+
+## Obstacle proximity (cross-mode, not target-specific)
+
+- **Mechanism**: `check_proximity()` (`companion/safety/proximity_guard.py`)
+  runs against *every* detection each frame, not just the tracked target,
+  using the same vision distance estimator Follow/Orbit already use.
+  `SafetySupervisor.evaluate()` forces `SAFE` (reason
+  `"obstacle_too_close:<class>:<distance>m"`) if anything is estimated
+  closer than `min_obstacle_distance_m` (`companion/config/safety_limits.yaml`,
+  default 2.0m) - checked before comms/FC-mode/target-loss, right after RC
+  override.
+- **Guarantee**: an untracked obstacle closing in (a wall, a second
+  person, a vehicle) halts guidance exactly like the followed subject
+  itself getting too close would.
+- **Explicit limitation**: this inherits the vision-only distance
+  estimator's accuracy caveats (docs plan M4) - it is a software
+  convenience layer, not a certified collision-avoidance system, and
+  should not be treated as sufficient justification for operating without
+  a spotter or without maintaining a safe real-world margin yourself.
+- **Tests**: `test_proximity_guard.py` (detection/distance logic in
+  isolation, including "closest of several" and "unknown class safely
+  skipped"), `test_safety_supervisor.py::test_obstacle_too_close_forces_safe`
+  and `::test_obstacle_alert_takes_priority_over_comms_lost_reason` -
+  passing.
+
+## Controlled Approach-Test abort conditions
+
+- **Mechanism**: `ApproachTestController` (`companion/guidance/approach_test.py`)
+  independently checks target-loss, comms-loss, RC override, and geofence
+  breach every update - any one alone is sufficient to move it to
+  `ABORTED`, and reaching `min_boundary_m` or a real contact-sensor signal
+  moves it to `STOPPED_AT_BOUNDARY` (holds position, does not continue).
+  Both are terminal until the operator explicitly restarts or leaves the
+  mode - this is intentional: an approach-test boundary event is
+  significant enough that it should require a conscious operator decision
+  about what happens next, not silently clear itself (contrast with
+  Dronie/Parabola smart shots below, which *do* self-clear since they have
+  no comparable safety significance once finished).
+- **Real, honest gap**: `geofence_breached` is unit-tested at the
+  controller level (`test_approach_test.py::test_geofence_breach_aborts`
+  passes with a hand-constructed `True` input) but `companion/main.py`
+  currently hardcodes `geofence_breached=False` when calling it - there is
+  no real geofence signal wired up yet from the FC's own `FENCE_ENABLE`/
+  breach status. **Approach-Test's geofence abort condition does not
+  currently function against real hardware, only in unit tests.** This is
+  the most safety-relevant open gap in this document.
+- **Tests**: the full `test_approach_test.py` suite (every abort condition
+  individually, plus `test_aborted_state_persists_until_restart` and
+  `test_contact_sensor_stops_regardless_of_distance`) - all passing at the
+  controller level. No SITL or bench test of the full chain has been run
+  yet (docs plan M9's own required next step, additionally blocked on the
+  geofence-wiring gap above).
+
+## One-shot smart shots (Dronie/Parabola) - a deliberately different design
+
+- Unlike the above, a finished smart shot has no residual safety
+  significance, so `companion/main.py` resets `requested_mode` to `IDLE`
+  the moment `SmartShotController` reports `FINISHED`, and the Android app
+  mirrors this by reverting its own mode selector - see
+  `test_smart_shot_command.py::test_smart_shot_finishes_after_its_duration`.
+  This is called out here specifically so it isn't mistaken for an
+  inconsistency with Approach-Test's deliberately-sticky behavior above -
+  it's a considered difference, not an oversight.
+
+## Fault-injection test coverage summary
+
+Every mechanism above that has a corresponding `SafetySupervisor` gate is
+covered by at least one test that independently trips *only that
+condition* and asserts guidance is denied - this is what "fault injection"
+means in this codebase's test suite, not a separate framework. As of this
+writing: 160 companion tests passing
+(`.venv/Scripts/python -m pytest -q`), including a real end-to-end test
+(`test_integration_websocket.py`) that drives the actual JSON wire
+protocol over a real WebSocket and real MAVLink link, not just in-process
+Python calls.
+
+## What this document does not yet cover
+
+- No real SITL (ArduPilot software-in-the-loop) run exists for this
+  project - `sim/mock_fc.py` is a lightweight MAVLink emulator, not real
+  ArduPilot flight dynamics (see `sim/README.md`).
+- No bench test (props off, real hardware) of the full abort chain has
+  been performed yet.
+- No real-flight test has occurred - the plan's staged sequence (M14) is
+  entirely gated on the FLTMODE_CH hardware configuration and geofence
+  wiring gaps above being closed first.

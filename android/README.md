@@ -249,6 +249,20 @@ active, so a yaw-only command doesn't look like an unexplained glitch.
 Build-verified only, not yet exercised against a live recovery scenario
 on a real device.
 
+**Fixed a real bug found from a UI review**: the Fly tab's HUD "SAT"
+readout was hardcoded to a fake `"12"` - nothing had ever wired up a real
+value. `companion/mavlink/bridge.py` now parses a real `GPS_RAW_INT`
+message (`satellites_visible`, correctly treating the standard `255`
+sentinel as "unknown," not zero) and sends it in the `telemetry` message;
+the HUD now shows the real count or `"--"`. While fixing this, also
+upgraded the "GPS: FIX"/"NO FIX" indicator to use the same message's real
+`fix_type` (3+ = a genuine 3D fix, per `MAV_GPS_FIX_TYPE`) instead of
+inferring fix status from `lat` being non-null - a materially less
+precise proxy, since a stale/degraded fix can still report a non-null
+last-known position. Verified via a real MAVLink loopback test against
+the mock FC (`test_bridge_reflects_real_gps_satellite_count_and_fix_type`);
+not yet confirmed against a real FC's actual `GPS_RAW_INT` output.
+
 ## Layout
 
 ```

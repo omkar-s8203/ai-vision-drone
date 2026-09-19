@@ -163,8 +163,13 @@ fun FlyTab(
             }
             
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                HUDTelemetryItem(label = "GPS", value = if (telemetry.lat != null) "FIX" else "NO FIX", color = if (telemetry.lat != null) DroneColors.Safe else DroneColors.Danger)
-                HUDTelemetryItem(label = "SAT", value = "12", color = DroneColors.TextPrimary) // Hardcoded for visual accuracy if not in telemetry
+                // gpsFixType follows MAV_GPS_FIX_TYPE (3+ = 3D fix or better) -
+                // the real, authoritative signal from GPS_RAW_INT, not an
+                // inferred proxy from lat being non-null (a stale/degraded
+                // fix can still report a non-null last-known position).
+                val hasFix = (telemetry.gpsFixType ?: 0) >= 3
+                HUDTelemetryItem(label = "GPS", value = if (hasFix) "FIX" else "NO FIX", color = if (hasFix) DroneColors.Safe else DroneColors.Danger)
+                HUDTelemetryItem(label = "SAT", value = telemetry.satellitesVisible?.toString() ?: "--", color = DroneColors.TextPrimary)
                 HUDTelemetryItem(label = "BAT", value = "${telemetry.batteryRemainingPct ?: 0}%", color = if ((telemetry.batteryRemainingPct ?: 100) < 20) DroneColors.Danger else DroneColors.Safe)
             }
         }

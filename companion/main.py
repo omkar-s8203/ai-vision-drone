@@ -559,6 +559,8 @@ class CompanionOrchestrator:
             "battery_remaining_pct": t.battery_remaining_pct,
             "fence_enabled": t.fence_enabled,
             "fence_breached": t.fence_breached,
+            "satellites_visible": t.satellites_visible,
+            "gps_fix_type": t.gps_fix_type,
         }
 
     def _current_fps(self) -> Optional[float]:

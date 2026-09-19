@@ -44,6 +44,8 @@ class MockFlightController:
         self.home_lat = 0.0
         self.home_lon = 0.0
         self.home_set = False
+        self.gps_fix_type = 3  # 3D fix by default - matches MAV_GPS_FIX_TYPE
+        self.satellites_visible = 12
         self.received_setpoints: list[tuple[float, float, float, float]] = []
 
     def set_mode(self, mode: str) -> None:
@@ -67,6 +69,10 @@ class MockFlightController:
         self.home_lat = lat
         self.home_lon = lon
         self.home_set = True
+
+    def set_gps(self, fix_type: int, satellites_visible: int) -> None:
+        self.gps_fix_type = fix_type
+        self.satellites_visible = satellites_visible
 
     def set_fence_state(self, enabled: bool, breached: bool = False) -> None:
         """`breached` only means anything when `enabled` is True - matches
@@ -106,6 +112,15 @@ class MockFlightController:
             int(self.alt_m * 1000),
             int(self.alt_m * 1000),
             0, 0, 0, 0,
+        )
+
+    def _send_gps_raw_int(self) -> None:
+        self._conn.mav.gps_raw_int_send(
+            int(time.time() * 1e6) & 0xFFFFFFFFFFFFFFFF,
+            self.gps_fix_type,
+            int(self.lat * 1e7), int(self.lon * 1e7), int(self.alt_m * 1000),
+            0, 0, 0, 0,
+            self.satellites_visible,
         )
 
     def _send_sys_status(self) -> None:
@@ -161,6 +176,7 @@ class MockFlightController:
             self._send_heartbeat()
             self._send_rc_channels()
             self._send_global_position()
+            self._send_gps_raw_int()
             self._send_sys_status()
             self.poll_incoming()
             await asyncio.sleep(period)

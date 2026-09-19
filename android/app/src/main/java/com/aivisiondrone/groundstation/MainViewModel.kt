@@ -328,6 +328,8 @@ class MainViewModel : ViewModel() {
         batteryRemainingPct = p.optIntOrNull("battery_remaining_pct"),
         fenceEnabled = p.optBoolean("fence_enabled", false),
         fenceBreached = p.optBoolean("fence_breached", false),
+        satellitesVisible = p.optIntOrNull("satellites_visible"),
+        gpsFixType = p.optIntOrNull("gps_fix_type"),
     )
 
     private fun parseHealth(p: JSONObject) = HealthState(

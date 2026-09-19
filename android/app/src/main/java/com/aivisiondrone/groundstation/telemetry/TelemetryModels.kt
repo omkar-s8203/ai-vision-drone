@@ -13,6 +13,13 @@ data class TelemetryState(
     // fenceBreached only means anything when fenceEnabled is true.
     val fenceEnabled: Boolean = false,
     val fenceBreached: Boolean = false,
+    // From a real GPS_RAW_INT message - satellitesVisible is null when the
+    // FC reports the standard "unknown" sentinel (255), not zero satellites.
+    // gpsFixType follows MAV_GPS_FIX_TYPE (0/1 = no fix, 2 = 2D, 3+ = 3D or
+    // better) - the authoritative GPS health signal, previously only
+    // inferred (imprecisely) from lat being non-null.
+    val satellitesVisible: Int? = null,
+    val gpsFixType: Int? = null,
 )
 
 data class HealthState(

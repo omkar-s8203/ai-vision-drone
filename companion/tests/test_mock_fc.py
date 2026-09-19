@@ -12,6 +12,8 @@ FENCE_FC_PORT = 14722
 FENCE_BRIDGE_PORT = 14723
 HOME_FC_PORT = 14724
 HOME_BRIDGE_PORT = 14725
+GPS_FC_PORT = 14726
+GPS_BRIDGE_PORT = 14727
 
 
 @pytest.mark.asyncio
@@ -128,6 +130,44 @@ async def test_bridge_receives_real_home_position_on_request():
         await wait_until(lambda: mavlink.telemetry.home_lat is not None, timeout=2.0)
         assert mavlink.telemetry.home_lat == pytest.approx(37.7749, abs=1e-6)
         assert mavlink.telemetry.home_lon == pytest.approx(-122.4194, abs=1e-6)
+    finally:
+        fc_task.cancel()
+        mavlink_task.cancel()
+        await asyncio.gather(fc_task, mavlink_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_bridge_reflects_real_gps_satellite_count_and_fix_type():
+    """A real bug found from a UI review: the Android HUD's "SAT" readout
+    was hardcoded to a fake "12" because nothing ever populated a real
+    value - and the "GPS: FIX" indicator only inferred fix status from
+    `lat` being non-null, a much less precise proxy than the FC's actual
+    GPS_RAW_INT.fix_type. This proves both are parsed correctly from a
+    real GPS_RAW_INT message over real MAVLink, using pymavlink's own
+    confirmed gps_raw_int_send() signature, including the standard
+    "satellites_visible=255 means unknown, not zero" sentinel."""
+    mock_fc = MockFlightController(f"udpin:127.0.0.1:{GPS_FC_PORT}")
+    fc_task = asyncio.create_task(mock_fc.run(rate_hz=20.0))
+
+    mavlink = MavlinkBridge(f"udpin:127.0.0.1:{GPS_BRIDGE_PORT}")
+    mavlink.connect()
+    mavlink.prime_udp_peer("127.0.0.1", GPS_FC_PORT)
+    mavlink_task = asyncio.create_task(mavlink.run(on_message=lambda _msg: None))
+
+    try:
+        await wait_until(lambda: mavlink.telemetry.last_heartbeat_ts is not None, timeout=3.0)
+        # MockFlightController defaults to a healthy 3D fix with 12 sats.
+        await wait_until(lambda: mavlink.telemetry.satellites_visible is not None, timeout=2.0)
+        assert mavlink.telemetry.satellites_visible == 12
+        assert mavlink.telemetry.gps_fix_type == 3
+
+        mock_fc.set_gps(fix_type=0, satellites_visible=0)
+        await wait_until(lambda: mavlink.telemetry.gps_fix_type == 0, timeout=2.0)
+        assert mavlink.telemetry.satellites_visible == 0
+
+        mock_fc.set_gps(fix_type=3, satellites_visible=255)  # 255 = genuinely unknown
+        await wait_until(lambda: mavlink.telemetry.gps_fix_type == 3, timeout=2.0)
+        assert mavlink.telemetry.satellites_visible is None
     finally:
         fc_task.cancel()
         mavlink_task.cancel()

@@ -50,6 +50,8 @@ class TelemetrySnapshot:
     fence_breached: bool = False
     home_lat: Optional[float] = None
     home_lon: Optional[float] = None
+    satellites_visible: Optional[int] = None
+    gps_fix_type: Optional[int] = None
 
 
 class MavlinkBridge:
@@ -137,6 +139,18 @@ class MavlinkBridge:
             self.telemetry.alt_m = msg.relative_alt / 1000.0
             vx, vy = msg.vx / 100.0, msg.vy / 100.0
             self.telemetry.groundspeed_mps = (vx**2 + vy**2) ** 0.5
+        elif msg_type == "GPS_RAW_INT":
+            # The authoritative real-time GPS health signal - GLOBAL_POSITION_INT's
+            # lat/lon can be non-null even on a stale/degraded fix, so a
+            # "GPS: FIX" indicator derived from lat != null alone can lie.
+            # satellites_visible is 255 when genuinely unknown (not "zero
+            # satellites") - a real field bug found from a UI review: the
+            # Android HUD previously hardcoded a fake "12" here because
+            # nothing populated a real value.
+            self.telemetry.gps_fix_type = msg.fix_type
+            self.telemetry.satellites_visible = (
+                msg.satellites_visible if msg.satellites_visible != 255 else None
+            )
         elif msg_type == "BATTERY_STATUS":
             if msg.voltages and msg.voltages[0] != 65535:
                 self.telemetry.battery_voltage_v = msg.voltages[0] / 1000.0

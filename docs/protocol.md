@@ -9,6 +9,19 @@ changes. Two separate channels, per docs plan M5/M6:
 - **Video**: WebRTC, signaled over the same control channel via the
   `webrtc_offer` / `webrtc_answer` message types below, but the media itself
   is a separate peer connection - a video hiccup never blocks an abort.
+  Deliberately configured with **no STUN/TURN servers on either end**
+  (`AiortcVideoPipeline.handle_offer` constructs its `RTCPeerConnection`
+  with the aiortc default `RTCConfiguration()`, whose `iceServers` is
+  `None`; `WebRtcClient.startReceiving` passes `PeerConnection.
+  RTCConfiguration(emptyList())`) - both peers are always on the same LAN
+  (the Pi runs its own WiFi AP, see `companion/config/network.yaml`'s
+  `mode: ap`), so host ICE candidates alone are sufficient and no external
+  server is ever contacted. This is also why the whole system runs with
+  **no internet access required at all** once set up: on-sensor AI
+  detection (IMX500), the WebSocket control channel, MAVLink, and video are
+  all local-network-only, and the Android app has no analytics/cloud SDKs.
+  Internet is only needed for one-time setup (`pip install`, `git clone`,
+  flashing the Pi OS/IMX500 firmware, the first Gradle build).
 
 ## Message types (`payload` shape for each)
 

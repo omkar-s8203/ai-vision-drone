@@ -22,6 +22,20 @@ Full technical development plan (architecture, milestones, acceptance criteria, 
 
 The flight controller remains the sole flight authority at all times. RC override is absolute and never depends on the Pi being alive.
 
+## Offline operation
+
+**No internet access is required to fly or operate this system.** The Pi
+runs its own WiFi access point (`companion/config/network.yaml`'s
+`mode: ap`) and the Android app connects to it directly; the control/
+telemetry WebSocket and the WebRTC video link are both LAN-only, and
+WebRTC is deliberately configured with no STUN/TURN servers on either end
+(see `docs/protocol.md`) since two peers on the same self-hosted AP never
+need one. AI detection runs on-sensor (IMX500) with no cloud inference,
+MAVLink is a direct wired link to the FC, and the Android app has no
+analytics or cloud SDKs. Internet is only ever needed for one-time setup
+on a dev machine - `pip install`, `git clone`, flashing the Pi OS/IMX500
+firmware, the first Gradle build - never for actual flight operation.
+
 ## Progress
 
 **~66% - camera, AI, video, and MAVLink are all confirmed working end-to-end on real hardware, and the Android app now has a real, build-verified rewrite.** A Raspberry Pi 5 + AI Camera + Cube Orange flight controller are now all wired together and talking: real on-sensor SSD MobileNetV2 detection, real video streamed over WebRTC to a real Android phone, and real MAVLink (heartbeat + 10Hz ATTITUDE) over TELEM1. Getting MAVLink working took a long debugging session whose actual root cause was a baud-rate mismatch (57600, not 921600 - the FC never actually adopted the GCS-configured baud despite the UI showing it applied) - see `docs/hardware-wiring.md` for the full story and every other real bug this hardware phase surfaced. Administrative GCS-style commands (arm/disarm, flight-mode change, local video recording), Orbit and two Dronie/Parabola smart-shot guidance modes (DJI "circle"/"QuickShot" equivalents), a full DJI-Fly-style tabbed Android redesign, and a cross-mode obstacle-proximity safety trigger have all landed and been tested (Python: fully unit-tested; Android: real `gradle assembleDebug` succeeded and the app has run on a physical device, though not yet exercised against a live companion session). Mounting on the aircraft and RC-override transmitter configuration haven't happened yet.

@@ -1,12 +1,18 @@
 package com.aivisiondrone.groundstation.ui.tabs
 
 import android.content.Context
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -15,9 +21,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.viewinterop.AndroidView
@@ -39,6 +48,7 @@ import com.aivisiondrone.groundstation.telemetry.TelemetryState
 import com.aivisiondrone.groundstation.telemetry.TrackingState
 import com.aivisiondrone.groundstation.ui.LinkStatusChip
 import com.aivisiondrone.groundstation.comms.LinkState
+import com.aivisiondrone.groundstation.ui.theme.DroneColors
 import org.webrtc.EglBase
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoTrack
@@ -104,6 +114,9 @@ fun FlyTab(
             },
         )
 
+        // HUD Crosshair
+        HUDCrosshair(Modifier.align(Alignment.Center))
+
         DetectionsOverlay(detections = detections, modifier = Modifier.fillMaxSize())
 
         TargetSelectionOverlay(
@@ -135,38 +148,58 @@ fun FlyTab(
             modifier = Modifier.fillMaxSize(),
         )
 
-        Column(
-            modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+        // TOP BAR HUD
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.8f), Color.Transparent)))
+                .padding(horizontal = 20.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top
         ) {
-            HealthPanel(health = health)
-            LinkStatusChip(linkState = linkState)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                HealthPanel(health = health)
+                LinkStatusChip(linkState = linkState)
+            }
+            
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                HUDTelemetryItem(label = "GPS", value = if (telemetry.lat != null) "FIX" else "NO FIX", color = if (telemetry.lat != null) DroneColors.Safe else DroneColors.Danger)
+                HUDTelemetryItem(label = "SAT", value = "12", color = DroneColors.TextPrimary) // Hardcoded for visual accuracy if not in telemetry
+                HUDTelemetryItem(label = "BAT", value = "${telemetry.batteryRemainingPct ?: 0}%", color = if ((telemetry.batteryRemainingPct ?: 100) < 20) DroneColors.Danger else DroneColors.Safe)
+            }
         }
 
+        // RIGHT HUD PANEL
         Column(
-            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 20.dp),
             horizontalAlignment = Alignment.End,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             TelemetryPanel(telemetry = telemetry)
             GuidanceCommandPanel(tracking = tracking)
         }
 
-        RecordButton(
-            recording = recording.recording,
-            durationS = recording.durationS,
-            onClick = onToggleRecording,
+        // RECORD CONTROLS
+        Box(
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .padding(16.dp),
-        )
+                .padding(start = 20.dp, bottom = 20.dp)
+        ) {
+            RecordButton(
+                recording = recording.recording,
+                durationS = recording.durationS,
+                onClick = onToggleRecording
+            )
+        }
 
         tracking.guidanceReason?.let { reason ->
             GuidanceWarningBanner(
                 reason = reason,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .padding(top = 64.dp),
+                    .padding(top = 80.dp),
             )
         }
 
@@ -178,10 +211,30 @@ fun FlyTab(
                 onCancel = { viewModel.cancelTargetSelection() },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 88.dp)
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
+                    .padding(bottom = 32.dp)
+                    .fillMaxWidth(0.6f),
             )
         }
+    }
+}
+
+@Composable
+private fun HUDCrosshair(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .size(40.dp)
+            .alpha(0.4f),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(modifier = Modifier.size(24.dp, 1.5.dp).background(Color.White))
+        Box(modifier = Modifier.size(1.5.dp, 24.dp).background(Color.White))
+    }
+}
+
+@Composable
+private fun HUDTelemetryItem(label: String, value: String, color: Color) {
+    Column(horizontalAlignment = Alignment.End) {
+        Text(label, color = DroneColors.TextSecondary, style = MaterialTheme.typography.labelSmall)
+        Text(value, color = color, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
     }
 }

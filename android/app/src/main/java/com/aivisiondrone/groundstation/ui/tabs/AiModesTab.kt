@@ -3,8 +3,10 @@ package com.aivisiondrone.groundstation.ui.tabs
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -16,7 +18,9 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aivisiondrone.groundstation.MainViewModel
 import com.aivisiondrone.groundstation.control.DroneMode
@@ -42,54 +46,77 @@ fun AiModesTab(
     detections: DetectionsState,
     modifier: Modifier = Modifier,
 ) {
-    Column(
+    LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+            .padding(horizontal = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        Text("AI Modes", color = DroneColors.TextPrimary, style = MaterialTheme.typography.headlineSmall)
+        item {
+            Spacer(modifier = Modifier.height(20.dp))
+            Text(
+                "AI Modes",
+                color = DroneColors.TextPrimary,
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.padding(start = 4.dp)
+            )
+        }
 
-        ModeControls(
-            currentMode = mode,
-            followSeparationM = followSeparationM,
-            followAltitudeM = followAltitudeM,
-            orbitRadiusM = orbitRadiusM,
-            orbitAltitudeM = orbitAltitudeM,
-            onModeSelected = { viewModel.setMode(it) },
-            onFollowSeparationChanged = { viewModel.setFollowSeparation(it) },
-            onFollowAltitudeChanged = { viewModel.setFollowAltitude(it) },
-            onOrbitRadiusChanged = { viewModel.setOrbitRadius(it) },
-            onOrbitAltitudeChanged = { viewModel.setOrbitAltitude(it) },
-            modifier = Modifier.fillMaxWidth(),
-        )
+        item {
+            ModeControls(
+                currentMode = mode,
+                followSeparationM = followSeparationM,
+                followAltitudeM = followAltitudeM,
+                orbitRadiusM = orbitRadiusM,
+                orbitAltitudeM = orbitAltitudeM,
+                onModeSelected = { viewModel.setMode(it) },
+                onFollowSeparationChanged = { viewModel.setFollowSeparation(it) },
+                onFollowAltitudeChanged = { viewModel.setFollowAltitude(it) },
+                onOrbitRadiusChanged = { viewModel.setOrbitRadius(it) },
+                onOrbitAltitudeChanged = { viewModel.setOrbitAltitude(it) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
 
         if (tracking.targetId != null) {
-            Card(
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = DroneColors.Surface.copy(alpha = 0.9f)),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    "Current target #${tracking.targetId} - ${tracking.state}" +
-                        (tracking.distanceM?.let { "  %.1fm".format(it) } ?: ""),
-                    color = DroneColors.TextPrimary,
-                    modifier = Modifier.padding(12.dp),
-                )
+            item {
+                Card(
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = DroneColors.Surface),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        "Target #${tracking.targetId} • ${tracking.state}" +
+                                (tracking.distanceM?.let { " • %.1fm".format(it) } ?: ""),
+                        color = DroneColors.TextPrimary,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(20.dp),
+                    )
+                }
             }
         }
 
-        Text(
-            "Live detections (tap Select to lock a target)",
-            color = DroneColors.TextSecondary,
-            style = MaterialTheme.typography.labelMedium,
-        )
-        LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            items(detections.detections) { detection ->
-                DetectionRow(detection = detection, onSelect = {
-                    viewModel.selectTargetAtPoint(x = detection.bbox.x + detection.bbox.w / 2, y = detection.bbox.y + detection.bbox.h / 2)
-                })
-            }
+        item {
+            Text(
+                "DETECTIONS",
+                color = DroneColors.TextSecondary,
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.padding(start = 4.dp, top = 8.dp)
+            )
+        }
+
+        items(detections.detections) { detection ->
+            DetectionRow(detection = detection, onSelect = {
+                viewModel.selectTargetAtPoint(
+                    x = detection.bbox.x + detection.bbox.w / 2,
+                    y = detection.bbox.y + detection.bbox.h / 2
+                )
+            })
+        }
+        
+        item {
+            Spacer(modifier = Modifier.height(20.dp))
         }
     }
 }
@@ -97,27 +124,38 @@ fun AiModesTab(
 @Composable
 private fun DetectionRow(detection: RawDetection, onSelect: () -> Unit) {
     Card(
-        shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(containerColor = DroneColors.SurfaceElevated),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = DroneColors.Surface),
         modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .fillMaxWidth(),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .padding(16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                "${detection.className}  ${(detection.score * 100).toInt()}%",
-                color = DroneColors.TextPrimary,
-            )
+            Column {
+                Text(
+                    detection.className.uppercase(),
+                    color = DroneColors.TextPrimary,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    "Confidence: ${(detection.score * 100).toInt()}%",
+                    color = DroneColors.TextSecondary,
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
             Button(
                 onClick = onSelect,
-                colors = ButtonDefaults.buttonColors(containerColor = DroneColors.Accent, contentColor = androidx.compose.ui.graphics.Color(0xFF00232A)),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = DroneColors.Accent),
+                modifier = Modifier.height(36.dp)
             ) {
-                Text("Select")
+                Text("Select", fontWeight = FontWeight.SemiBold)
             }
         }
     }

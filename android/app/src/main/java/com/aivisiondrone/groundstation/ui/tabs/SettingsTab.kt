@@ -4,19 +4,26 @@ import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -24,6 +31,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aivisiondrone.groundstation.MainViewModel
 import com.aivisiondrone.groundstation.comms.LinkState
@@ -57,60 +65,121 @@ fun SettingsTab(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(24.dp),
     ) {
-        Text("Settings", color = DroneColors.TextPrimary, style = MaterialTheme.typography.headlineSmall)
+        Text(
+            "Settings",
+            color = DroneColors.TextPrimary,
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.padding(start = 4.dp)
+        )
 
         Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = DroneColors.Surface.copy(alpha = 0.92f)),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = DroneColors.Surface),
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Pi Connection", color = DroneColors.TextPrimary, style = MaterialTheme.typography.titleMedium)
-                LinkStatusChip(linkState = linkState)
-                OutlinedTextField(
+            Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                Text(
+                    "CONNECTION",
+                    color = DroneColors.TextSecondary,
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+
+                LinkStatusChip(
+                    linkState = linkState,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                )
+
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    thickness = 0.5.dp,
+                    color = DroneColors.SurfaceElevated
+                )
+
+                TextField(
                     value = host,
                     onValueChange = { host = it },
                     label = { Text("Pi host") },
                     modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = DroneColors.TextPrimary, unfocusedTextColor = DroneColors.TextPrimary),
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = Color.Transparent,
+                        unfocusedContainerColor = Color.Transparent,
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                        focusedTextColor = DroneColors.TextPrimary,
+                        unfocusedTextColor = DroneColors.TextPrimary,
+                        focusedLabelColor = DroneColors.Accent,
+                        unfocusedLabelColor = DroneColors.TextSecondary
+                    ),
+                    singleLine = true
                 )
-                OutlinedTextField(
+
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    thickness = 0.5.dp,
+                    color = DroneColors.SurfaceElevated
+                )
+
+                TextField(
                     value = port,
                     onValueChange = { port = it },
                     label = { Text("Port") },
                     modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = DroneColors.TextPrimary, unfocusedTextColor = DroneColors.TextPrimary),
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = Color.Transparent,
+                        unfocusedContainerColor = Color.Transparent,
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                        focusedTextColor = DroneColors.TextPrimary,
+                        unfocusedTextColor = DroneColors.TextPrimary,
+                        focusedLabelColor = DroneColors.Accent,
+                        unfocusedLabelColor = DroneColors.TextSecondary
+                    ),
+                    singleLine = true
                 )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Button(
-                        onClick = {
-                            port.toIntOrNull()?.let { portInt ->
-                                prefs.edit().putString(PREF_HOST, host).putInt(PREF_PORT, portInt).apply()
-                                viewModel.connect(context, eglBase, host, portInt)
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = DroneColors.Accent, contentColor = Color(0xFF00232A)),
-                        modifier = Modifier.weight(1f),
-                    ) { Text("Connect") }
-                    OutlinedButton(onClick = { viewModel.disconnect() }, modifier = Modifier.weight(1f)) {
-                        Text("Disconnect", color = DroneColors.TextPrimary)
-                    }
-                }
             }
         }
 
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Button(
+                onClick = {
+                    port.toIntOrNull()?.let { portInt ->
+                        prefs.edit().putString(PREF_HOST, host).putInt(PREF_PORT, portInt).apply()
+                        viewModel.connect(context, eglBase, host, portInt)
+                    }
+                },
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = DroneColors.Accent),
+                modifier = Modifier.weight(1f).height(50.dp),
+            ) {
+                Text("Connect", fontWeight = FontWeight.SemiBold)
+            }
+            OutlinedButton(
+                onClick = { viewModel.disconnect() },
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.weight(1f).height(50.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, DroneColors.SurfaceElevated)
+            ) {
+                Text("Disconnect", color = DroneColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
         Text(
             "AI Vision Drone Ground Station - companion computer control app. " +
-                "The flight controller remains the sole flight authority at all " +
-                "times; the RC transmitter's mode switch always overrides this app.",
+                    "The flight controller remains the sole flight authority at all " +
+                    "times; the RC transmitter's mode switch always overrides this app.",
             color = DroneColors.TextSecondary,
             style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(horizontal = 4.dp)
         )
     }
 }

@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import com.aivisiondrone.groundstation.telemetry.DetectionsState
+import com.aivisiondrone.groundstation.ui.theme.DroneColors
 
 /**
  * Draws every live object the AI currently sees (person, car, chair, ...),
@@ -40,12 +41,26 @@ fun DetectionsOverlay(detections: DetectionsState, modifier: Modifier = Modifier
         for (det in detections.detections) {
             val topLeft = Offset((det.bbox.x * scaleX).toFloat(), (det.bbox.y * scaleY).toFloat())
             val boxSize = Size((det.bbox.w * scaleX).toFloat(), (det.bbox.h * scaleY).toFloat())
-            drawRect(
-                color = Color(0xFF00BCD4), // cyan - distinct from the green/yellow/red tracked-target box
-                topLeft = topLeft,
-                size = boxSize,
-                style = Stroke(width = 2f),
-            )
+            
+            // Minimal detection corners
+            val color = DroneColors.Accent.copy(alpha = 0.6f)
+            val stroke = 1.5f
+            val cornerLen = 12f
+            
+            drawLine(color, topLeft, topLeft.copy(x = topLeft.x + cornerLen), stroke)
+            drawLine(color, topLeft, topLeft.copy(y = topLeft.y + cornerLen), stroke)
+            
+            val topRight = topLeft.copy(x = topLeft.x + boxSize.width)
+            drawLine(color, topRight, topRight.copy(x = topRight.x - cornerLen), stroke)
+            drawLine(color, topRight, topRight.copy(y = topRight.y + cornerLen), stroke)
+            
+            val bottomLeft = topLeft.copy(y = topLeft.y + boxSize.height)
+            drawLine(color, bottomLeft, bottomLeft.copy(x = bottomLeft.x + cornerLen), stroke)
+            drawLine(color, bottomLeft, bottomLeft.copy(y = bottomLeft.y - cornerLen), stroke)
+            
+            val bottomRight = topLeft.copy(x = topLeft.x + boxSize.width, y = topLeft.y + boxSize.height)
+            drawLine(color, bottomRight, bottomRight.copy(x = bottomRight.x - cornerLen), stroke)
+            drawLine(color, bottomRight, bottomRight.copy(y = bottomRight.y - cornerLen), stroke)
             drawContext.canvas.nativeCanvas.drawText(
                 "${det.className} ${(det.score * 100).toInt()}%",
                 topLeft.x,

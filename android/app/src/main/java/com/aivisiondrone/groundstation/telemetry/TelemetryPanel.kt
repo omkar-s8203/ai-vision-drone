@@ -1,7 +1,11 @@
 package com.aivisiondrone.groundstation.telemetry
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -9,6 +13,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aivisiondrone.groundstation.ui.theme.DroneColors
@@ -16,49 +21,48 @@ import com.aivisiondrone.groundstation.ui.theme.DroneColors
 @Composable
 fun TelemetryPanel(telemetry: TelemetryState, modifier: Modifier = Modifier) {
     Card(
-        modifier = modifier,
+        modifier = modifier.width(180.dp),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = DroneColors.Overlay),
+        border = androidx.compose.foundation.BorderStroke(0.5.dp, DroneColors.SurfaceElevated)
     ) {
-        Column(modifier = Modifier.padding(10.dp)) {
+        Column(modifier = Modifier.padding(12.dp)) {
             Text(
-                text = telemetry.flightMode ?: "--",
-                color = DroneColors.TextPrimary,
-                style = MaterialTheme.typography.titleMedium,
+                text = telemetry.flightMode ?: "DISCONNECTED",
+                color = DroneColors.Accent,
+                style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                text = if (telemetry.armed) "ARMED" else "DISARMED",
-                color = if (telemetry.armed) DroneColors.Danger else DroneColors.TextSecondary,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                "GPS: ${telemetry.lat?.let { "%.5f".format(it) } ?: "--"}, ${telemetry.lon?.let { "%.5f".format(it) } ?: "--"}",
-                color = DroneColors.TextSecondary,
+                text = if (telemetry.armed) "ARMED" else "SAFE",
+                color = if (telemetry.armed) DroneColors.Danger else DroneColors.Safe,
                 style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.ExtraBold,
             )
-            Text(
-                "Alt: ${telemetry.altitudeM?.let { "%.1f m".format(it) } ?: "--"}   Speed: ${telemetry.groundspeedMps?.let { "%.1f m/s".format(it) } ?: "--"}",
-                color = DroneColors.TextSecondary,
-                style = MaterialTheme.typography.labelSmall,
-            )
-            Text(
-                "Battery: ${telemetry.batteryVoltage?.let { "%.1f V".format(it) } ?: "--"}  ${telemetry.batteryRemainingPct?.let { "$it%" } ?: ""}",
-                color = if ((telemetry.batteryRemainingPct ?: 100) < 20) DroneColors.Danger else DroneColors.TextSecondary,
-                style = MaterialTheme.typography.labelSmall,
-            )
-            // Only shown once a geofence is actually armed on the FC - an
-            // operator with no fence configured doesn't need a permanent
-            // "fence: off" line cluttering the panel.
+            
+            Spacer(modifier = Modifier.height(8.dp))
+
+            TelemetryRow("ALT", "${telemetry.altitudeM?.let { "%.1f m".format(it) } ?: "--"}")
+            TelemetryRow("SPD", "${telemetry.groundspeedMps?.let { "%.1f m/s".format(it) } ?: "--"}")
+            
             if (telemetry.fenceEnabled) {
-                Text(
-                    text = if (telemetry.fenceBreached) "GEOFENCE BREACHED" else "Geofence: OK",
-                    color = if (telemetry.fenceBreached) DroneColors.Danger else DroneColors.Safe,
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = if (telemetry.fenceBreached) FontWeight.Bold else FontWeight.Normal,
+                TelemetryRow(
+                    "FENCE",
+                    if (telemetry.fenceBreached) "BREACH" else "OK",
+                    color = if (telemetry.fenceBreached) DroneColors.Danger else DroneColors.Safe
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun TelemetryRow(label: String, value: String, color: Color = DroneColors.TextPrimary) {
+    androidx.compose.foundation.layout.Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween
+    ) {
+        Text(label, color = DroneColors.TextSecondary, style = MaterialTheme.typography.labelSmall)
+        Text(value, color = color, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
     }
 }

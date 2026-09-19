@@ -2,8 +2,10 @@ package com.aivisiondrone.groundstation.ui.tabs
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -33,13 +35,15 @@ fun ControlTab(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+            .padding(horizontal = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
+        Spacer(modifier = Modifier.height(20.dp))
         Text(
             "Flight Control",
             color = DroneColors.TextPrimary,
             style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.padding(start = 4.dp)
         )
         TelemetryPanel(telemetry = telemetry, modifier = Modifier.fillMaxWidth())
         FlightControlDock(
@@ -55,6 +59,8 @@ fun ControlTab(
                 "Modes tab. The RC transmitter's mode switch always overrides both.",
             color = DroneColors.TextSecondary,
             style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(horizontal = 4.dp)
         )
+        Spacer(modifier = Modifier.height(20.dp))
     }
 }

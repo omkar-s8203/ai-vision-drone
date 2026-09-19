@@ -1,33 +1,63 @@
 package com.aivisiondrone.groundstation.ui.theme
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 
 /**
- * A dark, glassy ground-control palette (DJI Fly / QGroundControl territory)
- * rather than stock Material defaults - the operator reads this outdoors,
- * often in direct sun, over live video, so contrast and a small set of
- * unambiguous status colors matter more than brand polish.
+ * A premium, iOS-inspired dark palette. 
+ * Uses deep blacks, translucent surfaces, and vibrant system accents.
  */
 object DroneColors {
-    val Background = Color(0xFF0A0E13)
-    val Surface = Color(0xFF141A22)
-    val SurfaceElevated = Color(0xFF1C242F)
-    val Accent = Color(0xFF00D9FF)
-    val Safe = Color(0xFF30D158)
-    val Warning = Color(0xFFFFD60A)
-    val Danger = Color(0xFFFF453A)
-    val TextPrimary = Color(0xFFF2F5F7)
-    val TextSecondary = Color(0xFF8A96A3)
-    val Overlay = Color(0xCC0A0E13)
+    val Background = Color(0xFF000000)
+    val Surface = Color(0xFF111111)
+    val SurfaceElevated = Color(0xFF222222)
+    val Accent = Color(0xFF00C3FF) 
+    val Safe = Color(0xFF34C759)   
+    val Warning = Color(0xFFFFCC00) 
+    val Danger = Color(0xFFFF3B30)  
+    val TextPrimary = Color(0xFFFFFFFF)
+    val TextSecondary = Color(0xFFAEAEB2) 
+    val Overlay = Color(0xAA111111)
 }
+
+private val DroneTypography = Typography(
+    headlineSmall = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Bold,
+        fontSize = 24.sp,
+        letterSpacing = 0.sp
+    ),
+    titleMedium = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 18.sp,
+        letterSpacing = 0.sp
+    ),
+    bodyMedium = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Normal,
+        fontSize = 16.sp,
+        letterSpacing = 0.sp
+    ),
+    labelMedium = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Medium,
+        fontSize = 12.sp,
+        letterSpacing = 0.5.sp
+    )
+)
 
 private val DroneDarkScheme = darkColorScheme(
     primary = DroneColors.Accent,
-    onPrimary = Color(0xFF00232A),
+    onPrimary = Color.White,
     secondary = DroneColors.Safe,
     background = DroneColors.Background,
     onBackground = DroneColors.TextPrimary,
@@ -41,9 +71,9 @@ private val DroneDarkScheme = darkColorScheme(
 
 @Composable
 fun DroneGroundStationTheme(content: @Composable () -> Unit) {
-    // Always dark - a bright system theme fighting live video feels wrong
-    // for a field tool, regardless of the phone's own day/night setting.
-    val useDark = true
-    val scheme = if (useDark) DroneDarkScheme else lightColorScheme()
-    MaterialTheme(colorScheme = scheme, content = content)
+    MaterialTheme(
+        colorScheme = DroneDarkScheme,
+        typography = DroneTypography,
+        content = content
+    )
 }

@@ -2,11 +2,13 @@ package com.aivisiondrone.groundstation.control
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -42,27 +44,40 @@ fun TargetActionSheet(
 ) {
     Card(
         modifier = modifier,
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = DroneColors.Surface.copy(alpha = 0.96f)),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = DroneColors.Surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 12.dp)
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
             Text(
-                "Target locked - choose an action",
+                "Target Identified",
                 color = DroneColors.TextPrimary,
-                style = MaterialTheme.typography.labelLarge,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
             )
+            androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(16.dp))
             Row(
                 modifier = Modifier
-                    .padding(top = 10.dp, bottom = 6.dp)
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    .fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
             ) {
                 ActionChip(icon = Icons.Filled.CenterFocusStrong, label = "Track", onClick = onTrack)
                 ActionChip(icon = Icons.Filled.Navigation, label = "Follow", onClick = onFollow)
                 ActionChip(icon = Icons.Filled.Autorenew, label = "Orbit", onClick = onOrbit)
             }
-            TextButton(onClick = onCancel) {
-                Text("Cancel", color = DroneColors.TextSecondary)
+            androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(8.dp))
+            TextButton(
+                onClick = onCancel,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    "Dismiss",
+                    color = DroneColors.TextSecondary,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+                )
             }
         }
     }
@@ -72,12 +87,18 @@ fun TargetActionSheet(
 private fun ActionChip(icon: ImageVector, label: String, onClick: () -> Unit) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier
-            .background(DroneColors.SurfaceElevated, RoundedCornerShape(14.dp))
+            .background(DroneColors.SurfaceElevated, RoundedCornerShape(16.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 20.dp, vertical = 14.dp),
     ) {
-        Icon(icon, contentDescription = label, tint = DroneColors.Accent)
-        Text(label, color = DroneColors.TextPrimary, style = MaterialTheme.typography.labelSmall)
+        Icon(icon, contentDescription = label, tint = DroneColors.Accent, modifier = Modifier.size(24.dp))
+        Text(
+            label,
+            color = DroneColors.TextPrimary,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+        )
     }
 }

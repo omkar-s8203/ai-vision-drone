@@ -1,12 +1,18 @@
 package com.aivisiondrone.groundstation.ui
 
 import android.content.Context
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
@@ -23,6 +29,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.aivisiondrone.groundstation.MainViewModel
 import com.aivisiondrone.groundstation.control.AbortButton
@@ -110,20 +117,26 @@ fun GroundStationScreen(viewModel: MainViewModel, eglBase: EglBase, context: Con
         }
 
         if (isWideScreen) {
-            Row(modifier = Modifier.fillMaxSize()) {
-                NavigationRail(containerColor = DroneColors.Surface) {
+            Row(modifier = Modifier.fillMaxSize().background(DroneColors.Background)) {
+                NavigationRail(
+                    containerColor = DroneColors.Surface,
+                    modifier = Modifier.width(80.dp),
+                    header = {
+                        Spacer(modifier = Modifier.height(20.dp))
+                    }
+                ) {
                     AppTab.entries.forEach { tab ->
                         NavigationRailItem(
                             selected = tab == selectedTab,
                             onClick = { selectedTab = tab },
-                            icon = { Icon(tab.icon, contentDescription = tab.label) },
-                            label = { Text(tab.label) },
+                            icon = { Icon(tab.icon, contentDescription = tab.label, modifier = Modifier.size(24.dp)) },
+                            label = { Text(tab.label, style = MaterialTheme.typography.labelSmall) },
                             colors = NavigationRailItemDefaults.colors(
                                 selectedIconColor = DroneColors.Accent,
                                 selectedTextColor = DroneColors.Accent,
                                 unselectedIconColor = DroneColors.TextSecondary,
                                 unselectedTextColor = DroneColors.TextSecondary,
-                                indicatorColor = DroneColors.SurfaceElevated,
+                                indicatorColor = Color.Transparent,
                             ),
                         )
                     }
@@ -132,14 +145,18 @@ fun GroundStationScreen(viewModel: MainViewModel, eglBase: EglBase, context: Con
                     content(Modifier.fillMaxSize())
                     AbortButton(
                         onAbort = { viewModel.abort() },
-                        modifier = Modifier.align(Alignment.BottomEnd),
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
                     )
                 }
             }
-        } else {
+        }
+else {
             Scaffold(
                 bottomBar = {
-                    NavigationBar(containerColor = DroneColors.Surface) {
+                    NavigationBar(
+                        containerColor = DroneColors.Surface,
+                        tonalElevation = 0.dp
+                    ) {
                         AppTab.entries.forEach { tab ->
                             NavigationBarItem(
                                 selected = tab == selectedTab,
@@ -151,7 +168,7 @@ fun GroundStationScreen(viewModel: MainViewModel, eglBase: EglBase, context: Con
                                     selectedTextColor = DroneColors.Accent,
                                     unselectedIconColor = DroneColors.TextSecondary,
                                     unselectedTextColor = DroneColors.TextSecondary,
-                                    indicatorColor = DroneColors.SurfaceElevated,
+                                    indicatorColor = Color.Transparent,
                                 ),
                             )
                         }
@@ -163,7 +180,7 @@ fun GroundStationScreen(viewModel: MainViewModel, eglBase: EglBase, context: Con
                     content(Modifier.fillMaxSize())
                     AbortButton(
                         onAbort = { viewModel.abort() },
-                        modifier = Modifier.align(Alignment.BottomEnd),
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 16.dp, end = 16.dp),
                     )
                 }
             }

@@ -1,6 +1,8 @@
 package com.aivisiondrone.groundstation.control
 
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Warning
@@ -12,7 +14,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.aivisiondrone.groundstation.ui.theme.DroneColors
 
 /**
  * Always-reachable emergency stop - per docs plan M6, this must never be
@@ -23,16 +27,25 @@ import androidx.compose.ui.unit.dp
 fun AbortButton(onAbort: () -> Unit, modifier: Modifier = Modifier) {
     Button(
         onClick = onAbort,
-        shape = RoundedCornerShape(28.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
-        modifier = modifier.padding(8.dp),
+        shape = RoundedCornerShape(12.dp),
+        colors = ButtonDefaults.buttonColors(containerColor = DroneColors.Danger.copy(alpha = 0.9f)),
+        elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp),
+        modifier = modifier
+            .padding(8.dp)
+            .height(48.dp),
     ) {
-        Icon(Icons.Filled.Warning, contentDescription = null, tint = Color.White)
+        Icon(
+            Icons.Filled.Warning, 
+            contentDescription = null, 
+            tint = Color.White,
+            modifier = Modifier.size(18.dp)
+        )
         Text(
-            "STOP / ABORT",
-            style = MaterialTheme.typography.titleMedium,
+            "ABORT",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Black,
             color = Color.White,
-            modifier = Modifier.padding(start = 6.dp),
+            modifier = Modifier.padding(start = 8.dp),
         )
     }
 }

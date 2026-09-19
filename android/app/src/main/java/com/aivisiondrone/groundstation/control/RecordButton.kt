@@ -1,12 +1,9 @@
 package com.aivisiondrone.groundstation.control
 
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -22,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.aivisiondrone.groundstation.ui.theme.DroneColors
@@ -48,38 +46,34 @@ fun RecordButton(
     modifier: Modifier = Modifier,
     size: Dp = 56.dp,
 ) {
-    val transition = rememberInfiniteTransition(label = "record-pulse")
-    val pulse by transition.animateFloat(
-        initialValue = 0.4f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
-        label = "record-pulse-alpha",
-    )
-
     Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         IconButton(
             onClick = onClick,
             modifier = Modifier
                 .size(size)
+                .background(Color.White.copy(alpha = 0.1f), CircleShape)
+                .padding(4.dp)
                 .background(
-                    if (recording) DroneColors.Danger.copy(alpha = 0.18f) else DroneColors.SurfaceElevated,
+                    if (recording) DroneColors.Danger else Color.White,
                     CircleShape,
                 ),
         ) {
             Icon(
                 imageVector = if (recording) Icons.Filled.Stop else Icons.Filled.FiberManualRecord,
                 contentDescription = if (recording) "Stop recording" else "Start recording",
-                tint = if (recording) DroneColors.Danger.copy(alpha = pulse) else DroneColors.TextPrimary,
+                tint = if (recording) Color.White else DroneColors.Danger,
+                modifier = Modifier.size(if (recording) 24.dp else 28.dp)
             )
         }
+        Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = if (recording) formatDuration(durationS) else "REC",
-            color = if (recording) DroneColors.Danger else DroneColors.TextSecondary,
+            text = if (recording) formatDuration(durationS) else "0:00",
+            color = if (recording) DroneColors.Danger else Color.White,
             style = MaterialTheme.typography.labelSmall,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
             modifier = Modifier
-                .padding(top = 2.dp)
-                .background(DroneColors.Overlay, RoundedCornerShape(6.dp))
-                .padding(horizontal = 6.dp, vertical = 1.dp),
+                .background(DroneColors.Overlay, RoundedCornerShape(4.dp))
+                .padding(horizontal = 6.dp, vertical = 2.dp),
         )
     }
 }

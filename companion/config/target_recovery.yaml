@@ -1,0 +1,15 @@
+# Target-loss recovery: search, then RTL-vs-land decision (docs/safety-case.md).
+search_timeout_s: 60.0
+search_yaw_rate_rads: 0.3
+sweep_half_period_s: 4.0
+
+low_battery_pct_threshold: 20
+
+# Conservative constants for the RTL-feasibility estimate used only when
+# battery is already below low_battery_pct_threshold - NOT a live-measured
+# drain rate (see target_recovery.py's docstring for why). These are
+# aircraft-specific placeholders and MUST be tuned from real flight data
+# before being trusted for a real landing-vs-RTL decision.
+assumed_return_speed_mps: 5.0
+assumed_max_flight_time_s: 900
+rtl_safety_margin: 1.5

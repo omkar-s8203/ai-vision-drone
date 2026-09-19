@@ -11,6 +11,8 @@ object MessageType {
     const val SET_FLIGHT_MODE = "set_flight_mode"
     const val RECORD_COMMAND = "record_command"
     const val RECORDING_STATE = "recording_state"
+    const val LAND_CONFIRMATION_REQUEST = "land_confirmation_request"
+    const val LAND_CONFIRMATION_RESPONSE = "land_confirmation_response"
     const val TRACKING_UPDATE = "tracking_update"
     const val DETECTIONS_UPDATE = "detections_update"
     const val TELEMETRY = "telemetry"

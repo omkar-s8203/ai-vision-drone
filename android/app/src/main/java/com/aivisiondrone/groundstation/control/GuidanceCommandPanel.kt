@@ -34,9 +34,18 @@ fun GuidanceCommandPanel(tracking: TrackingState, modifier: Modifier = Modifier)
         colors = CardDefaults.cardColors(containerColor = DroneColors.Overlay),
     ) {
         Column(modifier = Modifier.padding(10.dp)) {
+            val searching = tracking.supervisorState == "SEARCHING"
             Text(
-                text = if (tracking.guidanceSent) "GUIDANCE SENT" else "GUIDANCE BLOCKED",
-                color = if (tracking.guidanceSent) DroneColors.Safe else DroneColors.Warning,
+                text = when {
+                    searching -> "SEARCHING FOR TARGET"
+                    tracking.guidanceSent -> "GUIDANCE SENT"
+                    else -> "GUIDANCE BLOCKED"
+                },
+                color = when {
+                    searching -> DroneColors.Warning
+                    tracking.guidanceSent -> DroneColors.Safe
+                    else -> DroneColors.Warning
+                },
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
             )

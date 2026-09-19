@@ -14,6 +14,8 @@ class MessageType:
     SET_FLIGHT_MODE = "set_flight_mode"
     RECORD_COMMAND = "record_command"
     RECORDING_STATE = "recording_state"
+    LAND_CONFIRMATION_REQUEST = "land_confirmation_request"
+    LAND_CONFIRMATION_RESPONSE = "land_confirmation_response"
     TRACKING_UPDATE = "tracking_update"
     DETECTIONS_UPDATE = "detections_update"
     TELEMETRY = "telemetry"

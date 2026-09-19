@@ -81,3 +81,16 @@ data class DetectionsState(
     val imageHeight: Int? = null,
     val detections: List<RawDetection> = emptyList(),
 )
+
+/** Target-loss recovery's search timed out and battery/distance say
+ * landing in place is safer than RTL (companion/guidance/target_recovery.py).
+ * obstacleDetected/obstacleClassName are informational only - the operator
+ * makes the actual land/don't-land call, this never auto-decides. Present
+ * (non-null) in MainViewModel's state exactly while awaiting a response;
+ * answering it (either way) clears it back to null. */
+data class LandConfirmationRequest(
+    val distanceToHomeM: Double? = null,
+    val batteryRemainingPct: Int? = null,
+    val obstacleDetected: Boolean = false,
+    val obstacleClassName: String? = null,
+)

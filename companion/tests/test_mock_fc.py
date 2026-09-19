@@ -10,6 +10,8 @@ TEST_FC_PORT = 14720
 TEST_BRIDGE_PORT = 14721
 FENCE_FC_PORT = 14722
 FENCE_BRIDGE_PORT = 14723
+HOME_FC_PORT = 14724
+HOME_BRIDGE_PORT = 14725
 
 
 @pytest.mark.asyncio
@@ -92,6 +94,40 @@ async def test_bridge_reflects_a_real_geofence_breach_over_real_mavlink():
         mock_fc.set_fence_state(enabled=False)
         await wait_until(lambda: mavlink.telemetry.fence_enabled is False, timeout=2.0)
         assert mavlink.telemetry.fence_breached is False
+    finally:
+        fc_task.cancel()
+        mavlink_task.cancel()
+        await asyncio.gather(fc_task, mavlink_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_bridge_receives_real_home_position_on_request():
+    """companion/guidance/target_recovery.py's RTL-vs-land decision needs a
+    real distance-to-home estimate, which needs HOME_POSITION -
+    MavlinkBridge.request_home_position() sends a real
+    MAV_CMD_GET_HOME_POSITION over real MAVLink, and this proves a real
+    (mock) FC's real HOME_POSITION reply is correctly parsed into
+    telemetry.home_lat/home_lon, using pymavlink's own confirmed
+    home_position_send() signature - not guessed field order."""
+    mock_fc = MockFlightController(f"udpin:127.0.0.1:{HOME_FC_PORT}")
+    fc_task = asyncio.create_task(mock_fc.run(rate_hz=20.0))
+
+    mavlink = MavlinkBridge(f"udpin:127.0.0.1:{HOME_BRIDGE_PORT}")
+    mavlink.connect()
+    mavlink.prime_udp_peer("127.0.0.1", HOME_FC_PORT)
+    mavlink_task = asyncio.create_task(mavlink.run(on_message=lambda _msg: None))
+
+    try:
+        await wait_until(lambda: mavlink.telemetry.last_heartbeat_ts is not None, timeout=3.0)
+        assert mavlink.telemetry.home_lat is None
+        assert mavlink.telemetry.home_lon is None
+
+        mock_fc.set_home(lat=37.7749, lon=-122.4194)
+        mavlink.request_home_position()
+
+        await wait_until(lambda: mavlink.telemetry.home_lat is not None, timeout=2.0)
+        assert mavlink.telemetry.home_lat == pytest.approx(37.7749, abs=1e-6)
+        assert mavlink.telemetry.home_lon == pytest.approx(-122.4194, abs=1e-6)
     finally:
         fc_task.cancel()
         mavlink_task.cancel()

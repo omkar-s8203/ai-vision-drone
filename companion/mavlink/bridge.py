@@ -48,6 +48,8 @@ class TelemetrySnapshot:
     last_heartbeat_ts: Optional[float] = None
     fence_enabled: bool = False
     fence_breached: bool = False
+    home_lat: Optional[float] = None
+    home_lon: Optional[float] = None
 
 
 class MavlinkBridge:
@@ -159,6 +161,15 @@ class MavlinkBridge:
             self.telemetry.fence_breached = self.telemetry.fence_enabled and not bool(
                 msg.onboard_control_sensors_health & fence_bit
             )
+        elif msg_type == "HOME_POSITION":
+            # ArduPilot broadcasts this when home is set/changed, and
+            # answers request_home_position()'s MAV_CMD_GET_HOME_POSITION
+            # on request - needed for the target-recovery RTL-vs-land
+            # distance estimate (companion/guidance/target_recovery.py).
+            # Not yet confirmed against a real FC, like every MAVLink
+            # integration in this project - see docs/safety-case.md.
+            self.telemetry.home_lat = msg.latitude / 1e7
+            self.telemetry.home_lon = msg.longitude / 1e7
 
     def arm(self, armed: bool) -> None:
         """Sends MAV_CMD_COMPONENT_ARM_DISARM - a direct, standard GCS
@@ -176,6 +187,21 @@ class MavlinkBridge:
             0,
             1 if armed else 0,
             0, 0, 0, 0, 0, 0,
+        )
+
+    def request_home_position(self) -> None:
+        """Asks the FC to (re)send HOME_POSITION - ArduPilot broadcasts this
+        on its own when home is set/changed, but a companion computer that
+        connects after home was already set otherwise has no way to learn
+        it. Call this once home is expected to exist (e.g. on the arm
+        transition - see main.py) rather than polling continuously."""
+        assert self._conn is not None, "call connect() first"
+        self._conn.mav.command_long_send(
+            self._conn.target_system,
+            self._conn.target_component,
+            mavutil.mavlink.MAV_CMD_GET_HOME_POSITION,
+            0,
+            0, 0, 0, 0, 0, 0, 0,
         )
 
     def set_mode(self, mode_name: str) -> bool:

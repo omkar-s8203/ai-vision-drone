@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.aivisiondrone.groundstation.MainViewModel
 import com.aivisiondrone.groundstation.control.AbortButton
+import com.aivisiondrone.groundstation.control.LandConfirmationDialog
 import com.aivisiondrone.groundstation.ui.theme.DroneColors
 import com.aivisiondrone.groundstation.ui.tabs.AiModesTab
 import com.aivisiondrone.groundstation.ui.tabs.ControlTab
@@ -66,8 +67,20 @@ fun GroundStationScreen(viewModel: MainViewModel, eglBase: EglBase, context: Con
     val remoteVideoTrack by viewModel.remoteVideoTrack.collectAsState()
     val recording by viewModel.recording.collectAsState()
     val showTargetActionSheet by viewModel.showTargetActionSheet.collectAsState()
+    val landConfirmationRequest by viewModel.landConfirmationRequest.collectAsState()
 
     var selectedTab by remember { mutableStateOf(AppTab.FLY) }
+
+    // Rendered here (not inside a tab) so it's reachable no matter which
+    // tab is open when target-loss recovery decides to ask, same
+    // reasoning as the abort button below.
+    landConfirmationRequest?.let { request ->
+        LandConfirmationDialog(
+            request = request,
+            onApprove = { viewModel.respondToLandConfirmation(true) },
+            onDeny = { viewModel.respondToLandConfirmation(false) },
+        )
+    }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val isWideScreen = maxWidth >= WIDE_SCREEN_BREAKPOINT

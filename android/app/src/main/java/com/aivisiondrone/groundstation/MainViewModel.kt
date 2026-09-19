@@ -12,6 +12,7 @@ import com.aivisiondrone.groundstation.comms.optStringOrNull
 import com.aivisiondrone.groundstation.control.DroneMode
 import com.aivisiondrone.groundstation.telemetry.DetectionsState
 import com.aivisiondrone.groundstation.telemetry.HealthState
+import com.aivisiondrone.groundstation.telemetry.LandConfirmationRequest
 import com.aivisiondrone.groundstation.telemetry.RawDetection
 import com.aivisiondrone.groundstation.telemetry.RecordingState
 import com.aivisiondrone.groundstation.telemetry.TargetBBox
@@ -60,6 +61,11 @@ class MainViewModel : ViewModel() {
 
     private val _detections = MutableStateFlow(DetectionsState())
     val detections = _detections.asStateFlow()
+
+    /** Non-null exactly while a land_confirmation_request is awaiting the
+     * operator's answer - see LandConfirmationDialog.kt. */
+    private val _landConfirmationRequest = MutableStateFlow<LandConfirmationRequest?>(null)
+    val landConfirmationRequest = _landConfirmationRequest.asStateFlow()
 
     private val _mode = MutableStateFlow(DroneMode.IDLE)
     val mode = _mode.asStateFlow()
@@ -221,6 +227,14 @@ class MainViewModel : ViewModel() {
         client.sendSetFlightMode(mode)
     }
 
+    /** The operator's answer to a land_confirmation_request - see
+     * LandConfirmationDialog.kt. Landing only ever happens on an explicit
+     * true here; either answer clears the pending request. */
+    fun respondToLandConfirmation(approved: Boolean) {
+        client.sendLandConfirmationResponse(approved)
+        _landConfirmationRequest.value = null
+    }
+
     /** One button drives both recordings at once (by operator preference):
      * the Pi's own local recording (as before) and a local copy saved on
      * this device from the same video the operator is watching - so
@@ -287,6 +301,12 @@ class MainViewModel : ViewModel() {
                 }
             }
             MessageType.DETECTIONS_UPDATE -> _detections.value = parseDetections(envelope.payload)
+            MessageType.LAND_CONFIRMATION_REQUEST -> _landConfirmationRequest.value = LandConfirmationRequest(
+                distanceToHomeM = envelope.payload.optDoubleOrNull("distance_to_home_m"),
+                batteryRemainingPct = envelope.payload.optIntOrNull("battery_remaining_pct"),
+                obstacleDetected = envelope.payload.optBoolean("obstacle_detected", false),
+                obstacleClassName = envelope.payload.optStringOrNull("obstacle_class_name"),
+            )
             MessageType.RECORDING_STATE -> _recording.value = RecordingState(
                 recording = envelope.payload.optBoolean("recording", false),
                 durationS = envelope.payload.optDoubleOrNull("duration_s") ?: 0.0,

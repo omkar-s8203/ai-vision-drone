@@ -41,6 +41,9 @@ class MockFlightController:
         self.alt_m = 0.0
         self.fence_enabled = False
         self.fence_breached = False
+        self.home_lat = 0.0
+        self.home_lon = 0.0
+        self.home_set = False
         self.received_setpoints: list[tuple[float, float, float, float]] = []
 
     def set_mode(self, mode: str) -> None:
@@ -54,6 +57,16 @@ class MockFlightController:
 
     def set_rc_override(self, active: bool) -> None:
         self.rc_override_active = active
+
+    def set_home(self, lat: float, lon: float) -> None:
+        """Real ArduPilot sets home at arm time (or wherever GPS first gets
+        a fix) - this test double requires it to be set explicitly rather
+        than defaulting to "always available", so a test can also exercise
+        the real "home not set yet" case (request_home_position() answered
+        with nothing, matching a real FC before GPS fix)."""
+        self.home_lat = lat
+        self.home_lon = lon
+        self.home_set = True
 
     def set_fence_state(self, enabled: bool, breached: bool = False) -> None:
         """`breached` only means anything when `enabled` is True - matches
@@ -106,6 +119,19 @@ class MockFlightController:
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         )
 
+    def _send_home_position(self) -> None:
+        """Answers a real MAV_CMD_GET_HOME_POSITION request
+        (companion/mavlink/bridge.py's request_home_position()) with a real
+        HOME_POSITION message - confirmed field order/types against
+        pymavlink directly (home_position_send's real signature), not
+        guessed."""
+        self._conn.mav.home_position_send(
+            int(self.home_lat * 1e7), int(self.home_lon * 1e7), 0,
+            0.0, 0.0, 0.0,
+            [1.0, 0.0, 0.0, 0.0],
+            0.0, 0.0, 0.0,
+        )
+
     def poll_incoming(self) -> None:
         while True:
             msg = self._conn.recv_match(blocking=False)
@@ -120,6 +146,12 @@ class MockFlightController:
                 # is fine for testing that the command reaches the FC at
                 # all, not for testing ArduPilot's own arming logic.
                 self.armed = bool(msg.param1)
+            elif msg_type == "COMMAND_LONG" and msg.command == mavutil.mavlink.MAV_CMD_GET_HOME_POSITION:
+                if self.home_set:
+                    self._send_home_position()
+                # Real ArduPilot would also NACK via COMMAND_ACK if home
+                # isn't set yet - not modeled here since nothing in this
+                # project reads COMMAND_ACK for this request today.
             elif msg_type == "SET_MODE":
                 self.fc_mode = COPTER_NUMBER_TO_MODE.get(msg.custom_mode, self.fc_mode)
 

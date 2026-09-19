@@ -105,6 +105,36 @@ def test_no_obstacle_alert_allows_guidance():
     assert decision.guidance_allowed is True
 
 
+def test_searching_is_allowed_even_though_target_is_lost():
+    """SEARCHING (target-loss recovery's yaw-sweep, see
+    target_recovery.py) is only ever requested once the target is already
+    lost - target_lost must not be treated as a reason to block it, unlike
+    FOLLOWING/ORBITING/APPROACHING/SMART_SHOT."""
+    supervisor = SafetySupervisor(fresh_watchdog())
+    decision = supervisor.evaluate(
+        base_inputs(tracking_state=TrackingState.TARGET_LOST, requested_state=SupervisorState.SEARCHING)
+    )
+    assert decision.state == SupervisorState.SEARCHING
+    assert decision.guidance_allowed is True
+    assert decision.reason is None
+
+
+def test_searching_still_blocked_by_rc_override():
+    """SEARCHING gets no special exemption from the other gates - it's a
+    guidance path like any other once past the target_lost check."""
+    supervisor = SafetySupervisor(fresh_watchdog())
+    decision = supervisor.evaluate(
+        base_inputs(
+            tracking_state=TrackingState.TARGET_LOST,
+            requested_state=SupervisorState.SEARCHING,
+            rc_override_active=True,
+        )
+    )
+    assert decision.state == SupervisorState.SAFE
+    assert decision.guidance_allowed is False
+    assert decision.reason == "rc_override"
+
+
 def test_obstacle_alert_takes_priority_over_comms_lost_reason():
     """Order matters for the reported reason (both force SAFE either way) -
     the more physically urgent obstacle warning should be visible in logs/

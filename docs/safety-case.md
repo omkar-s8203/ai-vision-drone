@@ -70,6 +70,85 @@ mechanism is never silent to the operator.
   that abort clears the remembered target instead of silently relocking
   it) - all passing.
 
+### Follow/Orbit-only: bounded search, then RTL or an operator-confirmed landing
+
+The forced-`SAFE` behavior above is the whole story for Approach-Test and
+Dronie/Parabola - deliberately unchanged, since those modes are already
+stricter about target loss (Approach-Test aborts immediately; a smart
+shot has a fixed duration and finishing early on loss is fine). Follow and
+Orbit get an additional layer on top, since those are the modes meant to
+keep an aircraft near a target for an extended period, where "just stop
+and hold forever" is a worse outcome than trying to recover, then a
+graceful fallback:
+
+- **Mechanism**: `TargetRecoveryController`
+  (`companion/guidance/target_recovery.py`), engaged by
+  `CompanionOrchestrator.process_frame()` only when `TARGET_LOST` occurs
+  while `requested_mode` is `FOLLOWING` or `ORBITING`:
+  1. **Search** (`search_timeout_s`, default 60s): a bounded yaw-only
+     sweep (`search_yaw_rate_rads`, alternating direction every
+     `sweep_half_period_s` rather than spinning continuously, staying
+     roughly oriented toward where the target was last seen) - this is a
+     new `SupervisorState.SEARCHING` guidance path, gated by
+     `SafetySupervisor.evaluate()` exactly like Follow/Orbit/Approach-Test
+     (RC override, comms loss, obstacle proximity, stale subsystems all
+     still apply). If the target reappears (via the tracker's own
+     REACQUIRE window or the appearance-rematch above), the search cancels
+     and Follow/Orbit resumes normally with no operator action needed.
+  2. **Decision** (if the search times out): RTL by default
+     (`MavlinkBridge.set_mode("RTL")`, a direct FC mode change, not a
+     guidance setpoint - same category as `arm()`/`set_mode()` already
+     bypassing the velocity-setpoint gate). Only considers landing in
+     place instead if battery is below `low_battery_pct_threshold`
+     (default 20%) **and** an estimated RTL-feasibility check says the
+     aircraft likely can't make it home - see the honest caveat on that
+     estimate below. Missing telemetry (no GPS fix, no home position, no
+     battery reading) always defaults to RTL rather than guessing at a
+     landing decision with incomplete information.
+  3. **Landing requires an explicit operator decision** - never automatic.
+     A `land_confirmation_request` message (distance to home, battery,
+     and whether the existing obstacle-proximity detector currently sees
+     anything - informational only, not a veto) is sent once, and the
+     aircraft holds (no guidance command) until a
+     `land_confirmation_response` arrives. Only `{"approved": true}`
+     triggers `set_mode("LAND")`; a denial (or no response) leaves the
+     aircraft exactly where the FC's own behavior already puts it (e.g.
+     GUIDED's setpoint-timeout hold).
+- **Distance-to-home**: `MavlinkBridge` requests a real `HOME_POSITION`
+  message (`MAV_CMD_GET_HOME_POSITION`) once, on the arm transition, and
+  parses ArduPilot's real reply - `companion/guidance/geo.py`'s haversine
+  distance from that to current `GLOBAL_POSITION_INT` lat/lon feeds the
+  RTL-feasibility estimate.
+- **Honest caveat on the RTL-feasibility estimate**: it is NOT a
+  live-measured battery drain rate (that needs a time series that takes a
+  while to stabilize after boot) - it's `assumed_return_speed_mps` and
+  `assumed_max_flight_time_s` (config constants, `target_recovery.yaml`)
+  combined with a `rtl_safety_margin` multiplier. These are
+  aircraft-specific placeholders and **must be tuned from real flight
+  data** before this decision should be trusted - exactly the same
+  category of "confirmed in code, not yet confirmed against real
+  hardware" as the geofence signal above.
+- **Guarantee**: a velocity command is only ever sent during the bounded
+  search window, subject to every other Supervisor gate; RTL is always
+  the default outcome; landing never happens without an explicit,
+  freshly-requested operator approval for that specific event.
+- **Tests**: `test_target_recovery.py` (the search/decision state machine
+  in isolation - sweep timing/direction, reacquisition cancels search,
+  RTL vs. land-confirmation decision under various battery/distance
+  combinations, missing-telemetry defaults to RTL, confirmation doesn't
+  re-request every frame), `test_geo.py` (haversine distance against known
+  geodesy reference values), `test_mock_fc.py::test_bridge_receives_real_home_position_on_request`
+  (a real `HOME_POSITION` reply over real MAVLink, using pymavlink's own
+  confirmed `home_position_send` signature), `test_safety_supervisor.py::test_searching_is_allowed_even_though_target_is_lost`
+  and `::test_searching_still_blocked_by_rc_override`,
+  `test_target_recovery_orchestrator.py` (the full wiring: search engages
+  and sends a yaw-only command, reacquisition resumes Follow, search
+  timeout triggers RTL or a land-confirmation request depending on
+  battery/distance, and the operator's approve/deny response) - all
+  passing. **Not yet confirmed against real hardware** - every test here
+  uses a mock FC or a mocked MAVLink connection, the same category of gap
+  as everything else in this document flagged that way.
+
 ## Comms-loss handling (Android link)
 
 - **Mechanism**: `GroundStationLink.is_connected` reflects whether the
@@ -202,7 +281,7 @@ Every mechanism above that has a corresponding `SafetySupervisor` gate is
 covered by at least one test that independently trips *only that
 condition* and asserts guidance is denied - this is what "fault injection"
 means in this codebase's test suite, not a separate framework. As of this
-writing: 175 companion tests passing
+writing: 200 companion tests passing
 (`.venv/Scripts/python -m pytest -q`), including a real end-to-end test
 (`test_integration_websocket.py`) that drives the actual JSON wire
 protocol over a real WebSocket and real MAVLink link, and real-MAVLink

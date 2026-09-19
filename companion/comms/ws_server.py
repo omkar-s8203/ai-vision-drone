@@ -45,6 +45,12 @@ class GroundStationLink:
         """handler receives {"recording": bool}."""
         self._handlers[MessageType.RECORD_COMMAND] = handler
 
+    def on_land_confirmation_response(self, handler: Callable[[dict], None]) -> None:
+        """handler receives {"approved": bool} - the operator's answer to a
+        land_confirmation_request (target-loss recovery, see
+        companion/guidance/target_recovery.py)."""
+        self._handlers[MessageType.LAND_CONFIRMATION_RESPONSE] = handler
+
     def on_webrtc_offer(self, handler: Callable[[dict], None]) -> None:
         """handler receives {"sdp": ..., "sdp_type": ...} and is responsible
         for calling send_webrtc_answer() with the resulting answer."""
@@ -76,6 +82,9 @@ class GroundStationLink:
 
     async def send_recording_state(self, payload: dict) -> None:
         await self._send(MessageType.RECORDING_STATE, payload)
+
+    async def send_land_confirmation_request(self, payload: dict) -> None:
+        await self._send(MessageType.LAND_CONFIRMATION_REQUEST, payload)
 
     async def _send(self, msg_type: str, payload: dict) -> None:
         envelope = make_envelope(msg_type, payload, self._seq.next())

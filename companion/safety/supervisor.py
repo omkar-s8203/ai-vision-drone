@@ -18,6 +18,7 @@ class SupervisorState(Enum):
     ORBITING = auto()
     APPROACHING = auto()
     SMART_SHOT = auto()  # one-shot cinematic move (Dronie/Parabola) - see smart_shot.py
+    SEARCHING = auto()  # bounded yaw-sweep after losing a Follow/Orbit target - see target_recovery.py
     SAFE = auto()  # fault or pilot override in effect - guidance disabled
 
 
@@ -41,11 +42,16 @@ class SupervisorDecision:
 
 class SafetySupervisor:
     """Single authority gating whether any guidance command may reach
-    MAVLink. Every guidance path (Follow, Orbit, Approach-Test) must have
-    its output checked against `evaluate()` before it is sent - see docs
-    plan M10 and docs/safety-case.md. Also applies a cross-mode obstacle
-    proximity check (companion/safety/proximity_guard.py) independent of
-    whichever guidance controller is active.
+    MAVLink. Every guidance path (Follow, Orbit, Approach-Test, the
+    target-loss recovery search) must have its output checked against
+    `evaluate()` before it is sent - see docs plan M10 and
+    docs/safety-case.md. Also applies a cross-mode obstacle proximity check
+    (companion/safety/proximity_guard.py) independent of whichever guidance
+    controller is active.
+
+    Note SEARCHING is deliberately excluded from the target_lost check
+    below: it exists precisely because the target is lost, so target_lost
+    is its trigger condition, not something that should force it to SAFE.
     """
 
     def __init__(self, watchdog: HeartbeatWatchdog) -> None:
@@ -77,6 +83,10 @@ class SafetySupervisor:
             self.state = SupervisorState.SAFE
             return SupervisorDecision(self.state, False, "fc_not_in_ai_mode")
 
+        # SEARCHING is intentionally not in this tuple - the orchestrator
+        # only ever requests it once the target is already lost (see
+        # target_recovery.py), so target_lost is what SEARCHING is *for*,
+        # not a reason to block it.
         if inputs.tracking_state == TrackingState.TARGET_LOST and inputs.requested_state in (
             SupervisorState.FOLLOWING,
             SupervisorState.ORBITING,
@@ -92,5 +102,6 @@ class SafetySupervisor:
             SupervisorState.ORBITING,
             SupervisorState.APPROACHING,
             SupervisorState.SMART_SHOT,
+            SupervisorState.SEARCHING,
         )
         return SupervisorDecision(self.state, allowed, None)

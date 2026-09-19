@@ -24,8 +24,10 @@ from companion.config.loader import load_yaml
 from companion.guidance.approach_test import ApproachInputs, ApproachTestController
 from companion.guidance.distance import CameraIntrinsics, DistanceEstimator
 from companion.guidance.follow import FollowController
+from companion.guidance.geo import haversine_distance_m
 from companion.guidance.orbit import OrbitController
 from companion.guidance.smart_shot import ShotType, SmartShotController, SmartShotState
+from companion.guidance.target_recovery import RecoveryPhase, TargetRecoveryController
 from companion.logging_.session_recorder import SessionRecorder
 from companion.logging_.setup import configure_logging
 from companion.mavlink.bridge import MavlinkBridge
@@ -91,6 +93,7 @@ class CompanionOrchestrator:
         video_recorder: Optional[VideoRecorder] = None,
         smart_shot_controller: Optional[SmartShotController] = None,
         appearance_memory: Optional[AppearanceMemory] = None,
+        recovery_controller: Optional[TargetRecoveryController] = None,
         reacquire_timeout_s: float = 2.0,
         min_obstacle_distance_m: float = 2.0,
     ) -> None:
@@ -103,6 +106,7 @@ class CompanionOrchestrator:
         self.approach = approach_controller
         self.smart_shot = smart_shot_controller or SmartShotController(load_yaml("smart_shot_limits.yaml"))
         self.appearance = appearance_memory or AppearanceMemory(**load_yaml("reidentification.yaml"))
+        self.recovery = recovery_controller or TargetRecoveryController(load_yaml("target_recovery.yaml"))
         self.min_obstacle_distance_m = min_obstacle_distance_m
         self.mavlink = mavlink
         self.rc_monitor = rc_monitor
@@ -119,6 +123,7 @@ class CompanionOrchestrator:
         self._last_frame_ts: Optional[float] = None
         self._recent_frame_ts: list[float] = []
         self._frame_size: Optional[tuple[int, int]] = None  # (width, height) of the latest frame
+        self._was_armed = False  # edge-detects the arm transition to request HOME_POSITION once
 
         self.link.on_target_selected(self._on_target_selected)
         self.link.on_mode_command(self._on_mode_command)
@@ -126,6 +131,7 @@ class CompanionOrchestrator:
         self.link.on_arm_command(self._on_arm_command)
         self.link.on_set_flight_mode(self._on_set_flight_mode)
         self.link.on_record_command(self._on_record_command)
+        self.link.on_land_confirmation_response(self._on_land_confirmation_response)
         if self.video_pipeline is not None:
             self.link.on_webrtc_offer(self._on_webrtc_offer_sync)
 
@@ -192,6 +198,7 @@ class CompanionOrchestrator:
         self.smart_shot.stop()
         self.state_machine.stop()
         self.appearance.forget()
+        self.recovery.cancel()
         self.recorder.record("abort", reason=payload.get("reason"))
 
     def _on_arm_command(self, payload: dict) -> None:
@@ -207,6 +214,20 @@ class CompanionOrchestrator:
         mode = str(payload.get("mode", ""))
         ok = self.mavlink.set_mode(mode)
         self.recorder.record("set_flight_mode", mode=mode, accepted=ok)
+
+    def _on_land_confirmation_response(self, payload: dict) -> None:
+        """The operator's answer to a land_confirmation_request (target-loss
+        recovery timed out with low battery/too far to RTL - see
+        companion/guidance/target_recovery.py). Landing is only ever
+        triggered here, on an explicit operator decision - never
+        automatically, regardless of what the recovery controller or the
+        obstacle check concluded."""
+        approved = bool(payload.get("approved", False))
+        self.recovery.confirm_landing(approved)
+        self.recorder.record("land_confirmation_response", approved=approved)
+        if approved:
+            self.mavlink.set_mode("LAND")
+        self.requested_mode = SupervisorState.IDLE
 
     def _on_record_command(self, payload: dict) -> None:
         asyncio.create_task(self._handle_record_command(bool(payload.get("recording", False))))
@@ -314,6 +335,71 @@ class CompanionOrchestrator:
                 "obstacle_alert", class_name=obstacle_alert.class_name, distance_m=obstacle_alert.distance_m
             )
 
+        # HOME_POSITION isn't broadcast continuously - request it once right
+        # after arming (ArduPilot sets/refreshes home at arm time), so the
+        # target-recovery RTL-vs-land distance estimate below has it
+        # available without polling every frame.
+        armed_now = self.mavlink.telemetry.armed
+        if armed_now and not self._was_armed:
+            self.mavlink.request_home_position()
+        self._was_armed = armed_now
+
+        distance_to_home_m = None
+        home_lat, home_lon = self.mavlink.telemetry.home_lat, self.mavlink.telemetry.home_lon
+        cur_lat, cur_lon = self.mavlink.telemetry.lat, self.mavlink.telemetry.lon
+        if None not in (home_lat, home_lon, cur_lat, cur_lon):
+            distance_to_home_m = haversine_distance_m(home_lat, home_lon, cur_lat, cur_lon)
+
+        # Target-loss recovery (docs/safety-case.md): only engages for
+        # Follow/Orbit, which is what's actually driving the aircraft
+        # toward/around a target - Approach-Test already has its own
+        # stricter immediate-abort-on-loss behavior (see supervisor.py) and
+        # deliberately doesn't get a search phase.
+        if tracking_state == TrackingState.TARGET_LOST and self.requested_mode in (
+            SupervisorState.FOLLOWING,
+            SupervisorState.ORBITING,
+        ):
+            self.recovery.start_search(frame.ts)
+
+        recovery_result = self.recovery.update(
+            now=frame.ts,
+            target_reacquired=tracking_state == TrackingState.TRACKING,
+            distance_to_home_m=distance_to_home_m,
+            battery_remaining_pct=self.mavlink.telemetry.battery_remaining_pct,
+            obstacle_detected=obstacle_alert is not None,
+            obstacle_class_name=obstacle_alert.class_name if obstacle_alert else None,
+        )
+
+        effective_requested_state = self.requested_mode
+        if recovery_result.phase == RecoveryPhase.SEARCHING:
+            effective_requested_state = SupervisorState.SEARCHING
+        elif recovery_result.phase == RecoveryPhase.FOUND:
+            self.recorder.record("target_recovery_found")
+        elif recovery_result.phase == RecoveryPhase.RTL_TRIGGERED:
+            self.mavlink.set_mode("RTL")
+            self.recorder.record(
+                "target_recovery_rtl", distance_to_home_m=recovery_result.distance_to_home_m
+            )
+            self.requested_mode = SupervisorState.IDLE
+            effective_requested_state = SupervisorState.IDLE
+        elif recovery_result.phase == RecoveryPhase.LAND_CONFIRMATION_REQUESTED:
+            effective_requested_state = SupervisorState.IDLE  # hold - no guidance command while waiting
+            await self.link.send_land_confirmation_request(
+                {
+                    "distance_to_home_m": recovery_result.distance_to_home_m,
+                    "battery_remaining_pct": self.mavlink.telemetry.battery_remaining_pct,
+                    "obstacle_detected": recovery_result.obstacle_detected,
+                    "obstacle_class_name": recovery_result.obstacle_class_name,
+                }
+            )
+            self.recorder.record(
+                "target_recovery_land_confirmation_requested",
+                distance_to_home_m=recovery_result.distance_to_home_m,
+                obstacle_detected=recovery_result.obstacle_detected,
+            )
+        elif recovery_result.phase == RecoveryPhase.AWAITING_LAND_CONFIRMATION:
+            effective_requested_state = SupervisorState.IDLE  # still holding - request already sent, don't resend
+
         decision = self.supervisor.evaluate(
             SupervisorInputs(
                 fc_mode=self.mavlink.telemetry.fc_mode,
@@ -321,7 +407,7 @@ class CompanionOrchestrator:
                 rc_override_active=rc_override,
                 tracking_state=tracking_state,
                 comms_alive=comms_alive,
-                requested_state=self.requested_mode,
+                requested_state=effective_requested_state,
                 obstacle_alert=obstacle_alert,
             )
         )
@@ -330,7 +416,9 @@ class CompanionOrchestrator:
         self._last_frame_ts = frame.ts
 
         command = None
-        if decision.state == SupervisorState.FOLLOWING and self.state_machine.target is not None:
+        if decision.state == SupervisorState.SEARCHING:
+            command = recovery_result.command
+        elif decision.state == SupervisorState.FOLLOWING and self.state_machine.target is not None:
             command = self.follow.compute(
                 self.state_machine.target,
                 distance_m,

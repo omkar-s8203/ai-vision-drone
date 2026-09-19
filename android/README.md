@@ -234,6 +234,21 @@ Only rendered while a guidance controller is actually producing a command
 (Tracking-only/Normal RC don't show it). Build-verified only, not yet
 exercised against a live guidance session on a real device.
 
+**New: target-loss recovery UI** (`LandConfirmationDialog.kt`) - when a
+Follow/Orbit target is lost and the on-Pi search
+(`companion/guidance/target_recovery.py`) times out with low battery and
+too far to safely RTL, the Pi asks before landing rather than deciding on
+its own. The dialog shows distance-to-home, battery, and whether the AI
+currently sees anything nearby (informational only - the operator makes
+the actual call), rendered at the `GroundStationScreen` level (like the
+abort button) so it's reachable regardless of which tab is open.
+Dismissing it (e.g. the back button) counts as "don't land," never a
+silent no-op. `GuidanceCommandPanel` also now shows "SEARCHING FOR
+TARGET" instead of the usual vx/vy/vz readout while the search sweep is
+active, so a yaw-only command doesn't look like an unexplained glitch.
+Build-verified only, not yet exercised against a live recovery scenario
+on a real device.
+
 ## Layout
 
 ```
@@ -253,6 +268,8 @@ app/src/main/java/com/aivisiondrone/groundstation/
                 and whether it actually reached the FC - the bench-test
                 "dashboard" the plan's staged real-flight procedure calls
                 for, previously only in the Pi's session log),
+                LandConfirmationDialog.kt (target-loss recovery's
+                operator-approval gate before an autonomous landing),
                 ModeControls.kt (mode buttons, incl. Dronie/Parabola smart
                 shots, + follow/orbit sliders),
                 FlightControlDock.kt (arm/disarm, FC mode dropdown - a

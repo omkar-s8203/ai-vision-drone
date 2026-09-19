@@ -141,6 +141,14 @@ class GroundStationClient(private val client: OkHttpClient = OkHttpClient()) {
         send(MessageType.RECORD_COMMAND, JSONObject().put("recording", recording))
     }
 
+    /** The operator's answer to a land_confirmation_request (target-loss
+     * recovery timed out with low battery/too far to RTL - see
+     * companion/guidance/target_recovery.py). Landing only ever happens on
+     * an explicit true here. */
+    fun sendLandConfirmationResponse(approved: Boolean) {
+        send(MessageType.LAND_CONFIRMATION_RESPONSE, JSONObject().put("approved", approved))
+    }
+
     fun sendWebRtcOffer(sdp: String, sdpType: String) {
         send(
             MessageType.WEBRTC_OFFER,

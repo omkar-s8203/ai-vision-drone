@@ -356,7 +356,7 @@ class CompanionOrchestrator:
                     target_tracked=tracking_state == TrackingState.TRACKING,
                     comms_alive=comms_alive,
                     rc_override_active=rc_override,
-                    geofence_breached=False,
+                    geofence_breached=self.mavlink.telemetry.fence_breached,
                 )
             )
             command = result.command

@@ -155,20 +155,35 @@ mechanism is never silent to the operator.
   about what happens next, not silently clear itself (contrast with
   Dronie/Parabola smart shots below, which *do* self-clear since they have
   no comparable safety significance once finished).
-- **Real, honest gap**: `geofence_breached` is unit-tested at the
-  controller level (`test_approach_test.py::test_geofence_breach_aborts`
-  passes with a hand-constructed `True` input) but `companion/main.py`
-  currently hardcodes `geofence_breached=False` when calling it - there is
-  no real geofence signal wired up yet from the FC's own `FENCE_ENABLE`/
-  breach status. **Approach-Test's geofence abort condition does not
-  currently function against real hardware, only in unit tests.** This is
-  the most safety-relevant open gap in this document.
+- **Geofence signal wiring**: `companion/main.py` now reads
+  `self.mavlink.telemetry.fence_breached` instead of a hardcoded `False`.
+  That field is parsed in `MavlinkBridge._handle_message()` from a real
+  `SYS_STATUS` message's `onboard_control_sensors_enabled`/`_health`
+  bitmasks, gated on pymavlink's own `MAV_SYS_STATUS_GEOFENCE` constant
+  (not a hand-guessed bit shift) - this is standard, documented
+  ArduPilot/MAVLink behavior (a fence has no dedicated status message; its
+  state rides on `SYS_STATUS`'s generic sensor-health bits).
+- **Remaining honest gap**: this has been verified against a real
+  `MavlinkBridge` and a (mock) FC sending real `SYS_STATUS` messages over
+  real UDP (`test_mock_fc.py::test_bridge_reflects_a_real_geofence_breach_over_real_mavlink`),
+  and against the full orchestrator wiring
+  (`test_approach_orchestrator.py`) - but, like every MAVLink integration
+  in this project, **it has not been confirmed against a real ArduPilot FC
+  yet**. The mock only emits the bits this code expects to see; it does
+  not prove a real Cube Orange reports geofence status the same way. Given
+  this project's own history of a MAVLink assumption turning out wrong in
+  a way only real hardware revealed (the TELEM baud-rate saga, see
+  `docs/hardware-wiring.md`), **do not treat this as load-bearing for a
+  real flight until it's been confirmed against the real FC** (e.g. by
+  enabling `FENCE_ENABLE` on the bench and confirming
+  `telemetry.fence_breached` flips when the boundary is crossed).
 - **Tests**: the full `test_approach_test.py` suite (every abort condition
   individually, plus `test_aborted_state_persists_until_restart` and
-  `test_contact_sensor_stops_regardless_of_distance`) - all passing at the
-  controller level. No SITL or bench test of the full chain has been run
-  yet (docs plan M9's own required next step, additionally blocked on the
-  geofence-wiring gap above).
+  `test_contact_sensor_stops_regardless_of_distance`) at the controller
+  level; `test_mock_fc.py` and `test_approach_orchestrator.py` for the
+  real-MAVLink-to-orchestrator wiring above - all passing. No SITL or
+  bench test of the full chain has been run yet (docs plan M9's own
+  required next step).
 
 ## One-shot smart shots (Dronie/Parabola) - a deliberately different design
 
@@ -187,11 +202,12 @@ Every mechanism above that has a corresponding `SafetySupervisor` gate is
 covered by at least one test that independently trips *only that
 condition* and asserts guidance is denied - this is what "fault injection"
 means in this codebase's test suite, not a separate framework. As of this
-writing: 160 companion tests passing
+writing: 163 companion tests passing
 (`.venv/Scripts/python -m pytest -q`), including a real end-to-end test
 (`test_integration_websocket.py`) that drives the actual JSON wire
-protocol over a real WebSocket and real MAVLink link, not just in-process
-Python calls.
+protocol over a real WebSocket and real MAVLink link, and real-MAVLink
+mock-FC tests for arm/set-mode/geofence-status (`test_mock_fc.py`) - not
+just in-process Python calls.
 
 ## What this document does not yet cover
 

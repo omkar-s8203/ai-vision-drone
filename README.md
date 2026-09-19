@@ -36,16 +36,16 @@ The flight controller remains the sole flight authority at all times. RC overrid
 | M6 | Android Ground Station App | **Build-verified**: real `gradle assembleDebug` succeeded and the app has been installed and running on a physical device across several rounds of changes (three real compile/layout errors found and fixed this way - see android/README.md). Restructured into a DJI-Fly-style 4-tab layout (Fly/Control/AI Modes/Settings), a tap-to-select quick action sheet, an orbit-ring overlay, a guidance-warning banner, and Dronie/Parabola mode buttons. Not yet functionally verified against a live companion session (sim or hardware) | 83% |
 | M7 | MAVLink / Flight-Controller / RC Override | **Real MAVLink link confirmed working**: heartbeat + 10Hz ATTITUDE over TELEM1 @ 57600 baud with a real Cube Orange. Administrative `arm()`/`set_mode()` commands added and unit-tested, wired end-to-end from the Android arm/mode controls through `GroundStationLink`/`CompanionOrchestrator`, and now verified over a real WebSocket+MAVLink chain, not just mocks. `FLTMODE_CH` RC-override switch not yet configured on the transmitter - the software backstop (stick-deflection detection) is tested and working, but the actual hardware-independent guarantee this project is built around is not live yet. See `docs/safety-case.md` for the full breakdown | 83% |
 | M8 | Follow / Orbit / Smart-Shot Modes | Follow controller implemented, unit + integration tested against mock FC, confirmed live end-to-end from the Android app including the live separation override (sim). `OrbitController` (circle/point-of-interest shot) and new `SmartShotController` (Dronie/Parabola one-shot cinematic moves) implemented, unit-tested, and build-verified on the Android side (none of the three yet functionally tested live) | 74% |
-| M9 | Controlled Approach-Test | Controller + every abort condition implemented, unit-tested, confirmed live from the Android app (sim) | 70% |
-| M10 | Safety Architecture & Watchdog | Supervisor + heartbeat/systemd watchdogs implemented, fault-injection-style unit tests passing, abort's reset-to-idle confirmed live (sim). Cross-mode obstacle-proximity guard (`companion/safety/proximity_guard.py`): any detected object closer than `min_obstacle_distance_m`, not just the tracked target, forces the Supervisor to SAFE - unit-tested, and surfaced to the operator via a visible warning banner in the Android app. **`docs/safety-case.md` now written** - mechanism/trigger/guarantee/test for every gate, including the honest gaps (geofence input hardcoded `False`, `FLTMODE_CH` not configured) | 84% |
+| M9 | Controlled Approach-Test | Controller + every abort condition implemented, unit-tested, confirmed live from the Android app (sim). Geofence abort now reads a real `MavlinkBridge.telemetry.fence_breached` (parsed from a real `SYS_STATUS` message via pymavlink's own `MAV_SYS_STATUS_GEOFENCE` bit) instead of a hardcoded `False` - verified against a real mock FC and the full orchestrator, but not yet against a real ArduPilot FC | 76% |
+| M10 | Safety Architecture & Watchdog | Supervisor + heartbeat/systemd watchdogs implemented, fault-injection-style unit tests passing, abort's reset-to-idle confirmed live (sim). Cross-mode obstacle-proximity guard (`companion/safety/proximity_guard.py`): any detected object closer than `min_obstacle_distance_m`, not just the tracked target, forces the Supervisor to SAFE - unit-tested, and surfaced to the operator via a visible warning banner in the Android app. **`docs/safety-case.md` now written** - mechanism/trigger/guarantee/test for every gate, including the honest remaining gaps (`FLTMODE_CH` not configured; geofence wired but not confirmed against real ArduPilot) | 85% |
 | M11 | Logging | Structured JSON logging + session recorder implemented and wired in | 70% |
 | M12 | Performance Optimization | Not started (deliberately deferred until correctness is proven, per plan) | 0% |
-| M13 | Testing Strategy & Simulation-Before-Flight | Synthetic target generator + mock flight controller + full end-to-end integration tests all passing (160/160 tests), backed by live device tests (sim) and live hardware tests (real camera/detection/video/MAVLink). New: a real end-to-end test drives the actual JSON wire protocol over a real WebSocket + real MAVLink to a real (mock) FC (`test_integration_websocket.py`) - every other integration test used an in-process fake transport, so this is the first automated proof the wire protocol itself (not just the Python objects behind it) works; `MockFlightController` also now reflects real arm/set-mode MAVLink commands, not just guidance setpoints | 86% |
+| M13 | Testing Strategy & Simulation-Before-Flight | Synthetic target generator + mock flight controller + full end-to-end integration tests all passing (163/163 tests), backed by live device tests (sim) and live hardware tests (real camera/detection/video/MAVLink). A real end-to-end test drives the actual JSON wire protocol over a real WebSocket + real MAVLink to a real (mock) FC (`test_integration_websocket.py`) - every other integration test used an in-process fake transport, so this is the first automated proof the wire protocol itself works; `MockFlightController` now also reflects real arm/set-mode/geofence-status MAVLink messages, not just guidance setpoints | 87% |
 | M14 | Real-Flight Testing Stages | Not started - blocked on drone mounting | 0% |
 | M15 | Deployment & Monitoring | Orchestrator runs standalone (`python -m companion.main`) in both sim and hardware mode, confirmed on real Pi. Systemd unit (`deploy/ai-vision-drone.service`) now written - auto-starts on boot, `Restart=on-failure` on crash - see INSTALL.md step 7a. Not yet confirmed surviving an actual power-cycle test on the Pi | 55% |
 | M16 | Future Scalability | Design notes only (not implementation-gated) | n/a |
 
-Test suite: `.venv/Scripts/python -m pytest -q` → 160 passed. Android: real
+Test suite: `.venv/Scripts/python -m pytest -q` → 163 passed. Android: real
 `gradle assembleDebug` builds clean; the app has run on a physical device
 (Android SDK/Gradle distribution found locally and used directly, bypassing
 the earlier "no Android SDK here" limitation). First real-device usage
@@ -74,12 +74,16 @@ configured 30 FPS down to ~15 FPS).
 3. **Configure `FLTMODE_CH`** on the transmitter/FC for the RC-override
    design (docs plan M7, `docs/safety-case.md`) - the one remaining piece
    before the safety-critical override chain is real, not just sim-tested.
-4. **Wire a real geofence signal** into `companion/main.py`'s
-   `geofence_breached` input (currently hardcoded `False`) - Approach-
-   Test's geofence abort is fully unit-tested at the controller level but
-   does not function against real hardware yet, since nothing reads the
-   FC's actual `FENCE_ENABLE`/breach status. Documented explicitly in
-   `docs/safety-case.md` as the most safety-relevant open gap.
+4. **Confirm the geofence signal against a real ArduPilot FC** - the wiring
+   itself is done (`companion/main.py` now reads a real `MavlinkBridge.
+   telemetry.fence_breached`, parsed from `SYS_STATUS` via pymavlink's own
+   `MAV_SYS_STATUS_GEOFENCE` bit), and verified against a real mock FC over
+   real MAVLink, but a mock only proves the code reacts correctly to bits
+   it expects - it doesn't prove a real Cube Orange reports geofence status
+   the same way. Enable `FENCE_ENABLE` on the bench and confirm
+   `telemetry.fence_breached` actually flips when the boundary is crossed,
+   the same way the TELEM baud-rate assumption once turned out wrong until
+   real hardware proved otherwise (see `docs/hardware-wiring.md`).
 5. Get a heatsink/fan for the Pi 5 before further sustained video-mode
    testing - confirmed running hot/marginal under combined AI+video load.
 6. **Run `tools/calibrate_camera.py` against real checkerboard photos taken

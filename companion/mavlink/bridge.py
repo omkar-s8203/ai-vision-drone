@@ -46,6 +46,8 @@ class TelemetrySnapshot:
     battery_remaining_pct: Optional[int] = None
     rc_channels: dict[int, int] = field(default_factory=dict)
     last_heartbeat_ts: Optional[float] = None
+    fence_enabled: bool = False
+    fence_breached: bool = False
 
 
 class MavlinkBridge:
@@ -143,6 +145,20 @@ class MavlinkBridge:
             self.telemetry.rc_channels = {
                 i: getattr(msg, f"chan{i}_raw") for i in range(1, 9)
             }
+        elif msg_type == "SYS_STATUS":
+            # ArduPilot reports geofence status as a bit in SYS_STATUS's
+            # sensor bitmasks, not a dedicated message - "enabled" means a
+            # fence is actually configured (present AND enabled), "breached"
+            # means it's enabled but reporting unhealthy. Bit position comes
+            # from pymavlink's own MAV_SYS_STATUS_GEOFENCE constant, not a
+            # hardcoded shift - this is standard MAVLink/ArduPilot behavior,
+            # but (like every MAVLink integration in this project) has not
+            # been confirmed against a real FC yet - see docs/safety-case.md.
+            fence_bit = mavutil.mavlink.MAV_SYS_STATUS_GEOFENCE
+            self.telemetry.fence_enabled = bool(msg.onboard_control_sensors_enabled & fence_bit)
+            self.telemetry.fence_breached = self.telemetry.fence_enabled and not bool(
+                msg.onboard_control_sensors_health & fence_bit
+            )
 
     def arm(self, armed: bool) -> None:
         """Sends MAV_CMD_COMPONENT_ARM_DISARM - a direct, standard GCS

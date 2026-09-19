@@ -8,6 +8,8 @@ from sim.mock_fc import MockFlightController
 
 TEST_FC_PORT = 14720
 TEST_BRIDGE_PORT = 14721
+FENCE_FC_PORT = 14722
+FENCE_BRIDGE_PORT = 14723
 
 
 @pytest.mark.asyncio
@@ -51,6 +53,45 @@ async def test_mock_fc_reflects_real_arm_and_set_mode_commands_over_real_mavlink
 
         mavlink.set_mode("RTL")
         await wait_until(lambda: mock_fc.fc_mode == "RTL", timeout=2.0)
+    finally:
+        fc_task.cancel()
+        mavlink_task.cancel()
+        await asyncio.gather(fc_task, mavlink_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_bridge_reflects_a_real_geofence_breach_over_real_mavlink():
+    """companion/main.py previously hardcoded geofence_breached=False -
+    Approach-Test's geofence abort was fully unit-tested at the controller
+    level but never actually wired to a real signal (see docs/safety-case.md
+    before this landed). This exercises the real chain in the other
+    direction from the test above: a real SYS_STATUS message from a (mock)
+    FC, over real UDP, correctly parsed into MavlinkBridge.telemetry.
+    fence_breached using pymavlink's own MAV_SYS_STATUS_GEOFENCE bit
+    constant, not a guessed bit shift."""
+    mock_fc = MockFlightController(f"udpin:127.0.0.1:{FENCE_FC_PORT}")
+    fc_task = asyncio.create_task(mock_fc.run(rate_hz=20.0))
+
+    mavlink = MavlinkBridge(f"udpin:127.0.0.1:{FENCE_BRIDGE_PORT}")
+    mavlink.connect()
+    mavlink.prime_udp_peer("127.0.0.1", FENCE_FC_PORT)
+    mavlink_task = asyncio.create_task(mavlink.run(on_message=lambda _msg: None))
+
+    try:
+        await wait_until(lambda: mavlink.telemetry.last_heartbeat_ts is not None, timeout=3.0)
+        assert mavlink.telemetry.fence_enabled is False
+        assert mavlink.telemetry.fence_breached is False
+
+        mock_fc.set_fence_state(enabled=True, breached=False)
+        await wait_until(lambda: mavlink.telemetry.fence_enabled is True, timeout=2.0)
+        assert mavlink.telemetry.fence_breached is False  # enabled but healthy
+
+        mock_fc.set_fence_state(enabled=True, breached=True)
+        await wait_until(lambda: mavlink.telemetry.fence_breached is True, timeout=2.0)
+
+        mock_fc.set_fence_state(enabled=False)
+        await wait_until(lambda: mavlink.telemetry.fence_enabled is False, timeout=2.0)
+        assert mavlink.telemetry.fence_breached is False
     finally:
         fc_task.cancel()
         mavlink_task.cancel()

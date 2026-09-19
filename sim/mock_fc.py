@@ -39,6 +39,8 @@ class MockFlightController:
         self.lat = 0.0
         self.lon = 0.0
         self.alt_m = 0.0
+        self.fence_enabled = False
+        self.fence_breached = False
         self.received_setpoints: list[tuple[float, float, float, float]] = []
 
     def set_mode(self, mode: str) -> None:
@@ -52,6 +54,13 @@ class MockFlightController:
 
     def set_rc_override(self, active: bool) -> None:
         self.rc_override_active = active
+
+    def set_fence_state(self, enabled: bool, breached: bool = False) -> None:
+        """`breached` only means anything when `enabled` is True - matches
+        real ArduPilot semantics (SYS_STATUS's health bit for a sensor that
+        isn't even enabled is meaningless)."""
+        self.fence_enabled = enabled
+        self.fence_breached = enabled and breached
 
     def _send_heartbeat(self) -> None:
         base_mode = mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED
@@ -86,6 +95,17 @@ class MockFlightController:
             0, 0, 0, 0,
         )
 
+    def _send_sys_status(self) -> None:
+        fence_bit = mavutil.mavlink.MAV_SYS_STATUS_GEOFENCE if self.fence_enabled else 0
+        # "Healthy" means NOT breached, so the health bit is only cleared
+        # while enabled AND breached - matches how MavlinkBridge interprets
+        # it (see companion/mavlink/bridge.py's SYS_STATUS handling).
+        health_bit = fence_bit if not self.fence_breached else 0
+        self._conn.mav.sys_status_send(
+            fence_bit, fence_bit, health_bit,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        )
+
     def poll_incoming(self) -> None:
         while True:
             msg = self._conn.recv_match(blocking=False)
@@ -109,5 +129,6 @@ class MockFlightController:
             self._send_heartbeat()
             self._send_rc_channels()
             self._send_global_position()
+            self._send_sys_status()
             self.poll_incoming()
             await asyncio.sleep(period)

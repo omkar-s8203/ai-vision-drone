@@ -80,13 +80,16 @@ separation override, Approach-Test, abort) has been confirmed live against
 the sim stack; hardware-mode testing has so far focused on camera+video+
 MAVLink together rather than every mode specifically.
 
-**New, not yet build-verified**: showing every live detection as a tappable
-box (`DetectionsOverlay.kt`), tap-to-select (`TargetSelectionOverlay.kt`'s
-`onTapSelect`), and a follow-altitude slider alongside the separation one
-(`ModeControls.kt`) - see `docs/protocol.md` for the `detections_update`
-message and `target_select`'s new `point: true` payload shape. These
-compile-clean by inspection but haven't been through a real Android Studio
-build yet - expect the usual round of paste-back-the-error fixes.
+**Confirmed live** (superseding the "not yet build-verified" note this
+paragraph originally had): showing every live detection as a tappable box
+(`DetectionsOverlay.kt`) and tap-to-select (`TargetSelectionOverlay.kt`'s
+`onTapSelect`) - this is exactly what a real field debugging session
+proved end-to-end (see `docs/hardware-wiring.md`'s AI-detection saga):
+real detection boxes rendering live on a physical phone from the actual
+running hardware companion. The follow-altitude slider alongside the
+separation one (`ModeControls.kt`) is still only build-verified, not yet
+exercised live. See `docs/protocol.md` for the `detections_update`
+message and `target_select`'s `point: true` payload shape.
 
 Arm/disarm (with a confirmation dialog before arming) and an FC flight-mode
 dropdown, in `FlightControlDock.kt` - wired through

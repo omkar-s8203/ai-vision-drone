@@ -59,6 +59,37 @@ knowledge assumed before hardware existed to check against:
   noise in practice (confirmed: 0.73 for an actual person vs. 0.27-0.44 for
   spurious misclassifications of room background).
 
+### Detection stopped working entirely after it had previously been confirmed
+
+A field report weeks after the above was first confirmed: a clear,
+well-lit, close subject produced zero detections in the app, on every
+attempt. Added rate-limited diagnostic logging to `IMX500Detector` (logs
+to `journalctl -u ai-vision-drone -f`) specifically to root-cause this
+rather than keep guessing, and it showed `outputs=None` on *every* frame
+indefinitely, not just the normal ~1s startup grace period from the note
+above.
+
+Root cause: `Picamera2IMX500Camera.frames()` never called
+`imx500.show_network_fw_progress_bar()` - the on-sensor network's firmware
+upload to the NPU is a separate, asynchronous step from opening the
+camera, and nothing was waiting for it to finish before `capture_metadata()`
+started being called. Raspberry Pi's own `imx500_object_detection_demo.py`
+always calls this before `start()` for exactly this reason; it was missing
+here from the start. The likely reason this wasn't caught during the
+original M2 bring-up: a `sudo apt full-upgrade` between then and now
+(the field log showed `libcamera v0.7.2+rpt20260817`, a much newer build)
+plausibly changed firmware-upload timing enough that whatever incidental
+timing let it work before no longer does - this is a real, documented
+synchronization point in the API, not something that should have been
+relied on working by luck either way.
+
+Fix: `frames()` now calls `imx500.show_network_fw_progress_bar()` right
+before `picam2.start()`. **Not yet re-confirmed against real hardware** -
+this is the leading hypothesis backed by the diagnostic log evidence and
+official Raspberry Pi example code, but needs the same "person in frame
+produces a real detection" confirmation the original bring-up did before
+this section can say "confirmed" again.
+
 ## Video streaming (confirmed working, real hardware)
 
 Real camera video (not the sim's synthetic rectangle) streamed live over

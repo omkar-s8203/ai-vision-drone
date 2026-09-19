@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass
 from typing import AsyncIterator, Callable, Optional
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -44,6 +47,16 @@ class Picamera2IMX500Camera(CameraBase):
     conversion needs both `metadata` and the `Picamera2` instance, so all
     three (imx500, outputs, metadata, picam2) are bundled into
     `raw_detection_output` for IMX500Detector to unpack.
+
+    A real bug found from a field log (not a demo script): `outputs` was
+    None on *every* frame indefinitely, not just the first ~second -
+    IMX500Detector's own diagnostic logging (added specifically to
+    root-cause this) confirmed it. The on-sensor network's firmware upload
+    to the NPU is a separate, asynchronous step from opening the camera,
+    and nothing here was waiting for it to finish before capture began.
+    `IMX500.show_network_fw_progress_bar()` (called in `frames()` below,
+    matching Raspberry Pi's own imx500_object_detection_demo.py) blocks
+    until that upload completes.
     """
 
     def __init__(self, model_path: str, width: int, height: int, target_fps: int) -> None:
@@ -83,6 +96,26 @@ class Picamera2IMX500Camera(CameraBase):
             controls={"FrameRate": self.target_fps},
             buffer_count=12,
         )
+        # A real bug found in the field: without this, IMX500Detector.parse()
+        # sees `outputs=None` forever, not just for the normal ~1s startup
+        # grace period - the on-sensor network's firmware upload to the NPU
+        # is a separate, asynchronous step from starting the camera itself,
+        # and nothing was waiting for it to finish before capture began.
+        # show_network_fw_progress_bar() blocks until the upload completes
+        # (Raspberry Pi's own imx500_object_detection_demo.py always calls
+        # this before start() for exactly this reason). Guarded because this
+        # dev machine has no picamera2/IMX500 to confirm the exact method
+        # name against every picamera2 version - if a future version renames
+        # or removes it, fail loud in the log rather than silently getting
+        # detection stuck at outputs=None again with no clue why.
+        if hasattr(self.imx500, "show_network_fw_progress_bar"):
+            self.imx500.show_network_fw_progress_bar()
+        else:
+            log.warning(
+                "IMX500.show_network_fw_progress_bar() not found on this picamera2 version - "
+                "the network firmware upload may not be awaited before capture starts, which "
+                "previously caused IMX500Detector to see outputs=None indefinitely"
+            )
         self._picam2.start(config, show_preview=False)
         try:
             while True:

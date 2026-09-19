@@ -121,14 +121,22 @@ configured 30 FPS down to ~15 FPS).
    but has genuinely never been run: confirmed directly on the Pi
    (`history | grep calibrate_camera` finds nothing, and
    `companion/config/camera_calibration.yaml` is still the byte-for-byte
-   original placeholder). A prior status update claiming this was done
-   turned out to be mistaken - corrected once checked directly rather than
-   left standing. See the module's own docstring for how to capture a good
-   set of calibration photos, then run it for real and commit the
-   resulting config file. Make the M4 rangefinder hardware decision (see
-   plan) once this is done, before Follow/Approach-Test get anywhere near
-   a real flight, since the boundary/separation checks currently rest on
-   the vision-only estimate this calibration feeds.
+   original placeholder). Two real attempts were made and both failed
+   0/N images detected - first a board-size mismatch (the printed/screen
+   board didn't match the tool's assumed inner-corner count), then, after
+   fixing that, real image-quality problems (low light, motion blur, a
+   small screen-displayed board with a lot of dead space and window-chrome
+   framing around it, glare) - see the actual captured photos for the
+   specifics. **Deliberately deprioritized for now** in favor of
+   `FLTMODE_CH` and the guidance dry-run, which are the actually
+   safety-critical remaining items. Until this is done,
+   Follow/Orbit/obstacle-proximity keep using the placeholder intrinsics -
+   not wildly wrong for a 1280x720 camera, but less accurate than a real
+   fit. Revisit with a **printed** checkerboard (not a screen - avoids
+   glare/moiré/window-chrome entirely) in good bright light before
+   trusting Follow's separation control, Orbit's radius, or the
+   obstacle-proximity distance check for anything precise. Make the M4
+   rangefinder hardware decision (see plan) once this is actually done.
 8. ~~Mounting on the aircraft~~ - done, and the staged real-flight testing
    sequence (M14) has reached its first stage: bench, props off, full
    stack confirmed running together on the mounted aircraft. Weight/

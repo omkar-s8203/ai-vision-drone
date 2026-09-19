@@ -3,9 +3,12 @@
 ## Status
 
 Pi 5 + AI Camera + flight controller (Cube Orange, TELEM1) are all wired up
-and confirmed working together on a bench (not yet mounted on the
-aircraft). Power-source finalization for flight and weight/thermal checks
-are still open - see "Open items" below.
+and confirmed working together, **now mounted on the aircraft** - the full
+stack (camera, AI, video, MAVLink) has run together on the mounted
+airframe with props off (M14 stage 1). Power-source finalization for
+flight (still bench-powered, not yet the flight battery) and weight/CG/
+thermal checks under that mounted configuration are still open - see
+"Open items" below.
 
 ## Raspberry Pi OS setup (done)
 
@@ -292,7 +295,15 @@ related:
   charger, not yet running from a dedicated buck converter off the flight
   battery as planned - do not assume the drone's BEC can handle the added
   Pi 5 + camera load without measuring it first.
-- **Mounting, weight, and CG impact**: not yet assessed.
-- **Thermal**: no heatsink/fan fitted yet; not soak-tested under sustained
-  AI+video load even with adequate power.
-- **Rangefinder** (optional, M4): still an open decision, not purchased.
+- **Mounting, weight, and CG impact**: the companion computer is now
+  mounted on the aircraft, and the full stack has run together on it with
+  props off (M14 stage 1) - but that only proves the software stack works
+  on the mounted airframe, not that weight/CG impact on actual flight
+  characteristics has been assessed. Still open.
+- **Thermal**: a heatsink/fan is now fitted, but not yet soak-tested under
+  sustained AI+video load in the actual mounted/powered configuration -
+  the earlier "running hot/marginal" finding predates the heatsink.
+- **Rangefinder** (optional, M4): still an open decision, not purchased -
+  now the natural next call on this milestone, since the vision-only
+  distance path is fully calibrated (real intrinsics fitted, see M4 in
+  root README).

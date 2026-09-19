@@ -105,23 +105,53 @@ internally as part of starting - too late for anything to wait on).
 Splitting the diagnostic script's own steps apart -
 `picam2.configure(config)`, then `imx500.show_network_fw_progress_bar()`,
 then `picam2.start(show_preview=False)` with no config argument - produced
-a real result: firmware upload completed in ~3 real seconds (progress bar
-showed `3.78M/3.78M`), and `get_outputs()` returned actual candidate
-detections (100 candidates, top score 0.56) at frame 363. Applied the same
-ordering fix to `Picamera2IMX500Camera.frames()`.
+a real result in that interactive run: firmware upload completed in ~3
+real seconds (progress bar showed `3.78M/3.78M`), and `get_outputs()`
+returned actual candidate detections. Applied the same ordering fix to
+`Picamera2IMX500Camera.frames()`, deployed, and re-tested - **still
+did not fix it**, logging `outputs=None` for 40+ seconds straight, even
+though a separate process running moments earlier had briefly shown real
+output. That inconsistency was the clue something else was going on
+beyond firmware-upload timing.
 
-**Not yet re-confirmed against the actual companion app/service** - the
-diagnostic script proved the sequence works standalone, but needs the same
-"person in frame produces a real detection in the Android app" check the
-original M2 bring-up did before this section can say "confirmed" again.
+A clean-reboot diagnostic run (to rule out any warm/leftover state from
+earlier attempts in the same boot) nailed the real mechanism: the
+firmware upload's own native progress bar reached **100% at ~3s**, exactly
+as expected - upload timing was never actually the problem after the
+reordering fix. But `get_outputs()` still returned `None` for the full 60
+seconds that followed. The only difference between that failing run and
+the one earlier successful run: the successful one only called
+`capture_metadata()` per iteration, while every failing run also called
+`capture_array("main")` separately in the same iteration (matching
+`Picamera2IMX500Camera.frames()`'s real per-frame workload, which needs
+both the detection metadata and the image pixels).
 
-Also worth noting from the diagnostic run: even once real, the top score
-seen was only 0.56 against many low-scoring (0.12-0.45) candidates in the
-same frame - once detection is confirmed working again, revisit whether
-`camera.score_threshold` (default 0.5, `hardware.yaml`) needs tuning for
-real-world conditions, since 0.56 is close enough to the default that
-minor blur/angle/lighting changes could push a genuine detection back
-under it.
+**Actual root cause**: `capture_metadata()` and `capture_array("main")`
+are two independently-triggered captures. Calling both per loop iteration
+can desync which underlying sensor frame's metadata you receive from
+which frame's image you captured, so `get_outputs()` never lines up with
+a frame that actually has real inference results attached to it - not a
+firmware-upload timing issue at all. A fourth diagnostic script switched
+to a single `picam2.capture_request()` per iteration (metadata and image
+array both pulled from that one request object, guaranteed to be the same
+underlying frame) and got a real detection at frame 2 (~3s, exactly
+matching firmware upload completion) - confirmed, not guessed.
+`Picamera2IMX500Camera.frames()` now uses `capture_request()` instead of
+separate `capture_metadata()`/`capture_array()` calls.
+
+**Not yet re-confirmed against the actual companion app/service** - every
+diagnostic script in this saga was standalone, independent of the running
+companion. The `capture_request()` fix needs the same "person in frame
+produces a real detection in the Android app" check the original M2
+bring-up did before this section can say "confirmed" again.
+
+Also worth noting from the diagnostic runs: even once real, detection
+scores as low as 0.44-0.56 were seen against many low-scoring (0.12-0.45)
+candidates in the same frame - once detection is confirmed working again
+end-to-end, revisit whether `camera.score_threshold` (default 0.5,
+`hardware.yaml`) needs tuning for real-world conditions, since those
+values are close enough to the default that minor blur/angle/lighting
+changes could push a genuine detection back under it.
 
 ## Video streaming (confirmed working, real hardware)
 

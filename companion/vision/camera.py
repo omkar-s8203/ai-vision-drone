@@ -40,7 +40,8 @@ class Picamera2IMX500Camera(CameraBase):
 
     Confirmed against real hardware (not guessed): `picamera2.devices.IMX500`
     is constructed from the .rpk model path and owns `camera_num`; frames
-    come from `Picamera2.capture_metadata()` (not `capture_request()`), and
+    come from a single `Picamera2.capture_request()` per iteration (see the
+    real bug below for why this matters), and
     `IMX500.get_outputs(metadata, add_batch=True)` returns the raw tensor
     list - or None on frames before the on-sensor network has produced its
     first result (normal for the first ~second after start()). Coordinate
@@ -48,20 +49,35 @@ class Picamera2IMX500Camera(CameraBase):
     three (imx500, outputs, metadata, picam2) are bundled into
     `raw_detection_output` for IMX500Detector to unpack.
 
-    A real bug found from a field log (not a demo script), fixed in two
-    passes: `outputs` was None on *every* frame indefinitely, not just the
-    first ~second - IMX500Detector's own diagnostic logging (added
-    specifically to root-cause this) confirmed it. The on-sensor network's
-    firmware upload to the NPU is a separate, asynchronous step from
-    opening the camera. First fix attempt called
-    `IMX500.show_network_fw_progress_bar()` before `configure()` had ever
-    run - a standalone diagnostic script proved this was too early (the
-    upload hadn't started yet, `get_fw_upload_progress()` read `(0, 0)`,
-    so the "wait" returned instantly and waited for nothing). The upload
-    only actually begins once the camera is configured, so the real,
-    diagnostic-script-confirmed working order is: `configure()`, *then*
-    `show_network_fw_progress_bar()`, *then* `start()` with no config
-    argument - producing a real detection within ~3s in that script.
+    A real bug found from a field log (not a demo script), root-caused
+    across three passes - each one only fully understood once a standalone
+    diagnostic script (independent of this class, run directly on the Pi)
+    proved or disproved it against real hardware:
+
+    1. `outputs` was None on every frame indefinitely, not just the normal
+       ~1s startup grace period. Hypothesis: the on-sensor network's
+       firmware upload to the NPU (a separate, async step from opening the
+       camera) was never being waited on. Fix: call
+       `IMX500.show_network_fw_progress_bar()`.
+    2. That fix, deployed and re-tested against real hardware, did not
+       help. A diagnostic script proved the call was placed before
+       `configure()` had ever run, so there was nothing to wait for yet -
+       reordered to `configure()` -> `show_network_fw_progress_bar()` ->
+       `start()`.
+    3. Even with that reordering fixed, a genuinely cold-boot diagnostic
+       run showed the firmware upload completing at 100% (confirmed by its
+       own progress bar) within ~3s, but `get_outputs()` still never
+       returned real results for 60s straight afterward. The actual
+       culprit: this class previously called `capture_metadata()` and
+       `capture_array("main")` as two separate, independently-triggered
+       captures per loop iteration - a diagnostic script proved this
+       combination desyncs which underlying frame's metadata you actually
+       get vs. which frame's image you captured, so `get_outputs()` never
+       lines up with a frame that has real inference attached. Switching
+       to a single `capture_request()` per iteration - guaranteeing the
+       metadata and the image array both come from the exact same
+       underlying frame - fixed it: real output at frame 2 (~3s, exactly
+       matching firmware upload completion) in that diagnostic script.
     """
 
     def __init__(self, model_path: str, width: int, height: int, target_fps: int) -> None:
@@ -130,7 +146,7 @@ class Picamera2IMX500Camera(CameraBase):
         self._picam2.start(show_preview=False)
         try:
             while True:
-                # capture_metadata() blocks until the next frame is ready at
+                # capture_request() blocks until the next frame is ready at
                 # the hardware FrameRate configured above - it IS the pacing
                 # mechanism. A real bug found in the field: this loop used to
                 # also `await asyncio.sleep(1.0 / target_fps)` after every
@@ -138,9 +154,21 @@ class Picamera2IMX500Camera(CameraBase):
                 # one already spent blocking here and roughly halving actual
                 # throughput (a configured 30 FPS was only ever delivering
                 # ~15 FPS). Do not add a sleep back here.
-                metadata = self._picam2.capture_metadata()
-                outputs = self.imx500.get_outputs(metadata, add_batch=True)
-                self.last_frame_array = self._picam2.capture_array("main")
+                #
+                # Deliberately ONE capture_request() per iteration, not
+                # separate capture_metadata() + capture_array() calls - see
+                # the class docstring's bug #3. Each of those triggers its
+                # own independent capture, and get_outputs() needs the exact
+                # same underlying frame's metadata that its image came from;
+                # requesting them separately let those desync and left
+                # get_outputs() permanently None on real hardware.
+                request = self._picam2.capture_request()
+                try:
+                    metadata = request.get_metadata()
+                    self.last_frame_array = request.make_array("main")
+                    outputs = self.imx500.get_outputs(metadata, add_batch=True)
+                finally:
+                    request.release()
                 yield Frame(
                     ts=time.monotonic(),
                     width=self.width,

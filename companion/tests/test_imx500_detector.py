@@ -87,3 +87,51 @@ def test_dict_class_names_still_supported():
     detections = detector.parse((FakeIMX500(), outputs, {}, None), frame_ts=1.0)
 
     assert detections[0].class_name == "car"
+
+
+def test_logs_a_diagnostic_warning_when_outputs_is_none(caplog):
+    """A field report of 'clear, well-lit subject, zero detections' is
+    invisible from the Android app's health panel alone (that only
+    reflects a heartbeat, not real detection activity) - this rate-limited
+    warning is what should show up in `journalctl -u ai-vision-drone -f`
+    to tell apart 'the on-sensor network isn't running at all' from a
+    score_threshold problem."""
+    detector = IMX500Detector(class_names=LABELS, diagnostic_log_interval_s=0.0)
+    with caplog.at_level("WARNING"):
+        detector.parse((FakeIMX500(), None, {}, None), frame_ts=1.0)
+    assert any("outputs is None" in r.message for r in caplog.records)
+
+
+def test_logs_a_diagnostic_warning_when_zero_candidates(caplog):
+    outputs = make_outputs(boxes=[], scores=[], classes=[], count=0)
+    detector = IMX500Detector(class_names=LABELS, diagnostic_log_interval_s=0.0)
+    with caplog.at_level("WARNING"):
+        detector.parse((FakeIMX500(), outputs, {}, None), frame_ts=1.0)
+    assert any("0 candidate" in r.message for r in caplog.records)
+
+
+def test_logs_a_diagnostic_warning_when_everything_is_below_threshold(caplog):
+    outputs = make_outputs(boxes=[[0.0, 0.0, 0.2, 0.2]], scores=[0.3], classes=[0], count=1)
+    detector = IMX500Detector(class_names=LABELS, score_threshold=0.5, diagnostic_log_interval_s=0.0)
+    with caplog.at_level("WARNING"):
+        detections = detector.parse((FakeIMX500(), outputs, {}, None), frame_ts=1.0)
+    assert detections == []
+    assert any("below score_threshold" in r.message for r in caplog.records)
+
+
+def test_diagnostic_logging_is_rate_limited(caplog):
+    outputs = make_outputs(boxes=[], scores=[], classes=[], count=0)
+    detector = IMX500Detector(class_names=LABELS, diagnostic_log_interval_s=1000.0)
+    with caplog.at_level("WARNING"):
+        detector.parse((FakeIMX500(), outputs, {}, None), frame_ts=1.0)
+        detector.parse((FakeIMX500(), outputs, {}, None), frame_ts=1.1)
+    assert len(caplog.records) == 1  # the second call is within the interval, so it's suppressed
+
+
+def test_no_diagnostic_log_when_a_real_detection_is_found(caplog):
+    outputs = make_outputs(boxes=[[0.0, 0.0, 0.2, 0.2]], scores=[0.9], classes=[0], count=1)
+    detector = IMX500Detector(class_names=LABELS, score_threshold=0.5, diagnostic_log_interval_s=0.0)
+    with caplog.at_level("WARNING"):
+        detections = detector.parse((FakeIMX500(), outputs, {}, None), frame_ts=1.0)
+    assert len(detections) == 1
+    assert caplog.records == []

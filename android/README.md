@@ -189,13 +189,46 @@ appeared:
   before giving up, and `main.py` only reports `recording: true` to the
   app if a codec actually opened.
 
+**More real-device feedback, second round**: the Fly tab's record button
+always showed `0:00` with no way to tell if it was actually recording -
+root cause was `companion/main.py` only ever sending one `recording_state`
+message, at the instant recording started, so the Android timer never
+updated again even though the Pi kept recording. Fixed on the Pi side
+(`process_frame` now resends it every frame while recording is active);
+no Android change was needed since `MainViewModel` already overwrites its
+`RecordingState` on every message, it just wasn't receiving more than one.
+
+**New: local recording on the phone itself**, per an explicit request that
+video should also save on the device, not only on the Pi -
+`video/LocalVideoRecorder.kt` is a second `VideoSink` added to the same
+remote video track the `SurfaceViewRenderer` already displays, encoding
+with `MediaCodec` (H.264) + `MediaMuxer` (MP4) - not the WebRTC library's
+own `VideoFileRenderer`, which writes raw uncompressed YUV4MPEG2 frames
+(~1 GB/minute at 720p, and not a format any phone gallery/player can open
+directly). All encode work runs on its own `HandlerThread`, never on the
+thread WebRTC delivers frames from, so a slow encode step can't add
+latency to the live view. `MainViewModel.toggleRecording()` now drives
+both recordings from the same Record button (by explicit choice: both at
+once, not either/or) - they're independent, so a failure on one side
+doesn't affect the other. Files land in this app's own external files dir
+under `Movies/flight_<timestamp>.mp4` (no runtime permission needed on any
+supported Android version). **Build-verified only** (real
+`gradle assembleDebug`/`assembleDebugAndroidTest`) - unlike this project's
+UI-only changes, a subtle bug here (a stride miscalculation, a per-device
+encoder quirk) could produce a corrupt or unplayable file rather than
+something visibly wrong on screen, so the first real recording on a
+physical device is the actual test - report back what you see when you
+try to play one back.
+
 ## Layout
 
 ```
 app/src/main/java/com/aivisiondrone/groundstation/
   comms/        Protocol.kt (wire schema, mirrors companion/comms/protocol.py),
                 GroundStationClient.kt (OkHttp WebSocket client), JsonExt.kt
-  video/        WebRtcClient.kt (receive-only WebRTC peer connection)
+  video/        WebRtcClient.kt (receive-only WebRTC peer connection),
+                LocalVideoRecorder.kt (MediaCodec/MediaMuxer VideoSink -
+                saves the video locally on this device)
   control/      TargetSelectionOverlay.kt (tap-to-select + drag-to-select),
                 DetectionsOverlay.kt (all live detections, labeled),
                 TrackingOverlay.kt (tracked box + rotating orbit ring),

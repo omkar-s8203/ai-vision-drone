@@ -47,7 +47,7 @@ firmware, the first Gradle build - never for actual flight operation.
 | M3 | Tracking, Target Selection, Reacquisition | Implemented, unit-tested, confirmed live from a real phone (sim + now real camera). New appearance-based re-identification (`companion/tracking/appearance.py`, "AI learning mode"): a color-histogram signature is captured on target selection, and if the target is fully lost (not just the tracker's own short in-frame REACQUIRE window), new detections are matched against it each frame so the same target auto-relocks without a re-tap - unit- and integration-tested, hardware-only (needs real pixel data). ByteTrack swap-in still a stub | 88% |
 | M4 | Distance Estimation | Vision (pinhole) estimator implemented + tested, now also feeding the obstacle-proximity safety check (M10). `tools/calibrate_camera.py` written and unit-tested (checkerboard-based intrinsics fit, matches `CameraIntrinsics`/`camera_calibration.yaml` exactly) - not yet run against real Pi camera photos, so the config still holds placeholder values. Rangefinder hardware addition still open (see plan) | 62% |
 | M5 | Video Streaming & Pi↔Android Comms | **Confirmed live on real hardware**: real camera video, correct colors, over real WebRTC/ICE to a real phone. Local on-Pi video recording (`VideoRecorder`, independent of the WebRTC feed) now implemented, unit-tested, and hardened against a real silent-failure codec bug. Real frame-rate bug found and fixed: the camera loop was double-pacing itself (a redundant `asyncio.sleep()` on top of the hardware capture call already blocking at the configured rate), halving a configured 30 FPS down to ~15 FPS observed - see hardware-wiring.md. GStreamer hardware-encode path still stubbed (current path is the CPU-heavy software-encode "quick bringup" one, which caused one crash on inadequate power) | 87% |
-| M6 | Android Ground Station App | **Confirmed live against the real hardware companion session**: connect, video, drag/tap target selection, and the live tracking overlay all working end-to-end on a physical phone against the actual running Pi (not sim). Real `gradle assembleDebug` succeeded and the app has run on a physical device across several rounds of changes (three real compile/layout errors found and fixed this way - see android/README.md). Restructured into a DJI-Fly-style 4-tab layout (Fly/Control/AI Modes/Settings), a tap-to-select quick action sheet, an orbit-ring overlay, a guidance-warning banner, and Dronie/Parabola mode buttons. Arm/disarm, the flight-mode dropdown, guidance-mode buttons, recording, and the obstacle-warning banner are build-verified but not yet exercised live | 87% |
+| M6 | Android Ground Station App | **Confirmed live against the real hardware companion session**: connect, video, drag/tap target selection, and the live tracking overlay all working end-to-end on a physical phone against the actual running Pi (not sim). Real `gradle assembleDebug` succeeded and the app has run on a physical device across several rounds of changes (three real compile/layout errors found and fixed this way - see android/README.md). Restructured into a DJI-Fly-style 4-tab layout (Fly/Control/AI Modes/Settings), a tap-to-select quick action sheet, an orbit-ring overlay, a guidance-warning banner, and Dronie/Parabola mode buttons. **Fixed a real field-reported bug**: the record button's on-screen timer was frozen at 0:00 the whole time recording ran, because the Pi only ever sent the duration once at toggle time. **New**: `LocalVideoRecorder.kt` saves a second copy of the video locally on the phone itself (MediaCodec/MediaMuxer, MP4) alongside the Pi's own recording, from the same Record button - build-verified only, needs a real device to confirm actual playback. Arm/disarm, the flight-mode dropdown, guidance-mode buttons, and the obstacle-warning banner remain build-verified but not yet exercised live | 87% |
 | M7 | MAVLink / Flight-Controller / RC Override | **Real MAVLink link confirmed working with the full companion stack running**: heartbeat + 10Hz ATTITUDE over TELEM1 @ 57600 baud with a real Cube Orange, now confirmed alongside camera/video/AI in the same `companion.main` hardware-mode run (previously only proven separately). Administrative `arm()`/`set_mode()` commands confirmed against the real FC, not just the mock. `FLTMODE_CH` RC-override switch not yet configured on the transmitter - the software backstop (stick-deflection detection) is tested and working, but the actual hardware-independent guarantee this project is built around is not live yet. Guidance setpoints (Follow/Orbit/Approach-Test) have not been sent to the real FC yet. See `docs/safety-case.md` for the full breakdown | 85% |
 | M8 | Follow / Orbit / Smart-Shot Modes | Follow controller implemented, unit + integration tested against mock FC, confirmed live end-to-end from the Android app including the live separation override (sim). `OrbitController` (circle/point-of-interest shot) and new `SmartShotController` (Dronie/Parabola one-shot cinematic moves) implemented, unit-tested, and build-verified on the Android side (none of the three yet functionally tested live) | 74% |
 | M9 | Controlled Approach-Test | Controller + every abort condition implemented, unit-tested, confirmed live from the Android app (sim). Geofence abort now reads a real `MavlinkBridge.telemetry.fence_breached` (parsed from a real `SYS_STATUS` message via pymavlink's own `MAV_SYS_STATUS_GEOFENCE` bit) instead of a hardcoded `False` - verified against a real mock FC and the full orchestrator, but not yet against a real ArduPilot FC. Fence status is also now surfaced live in the `telemetry` message and the Android `TelemetryPanel`, not just after the fact via an abort's `guidance_reason` | 76% |
@@ -78,8 +78,27 @@ configured 30 FPS down to ~15 FPS).
    now confirmed working live against the real running Pi. Still only
    build-verified, not yet exercised live: arm/disarm, the flight-mode
    dropdown, the guidance-mode buttons (Follow/Orbit/Approach-Test/Dronie/
-   Parabola), the record-video toggle, and the obstacle-warning banner.
-2. **Send real guidance setpoints to the real FC** - `companion.main` has
+   Parabola), and the obstacle-warning banner. The record-video toggle
+   specifically needs two things confirmed on a real device: that the
+   on-screen timer now actually counts up (was previously frozen at 0:00 -
+   fixed, see android/README.md), and that the new phone-side
+   `LocalVideoRecorder` produces an actually-playable MP4, not just a
+   clean compile - a subtle bug there (stride math, a device-specific
+   encoder quirk) would produce a corrupt file rather than something
+   visibly wrong on screen, so this needs a real recording played back,
+   not just a glance at the UI.
+2. **If AI detection still looks stopped after real-hardware testing** -
+   detection itself runs unconditionally every frame regardless of flight
+   controller mode (confirmed by reading `process_frame` directly, so the
+   "not in AI guidance mode" banner is unrelated to whether detection is
+   working). The one concrete lever now available without a code change is
+   `companion/config/hardware.yaml`'s new `camera.score_threshold` (default
+   0.5) - try lowering it (e.g. 0.3) if real-world conditions (motion blur,
+   an awkward camera angle, distance) are pushing genuine detections below
+   the confidence cutoff. If it's still blank on a clear, well-lit, still
+   subject even after that, the camera/model pipeline itself needs a closer
+   look.
+3. **Send real guidance setpoints to the real FC** - `companion.main` has
    now been run in hardware mode with the FC connected live and camera/
    video/AI/MAVLink all running together (confirmed: heartbeat, telemetry,
    arm/disarm, flight-mode read/set). What hasn't happened yet is a
@@ -87,10 +106,10 @@ configured 30 FPS down to ~15 FPS).
    velocity setpoint to the real FC - start with a props-off bench dry-run
    per the plan's own staged approach (M14), watching commanded velocities
    on a dashboard before ever arming.
-3. **Configure `FLTMODE_CH`** on the transmitter/FC for the RC-override
+4. **Configure `FLTMODE_CH`** on the transmitter/FC for the RC-override
    design (docs plan M7, `docs/safety-case.md`) - the one remaining piece
    before the safety-critical override chain is real, not just sim-tested.
-4. **Confirm the geofence signal against a real ArduPilot FC** - the wiring
+5. **Confirm the geofence signal against a real ArduPilot FC** - the wiring
    itself is done (`companion/main.py` now reads a real `MavlinkBridge.
    telemetry.fence_breached`, parsed from `SYS_STATUS` via pymavlink's own
    `MAV_SYS_STATUS_GEOFENCE` bit), and verified against a real mock FC over
@@ -100,14 +119,14 @@ configured 30 FPS down to ~15 FPS).
    `telemetry.fence_breached` actually flips when the boundary is crossed,
    the same way the TELEM baud-rate assumption once turned out wrong until
    real hardware proved otherwise (see `docs/hardware-wiring.md`).
-5. ~~Get a heatsink/fan for the Pi 5 before further sustained video-mode
+6. ~~Get a heatsink/fan for the Pi 5 before further sustained video-mode
    testing~~ - done, now installed.
-6. **Run `tools/calibrate_camera.py` against real checkerboard photos taken
+7. **Run `tools/calibrate_camera.py` against real checkerboard photos taken
    with the actual Pi camera** (the tool itself is written and tested, just
    never run against real hardware images) and make the M4 rangefinder
    hardware decision, before Follow/Approach-Test get anywhere near a real
    flight.
-7. Mounting on the aircraft, weight/power/thermal checks, then the staged
+8. Mounting on the aircraft, weight/power/thermal checks, then the staged
    real-flight testing sequence in the plan (M14) - props-off bench first.
 
 See `docs/protocol.md`, `docs/safety-case.md`, and `docs/hardware-wiring.md` for the specs that get filled in as each milestone lands.

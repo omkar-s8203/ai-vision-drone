@@ -17,6 +17,7 @@ import com.aivisiondrone.groundstation.telemetry.RecordingState
 import com.aivisiondrone.groundstation.telemetry.TargetBBox
 import com.aivisiondrone.groundstation.telemetry.TelemetryState
 import com.aivisiondrone.groundstation.telemetry.TrackingState
+import com.aivisiondrone.groundstation.video.LocalVideoRecorder
 import com.aivisiondrone.groundstation.video.WebRtcClient
 import com.aivisiondrone.groundstation.comms.LinkState
 import kotlinx.coroutines.delay
@@ -43,6 +44,8 @@ private val ONE_SHOT_MODES = setOf(DroneMode.DRONIE, DroneMode.PARABOLA)
 class MainViewModel : ViewModel() {
     private val client = GroundStationClient()
     private var webRtcClient: WebRtcClient? = null
+    private var appContext: Context? = null
+    private var localVideoRecorder: LocalVideoRecorder? = null
 
     val linkState = client.linkState
 
@@ -101,6 +104,7 @@ class MainViewModel : ViewModel() {
     }
 
     fun connect(context: Context, eglBase: EglBase, host: String, port: Int) {
+        appContext = context.applicationContext
         client.connect(host, port)
         if (webRtcClient == null) {
             webRtcClient = WebRtcClient(
@@ -113,6 +117,7 @@ class MainViewModel : ViewModel() {
     }
 
     fun disconnect() {
+        stopLocalRecording()
         client.disconnect()
         webRtcClient?.close()
         webRtcClient = null
@@ -216,8 +221,36 @@ class MainViewModel : ViewModel() {
         client.sendSetFlightMode(mode)
     }
 
+    /** One button drives both recordings at once (by operator preference):
+     * the Pi's own local recording (as before) and a local copy saved on
+     * this device from the same video the operator is watching - so
+     * footage survives even if only one side is reachable afterward. The
+     * two are otherwise independent; a codec failure on one side doesn't
+     * affect the other, matching how VideoRecorder.start() on the Pi
+     * already reports failure without crashing anything. */
     fun toggleRecording() {
-        client.sendRecordCommand(!_recording.value.recording)
+        val startingNow = !_recording.value.recording
+        client.sendRecordCommand(startingNow)
+        if (startingNow) startLocalRecording() else stopLocalRecording()
+    }
+
+    private fun startLocalRecording() {
+        val context = appContext ?: return
+        val track = _remoteVideoTrack.value ?: return
+        if (localVideoRecorder != null) return
+        val dir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES) ?: context.filesDir
+        dir.mkdirs()
+        val file = java.io.File(dir, "flight_${System.currentTimeMillis()}.mp4")
+        val recorder = LocalVideoRecorder(file)
+        localVideoRecorder = recorder
+        track.addSink(recorder)
+    }
+
+    private fun stopLocalRecording() {
+        val recorder = localVideoRecorder ?: return
+        localVideoRecorder = null
+        _remoteVideoTrack.value?.removeSink(recorder)
+        recorder.stop()
     }
 
     override fun onCleared() {

@@ -426,6 +426,21 @@ class CompanionOrchestrator:
         )
         await self.link.send_telemetry(self._build_telemetry_payload())
         await self.link.send_health(self._build_health_payload())
+        if self.video_recorder is not None and self.video_recorder.is_recording:
+            # _handle_record_command only sends recording_state once, right
+            # when the operator toggles it - with duration_s pinned at
+            # whatever it was at that instant. Without this, the Android
+            # RecordButton's timer is frozen at 0:00 for the entire
+            # recording even though it's genuinely running on the Pi (a
+            # real bug reported from the field: "I don't know if it's
+            # actually recording"). Piggyback the running duration on the
+            # per-frame broadcast like telemetry/health already do.
+            await self.link.send_recording_state(
+                {
+                    "recording": True,
+                    "duration_s": self.video_recorder.duration_s,
+                }
+            )
 
         return {
             "tracking_state": tracking_state,
@@ -587,7 +602,10 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
         target_fps=hardware_cfg["camera"]["target_fps"],
     )
     intrinsics = camera.imx500.network_intrinsics
-    detector = IMX500Detector(class_names=intrinsics.labels)
+    detector = IMX500Detector(
+        class_names=intrinsics.labels,
+        score_threshold=hardware_cfg["camera"].get("score_threshold", 0.5),
+    )
     tracker = IouKalmanTracker()
     distance_estimator = DistanceEstimator(CameraIntrinsics.from_dict(calib_cfg))
     follow_controller = FollowController(follow_cfg)

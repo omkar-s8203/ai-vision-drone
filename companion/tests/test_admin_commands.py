@@ -4,6 +4,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
+from companion.comms.protocol import Envelope
 from companion.comms.video_recorder import VideoRecorder
 from companion.comms.ws_server import GroundStationLink
 from companion.config.loader import load_yaml
@@ -19,8 +20,12 @@ from companion.safety.supervisor import SafetySupervisor
 from companion.safety.watchdog import HeartbeatWatchdog
 from companion.tests.conftest import FakeTransport
 from companion.tracking.iou_tracker import IouKalmanTracker
-from companion.vision.camera import CameraBase
+from companion.vision.camera import CameraBase, Frame
 from companion.vision.detector import PassthroughDetector
+
+
+def _sent_envelopes_of_type(transport: FakeTransport, msg_type: str) -> list[Envelope]:
+    return [e for e in (Envelope.from_json(raw) for raw in transport.sent) if e.type == msg_type]
 
 
 class _FakeCamera(CameraBase):
@@ -148,4 +153,50 @@ async def test_record_command_without_a_video_recorder_is_a_safe_no_op(tmp_path)
     with _build_orchestrator(tmp_path, video_recorder=None) as (orchestrator, recorder, conn, mock_mavutil):
         await orchestrator._handle_record_command(True)  # must not raise
 
+        recorder.close()
+
+
+@pytest.mark.asyncio
+async def test_process_frame_resends_recording_state_with_a_growing_duration(tmp_path):
+    """_handle_record_command only sends recording_state once, at the
+    instant recording starts, with duration_s pinned at whatever it was
+    then - a real bug reported from the field: the Android RecordButton's
+    timer was frozen at 0:00 for the whole recording even though it was
+    genuinely running on the Pi. process_frame() must keep resending
+    recording_state every frame for as long as recording is active, with
+    duration_s actually increasing, so the operator can tell it's alive."""
+    video_recorder = VideoRecorder(tmp_path / "recordings", fps=10)
+    with _build_orchestrator(
+        tmp_path, video_recorder=video_recorder, camera=_FakeCamera()
+    ) as (orchestrator, recorder, conn, mock_mavutil):
+        orchestrator._frame_size = (64, 48)
+        await orchestrator._handle_record_command(True)
+        transport = orchestrator.link.transport
+        transport.sent.clear()  # drop the one-shot message from the toggle above
+
+        await orchestrator.process_frame(Frame(ts=0.0, width=64, height=48, raw_detection_output=[]))
+        first_batch = _sent_envelopes_of_type(transport, "recording_state")
+        assert len(first_batch) == 1
+        assert first_batch[0].payload["recording"] is True
+        first_duration = first_batch[0].payload["duration_s"]
+
+        await orchestrator.process_frame(Frame(ts=0.1, width=64, height=48, raw_detection_output=[]))
+        second_batch = _sent_envelopes_of_type(transport, "recording_state")
+        assert len(second_batch) == 2
+        assert second_batch[1].payload["duration_s"] >= first_duration
+
+        video_recorder.stop()
+        recorder.close()
+
+
+@pytest.mark.asyncio
+async def test_process_frame_sends_no_recording_state_when_not_recording(tmp_path):
+    with _build_orchestrator(tmp_path, video_recorder=None, camera=_FakeCamera()) as (
+        orchestrator, recorder, conn, mock_mavutil,
+    ):
+        transport = orchestrator.link.transport
+
+        await orchestrator.process_frame(Frame(ts=0.0, width=64, height=48, raw_detection_output=[]))
+
+        assert _sent_envelopes_of_type(transport, "recording_state") == []
         recorder.close()

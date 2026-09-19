@@ -19,3 +19,13 @@ camera:
   # working against real IMX500 hardware (docs plan M2). 90 labels, 0-indexed
   # directly (no background offset) - see IMX500Detector.
   imx500_model_path: /usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk
+  # Minimum on-sensor detection confidence to accept a box at all
+  # (IMX500Detector.parse() drops anything below this before it ever
+  # reaches tracking/selection). 0.5 is a reasonable starting point, but
+  # real-world conditions - motion blur, an awkward camera angle during a
+  # bench test, distance, partial occlusion - can genuinely push a correct
+  # detection's confidence below it, which looks exactly like "the AI
+  # isn't detecting anything" even though the subsystem itself is healthy.
+  # Lower this (e.g. 0.3) to trade some false positives for fewer missed
+  # detections if that's happening in practice; no code change needed.
+  score_threshold: 0.5

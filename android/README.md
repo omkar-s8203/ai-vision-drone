@@ -120,6 +120,17 @@ proximity_guard.py`: any detection, not just the tracked target, closer
 than `min_obstacle_distance_m` forces the Safety Supervisor to SAFE).
 Installed and launched successfully on the same physical device as before.
 
+**Build-verified**: `TelemetryPanel.kt` now shows a live geofence status
+line (`Geofence: OK` / `GEOFENCE BREACHED`) sourced from the Pi's real
+`fence_enabled`/`fence_breached` telemetry fields (see `docs/protocol.md`
+and `companion/mavlink/bridge.py`'s `SYS_STATUS` parsing) - only shown once
+a fence is actually armed on the FC, so an operator with no fence
+configured doesn't get a permanent "fence: off" line. Previously the
+operator had no live visibility into geofence status at all; the only
+signal was an Approach-Test abort's `guidance_reason` after the fact. Real
+`gradle assembleDebug`/`assembleDebugAndroidTest` succeeded; not yet
+installed on a physical device this round.
+
 **Build-verified but not installed on a device this round** (the test
 device was disconnected when this landed - `gradle assembleDebug` still
 succeeded cleanly): two new **Dronie**/**Parabola** smart-shot modes

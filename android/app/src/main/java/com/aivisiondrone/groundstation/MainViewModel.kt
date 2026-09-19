@@ -273,6 +273,8 @@ class MainViewModel : ViewModel() {
         groundspeedMps = p.optDoubleOrNull("groundspeed_mps"),
         batteryVoltage = p.optDoubleOrNull("battery_voltage_v"),
         batteryRemainingPct = p.optIntOrNull("battery_remaining_pct"),
+        fenceEnabled = p.optBoolean("fence_enabled", false),
+        fenceBreached = p.optBoolean("fence_breached", false),
     )
 
     private fun parseHealth(p: JSONObject) = HealthState(

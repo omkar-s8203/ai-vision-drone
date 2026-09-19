@@ -48,6 +48,17 @@ fun TelemetryPanel(telemetry: TelemetryState, modifier: Modifier = Modifier) {
                 color = if ((telemetry.batteryRemainingPct ?: 100) < 20) DroneColors.Danger else DroneColors.TextSecondary,
                 style = MaterialTheme.typography.labelSmall,
             )
+            // Only shown once a geofence is actually armed on the FC - an
+            // operator with no fence configured doesn't need a permanent
+            // "fence: off" line cluttering the panel.
+            if (telemetry.fenceEnabled) {
+                Text(
+                    text = if (telemetry.fenceBreached) "GEOFENCE BREACHED" else "Geofence: OK",
+                    color = if (telemetry.fenceBreached) DroneColors.Danger else DroneColors.Safe,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = if (telemetry.fenceBreached) FontWeight.Bold else FontWeight.Normal,
+                )
+            }
         }
     }
 }

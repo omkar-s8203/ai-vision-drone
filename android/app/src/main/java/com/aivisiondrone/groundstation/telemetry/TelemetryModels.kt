@@ -9,6 +9,10 @@ data class TelemetryState(
     val groundspeedMps: Double? = null,
     val batteryVoltage: Double? = null,
     val batteryRemainingPct: Int? = null,
+    // From the FC's real SYS_STATUS geofence bit (companion/mavlink/bridge.py) -
+    // fenceBreached only means anything when fenceEnabled is true.
+    val fenceEnabled: Boolean = false,
+    val fenceBreached: Boolean = false,
 )
 
 data class HealthState(

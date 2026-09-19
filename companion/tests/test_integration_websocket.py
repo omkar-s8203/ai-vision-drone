@@ -1,5 +1,6 @@
 import asyncio
 import json
+from typing import Optional
 
 import pytest
 import websockets
@@ -35,16 +36,30 @@ async def recv_envelope_of_type(client, msg_type: str, timeout: float = 3.0) -> 
     """process_frame() broadcasts several message types every frame
     (tracking_update, detections_update, telemetry, health) - this drains
     the socket until the one we actually care about shows up, rather than
-    assuming it's the very next message."""
+    assuming it's the very next message. Returns the *latest* matching
+    envelope, not just the first: an earlier call in the same test may have
+    stopped as soon as it matched its own (different) target type, leaving
+    older same-type messages from a now-superseded frame still queued
+    behind it - returning only the first match would silently hand back
+    stale data instead of the state produced by the most recent
+    process_frame() call."""
     loop = asyncio.get_event_loop()
     deadline = loop.time() + timeout
-    while loop.time() < deadline:
-        remaining = max(0.01, deadline - loop.time())
-        raw = await asyncio.wait_for(client.recv(), timeout=remaining)
+    latest: Optional[Envelope] = None
+    while True:
+        # Once we've seen one match, only wait briefly for anything newer
+        # already in flight rather than blocking for the full timeout -
+        # this keeps the "get the freshest one" behavior cheap.
+        remaining = 0.15 if latest is not None else max(0.01, deadline - loop.time())
+        try:
+            raw = await asyncio.wait_for(client.recv(), timeout=remaining)
+        except asyncio.TimeoutError:
+            if latest is not None:
+                return latest
+            raise AssertionError(f"no {msg_type} message received within {timeout}s")
         envelope = Envelope.from_json(raw)
         if envelope.type == msg_type:
-            return envelope
-    raise AssertionError(f"no {msg_type} message received within {timeout}s")
+            latest = envelope
 
 
 @pytest.mark.asyncio
@@ -162,6 +177,21 @@ async def test_full_operator_session_over_a_real_websocket(tmp_path):
             )
             health_msg = await recv_envelope_of_type(client, MessageType.HEALTH)
             assert health_msg.payload["mavlink_ok"] is True
+
+            # 6. A real geofence breach on the (mock) FC really does reach
+            # the Android side over the wire in the telemetry message, not
+            # just internally on orchestrator.mavlink.telemetry (see
+            # test_approach_orchestrator.py for that half of the proof).
+            mock_fc.set_fence_state(enabled=True, breached=True)
+            await wait_until(lambda: mavlink.telemetry.fence_breached is True, timeout=2.0)
+            watchdog.beat("camera")
+            watchdog.beat("tracker")
+            await orchestrator.process_frame(
+                Frame(ts=0.2, width=1280, height=720, raw_detection_output=[])
+            )
+            telemetry_msg = await recv_envelope_of_type(client, MessageType.TELEMETRY)
+            assert telemetry_msg.payload["fence_enabled"] is True
+            assert telemetry_msg.payload["fence_breached"] is True
     finally:
         await link.stop()
         fc_task.cancel()

@@ -444,6 +444,8 @@ class CompanionOrchestrator:
             "groundspeed_mps": t.groundspeed_mps,
             "battery_voltage_v": t.battery_voltage_v,
             "battery_remaining_pct": t.battery_remaining_pct,
+            "fence_enabled": t.fence_enabled,
+            "fence_breached": t.fence_breached,
         }
 
     def _current_fps(self) -> Optional[float]:

@@ -408,6 +408,16 @@ class CompanionOrchestrator:
                 "supervisor_state": decision.state.name,
                 "guidance_allowed": decision.guidance_allowed,
                 "guidance_reason": decision.reason,
+                # Previously only written to the session log file, reviewable
+                # only after the fact - the plan's own bench-test procedure
+                # (props off, watch commanded velocities before ever arming)
+                # needs this live on the operator's screen, not just in a
+                # log an operator isn't SSH'd in to read during the test.
+                "commanded_vx_mps": command.vx_mps if command is not None else None,
+                "commanded_vy_mps": command.vy_mps if command is not None else None,
+                "commanded_vz_mps": command.vz_mps if command is not None else None,
+                "commanded_yaw_rate_rads": command.yaw_rate_rads if command is not None else None,
+                "guidance_sent": sent,
             }
         )
         await self.link.send_detections_update(

@@ -55,6 +55,17 @@ data class TrackingState(
     // SAFE) so the mode selector can reflect reality instead of staying
     // stuck on whatever the operator last tapped.
     val supervisorState: String? = null,
+    // The active guidance controller's computed velocity setpoint this
+    // frame (null when none is running) and whether it actually reached
+    // the FC (guidanceSent is false if the Safety Supervisor blocked it) -
+    // meant to be watched live during a props-off bench test, per the
+    // plan's staged real-flight procedure, not just reviewed after the
+    // fact from the Pi's session log.
+    val commandedVxMps: Double? = null,
+    val commandedVyMps: Double? = null,
+    val commandedVzMps: Double? = null,
+    val commandedYawRateRads: Double? = null,
+    val guidanceSent: Boolean = false,
 )
 
 /** One live object detection before/independent of target selection - lets

@@ -24,6 +24,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.aivisiondrone.groundstation.MainViewModel
 import com.aivisiondrone.groundstation.control.DetectionsOverlay
 import com.aivisiondrone.groundstation.control.DroneMode
+import com.aivisiondrone.groundstation.control.GuidanceCommandPanel
 import com.aivisiondrone.groundstation.control.GuidanceWarningBanner
 import com.aivisiondrone.groundstation.control.RecordButton
 import com.aivisiondrone.groundstation.control.TargetActionSheet
@@ -142,10 +143,14 @@ fun FlyTab(
             LinkStatusChip(linkState = linkState)
         }
 
-        TelemetryPanel(
-            telemetry = telemetry,
+        Column(
             modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
-        )
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            TelemetryPanel(telemetry = telemetry)
+            GuidanceCommandPanel(tracking = tracking)
+        }
 
         RecordButton(
             recording = recording.recording,

@@ -220,6 +220,17 @@ something visibly wrong on screen, so the first real recording on a
 physical device is the actual test - report back what you see when you
 try to play one back.
 
+**New: `GuidanceCommandPanel.kt`** - shows the active guidance controller's
+computed velocity setpoint (vx/vy/vz/yaw rate) and whether it actually
+reached the FC, live on the Fly tab next to `TelemetryPanel`. Previously
+this only ever reached the Pi's own session log file, reviewable only
+after the fact - the plan's own staged real-flight procedure explicitly
+calls for a props-off bench dry-run "watching commanded velocities on a
+dashboard before ever arming," and there was no such dashboard until now.
+Only rendered while a guidance controller is actually producing a command
+(Tracking-only/Normal RC don't show it). Build-verified only, not yet
+exercised against a live guidance session on a real device.
+
 ## Layout
 
 ```
@@ -235,6 +246,10 @@ app/src/main/java/com/aivisiondrone/groundstation/
                 TargetActionSheet.kt (Track/Follow/Orbit/Cancel quick menu),
                 GuidanceWarningBanner.kt (shows why guidance stopped, e.g.
                 obstacle too close, RC override, target lost),
+                GuidanceCommandPanel.kt (live commanded vx/vy/vz/yaw_rate
+                and whether it actually reached the FC - the bench-test
+                "dashboard" the plan's staged real-flight procedure calls
+                for, previously only in the Pi's session log),
                 ModeControls.kt (mode buttons, incl. Dronie/Parabola smart
                 shots, + follow/orbit sliders),
                 FlightControlDock.kt (arm/disarm, FC mode dropdown - a

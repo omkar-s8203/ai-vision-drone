@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+from companion.comms.protocol import Envelope
 from companion.comms.ws_server import GroundStationLink
 from companion.config.loader import load_yaml
 from companion.guidance.approach_test import ApproachTestController
@@ -97,6 +98,16 @@ async def test_follow_mode_sends_setpoints_then_rc_override_halts_them(tmp_path)
         assert orchestrator.state_machine.state == TrackingState.TRACKING
         assert last_result["supervisor_decision"].guidance_allowed is True
         await wait_until(lambda: len(mock_fc.received_setpoints) > 0, timeout=2.0)
+
+        # The commanded velocity previously only ever reached the session
+        # log file, reviewable only after the fact - the plan's own staged
+        # real-flight procedure needs this live on the operator's screen
+        # during a props-off bench dry-run, not just in a log.
+        all_envelopes = [Envelope.from_json(raw) for raw in transport.sent]
+        tracking_envelopes = [e for e in all_envelopes if e.type == "tracking_update"]
+        assert any(e.payload["guidance_sent"] is True for e in tracking_envelopes)
+        sent_envelope = next(e for e in tracking_envelopes if e.payload["guidance_sent"] is True)
+        assert sent_envelope.payload["commanded_vx_mps"] is not None
 
         mock_fc.set_rc_override(True)
         await wait_until(

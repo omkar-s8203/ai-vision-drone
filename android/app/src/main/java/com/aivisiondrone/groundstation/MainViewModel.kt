@@ -338,6 +338,11 @@ class MainViewModel : ViewModel() {
             guidanceAllowed = p.optBoolean("guidance_allowed", false),
             guidanceReason = p.optStringOrNull("guidance_reason"),
             supervisorState = p.optStringOrNull("supervisor_state"),
+            commandedVxMps = p.optDoubleOrNull("commanded_vx_mps"),
+            commandedVyMps = p.optDoubleOrNull("commanded_vy_mps"),
+            commandedVzMps = p.optDoubleOrNull("commanded_vz_mps"),
+            commandedYawRateRads = p.optDoubleOrNull("commanded_yaw_rate_rads"),
+            guidanceSent = p.optBoolean("guidance_sent", false),
         )
     }
 

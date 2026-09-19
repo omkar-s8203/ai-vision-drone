@@ -7,12 +7,18 @@ a separate WebRTC video channel, per `docs/protocol.md`.
 ## Status
 
 **Builds, runs, and works end-to-end** - confirmed live on a real device
-against the Pi's sim companion stack over real WiFi: connects, streams
-synthetic video, drag-to-select correctly initializes tracking on the
-target, and the tracking overlay updates live. This project's dev
-environment has no Android SDK, so every fix below came from you pasting
-back a real build/runtime error - that's the expected way this gets
-verified from here on out.
+against the Pi's sim companion stack over real WiFi (connects, streams
+synthetic video, drag-to-select correctly initializes tracking, tracking
+overlay updates live), and now also confirmed against the **real hardware
+companion session** (real camera, real on-sensor AI detection, real
+MAVLink-backed Pi): connect, live video, and drag/tap target selection
+with the tracking overlay all working end-to-end on a physical phone.
+Arm/disarm, the flight-mode dropdown, the guidance-mode buttons, the
+record-video toggle, and the obstacle-warning banner are still only
+build-verified, not yet exercised against either a live sim or hardware
+session. This project's dev environment has no Android SDK, so every fix
+below came from you pasting back a real build/runtime error - that's the
+expected way this gets verified from here on out.
 
 Fixed so far:
 - **Kotlin/Compose plugin version mismatch**: `org.jetbrains.kotlin.plugin.compose`

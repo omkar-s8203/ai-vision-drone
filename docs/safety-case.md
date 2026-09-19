@@ -202,7 +202,7 @@ Every mechanism above that has a corresponding `SafetySupervisor` gate is
 covered by at least one test that independently trips *only that
 condition* and asserts guidance is denied - this is what "fault injection"
 means in this codebase's test suite, not a separate framework. As of this
-writing: 163 companion tests passing
+writing: 167 companion tests passing
 (`.venv/Scripts/python -m pytest -q`), including a real end-to-end test
 (`test_integration_websocket.py`) that drives the actual JSON wire
 protocol over a real WebSocket and real MAVLink link, and real-MAVLink
@@ -211,11 +211,22 @@ just in-process Python calls.
 
 ## What this document does not yet cover
 
+- `companion.main` has now been run in hardware mode with a real FC
+  connected live (camera, on-sensor AI, video, and MAVLink all running
+  together, not proven separately as before) - heartbeat, telemetry,
+  arm/disarm, and flight-mode read/set were confirmed against the real FC.
+  **No guidance setpoint (Follow/Orbit/Approach-Test) has been sent to the
+  real FC yet** - only administrative commands and read-only telemetry
+  have been exercised on real hardware so far. Don't read "hardware mode
+  confirmed working" anywhere in this project as covering guidance output;
+  it doesn't yet.
 - No real SITL (ArduPilot software-in-the-loop) run exists for this
   project - `sim/mock_fc.py` is a lightweight MAVLink emulator, not real
   ArduPilot flight dynamics (see `sim/README.md`).
-- No bench test (props off, real hardware) of the full abort chain has
-  been performed yet.
+- No bench test (props off, real hardware) of the full abort chain, or of
+  any guidance controller actually driving the real FC, has been performed
+  yet - this is the natural next step now that administrative MAVLink
+  commands are confirmed live.
 - No real-flight test has occurred - the plan's staged sequence (M14) is
   entirely gated on the FLTMODE_CH hardware configuration and geofence
   wiring gaps above being closed first.

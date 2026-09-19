@@ -38,9 +38,13 @@ mechanism is never silent to the operator.
   switch.
 - **Status**: software backstop implemented and unit/integration tested.
   **The hardware switch itself is not yet configured on the transmitter**
-  (`FLTMODE_CH` param) - see root README "What's next" #3. Until that's
+  (`FLTMODE_CH` param) - see root README "What's next" #4. Until that's
   done, the actual non-negotiable guarantee this project depends on is not
   live on real hardware yet, only the software approximation of it is.
+  **`docs/flight-readiness-checklist.md`** has the exact step-by-step
+  procedure for configuring and verifying it (including the plan's own
+  20/20-trials acceptance criteria), plus the props-off guidance dry-run
+  that comes right after.
 - **Tests**: `test_rc_monitor.py` (deadband logic in isolation),
   `test_safety_supervisor.py::test_rc_override_forces_safe`,
   `test_approach_test.py::test_rc_override_aborts`,

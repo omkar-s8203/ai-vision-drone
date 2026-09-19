@@ -142,4 +142,4 @@ configured 30 FPS down to ~15 FPS).
    (`target_recovery.yaml`) are placeholder constants and should be tuned
    from real flight data, not trusted as-is.
 
-See `docs/protocol.md`, `docs/safety-case.md`, and `docs/hardware-wiring.md` for the specs that get filled in as each milestone lands.
+See `docs/protocol.md`, `docs/safety-case.md`, and `docs/hardware-wiring.md` for the specs that get filled in as each milestone lands, and **`docs/flight-readiness-checklist.md`** for the exact, step-by-step procedure for items 3/4/9 above (`FLTMODE_CH` configuration/verification, then the props-off guidance dry-run) - the two concrete, hands-on-hardware steps standing between here and real flight.

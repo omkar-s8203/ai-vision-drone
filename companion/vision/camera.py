@@ -48,15 +48,20 @@ class Picamera2IMX500Camera(CameraBase):
     three (imx500, outputs, metadata, picam2) are bundled into
     `raw_detection_output` for IMX500Detector to unpack.
 
-    A real bug found from a field log (not a demo script): `outputs` was
-    None on *every* frame indefinitely, not just the first ~second -
-    IMX500Detector's own diagnostic logging (added specifically to
-    root-cause this) confirmed it. The on-sensor network's firmware upload
-    to the NPU is a separate, asynchronous step from opening the camera,
-    and nothing here was waiting for it to finish before capture began.
-    `IMX500.show_network_fw_progress_bar()` (called in `frames()` below,
-    matching Raspberry Pi's own imx500_object_detection_demo.py) blocks
-    until that upload completes.
+    A real bug found from a field log (not a demo script), fixed in two
+    passes: `outputs` was None on *every* frame indefinitely, not just the
+    first ~second - IMX500Detector's own diagnostic logging (added
+    specifically to root-cause this) confirmed it. The on-sensor network's
+    firmware upload to the NPU is a separate, asynchronous step from
+    opening the camera. First fix attempt called
+    `IMX500.show_network_fw_progress_bar()` before `configure()` had ever
+    run - a standalone diagnostic script proved this was too early (the
+    upload hadn't started yet, `get_fw_upload_progress()` read `(0, 0)`,
+    so the "wait" returned instantly and waited for nothing). The upload
+    only actually begins once the camera is configured, so the real,
+    diagnostic-script-confirmed working order is: `configure()`, *then*
+    `show_network_fw_progress_bar()`, *then* `start()` with no config
+    argument - producing a real detection within ~3s in that script.
     """
 
     def __init__(self, model_path: str, width: int, height: int, target_fps: int) -> None:
@@ -96,18 +101,24 @@ class Picamera2IMX500Camera(CameraBase):
             controls={"FrameRate": self.target_fps},
             buffer_count=12,
         )
-        # A real bug found in the field: without this, IMX500Detector.parse()
-        # sees `outputs=None` forever, not just for the normal ~1s startup
-        # grace period - the on-sensor network's firmware upload to the NPU
-        # is a separate, asynchronous step from starting the camera itself,
-        # and nothing was waiting for it to finish before capture began.
-        # show_network_fw_progress_bar() blocks until the upload completes
-        # (Raspberry Pi's own imx500_object_detection_demo.py always calls
-        # this before start() for exactly this reason). Guarded because this
-        # dev machine has no picamera2/IMX500 to confirm the exact method
-        # name against every picamera2 version - if a future version renames
-        # or removes it, fail loud in the log rather than silently getting
-        # detection stuck at outputs=None again with no clue why.
+        # A real bug found in the field: outputs=None forever, not just the
+        # normal ~1s startup grace period - the on-sensor network's firmware
+        # upload to the NPU is a separate, asynchronous step from starting
+        # the camera, and nothing was waiting for it to finish before capture
+        # began. The first fix attempt called show_network_fw_progress_bar()
+        # here, before configure() had ever run - confirmed by a standalone
+        # diagnostic script to be too early: the upload hadn't started yet
+        # (get_fw_upload_progress() read (0, 0)), so the "wait" returned
+        # instantly and did nothing. The upload only actually begins once
+        # the camera is configured, so configure() must happen first, then
+        # the wait, then start() (with no config argument - already
+        # configured) - the same diagnostic script confirmed this exact
+        # order produces a real detection within ~3s. Guarded with hasattr()
+        # since this dev machine has no picamera2/IMX500 to confirm the
+        # exact method name against every version - if a future version
+        # renames or removes it, fail loud in the log rather than silently
+        # regressing to outputs=None with no clue why.
+        self._picam2.configure(config)
         if hasattr(self.imx500, "show_network_fw_progress_bar"):
             self.imx500.show_network_fw_progress_bar()
         else:
@@ -116,7 +127,7 @@ class Picamera2IMX500Camera(CameraBase):
                 "the network firmware upload may not be awaited before capture starts, which "
                 "previously caused IMX500Detector to see outputs=None indefinitely"
             )
-        self._picam2.start(config, show_preview=False)
+        self._picam2.start(show_preview=False)
         try:
             while True:
                 # capture_metadata() blocks until the next frame is ready at

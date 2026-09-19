@@ -303,7 +303,9 @@ related:
 - **Thermal**: a heatsink/fan is now fitted, but not yet soak-tested under
   sustained AI+video load in the actual mounted/powered configuration -
   the earlier "running hot/marginal" finding predates the heatsink.
-- **Rangefinder** (optional, M4): still an open decision, not purchased -
-  now the natural next call on this milestone, since the vision-only
-  distance path is fully calibrated (real intrinsics fitted, see M4 in
-  root README).
+- **Rangefinder** (optional, M4): still an open decision, not purchased.
+  Also still open on the vision-only side: `tools/calibrate_camera.py`
+  has never actually been run against real photos yet (confirmed directly
+  on the Pi - see M4 in root README), so `camera_calibration.yaml` is
+  still the placeholder intrinsics. Do that first regardless of the
+  rangefinder decision.

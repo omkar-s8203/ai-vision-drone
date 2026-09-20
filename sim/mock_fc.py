@@ -48,6 +48,17 @@ class MockFlightController:
         self.satellites_visible = 12
         self.battery_voltage_mv = 12400  # a healthy-looking pack voltage
         self.battery_remaining_pct = 80
+        self.current_battery_ca = 1500  # centiamps -> 15.0A, a plausible hover draw
+        self.hdop_x100 = 120  # -> 1.20 HDOP, a decent fix
+        self.vdop_x100 = 180
+        self.rc_rssi = 200  # 0-254 scale
+        self.roll_rad = 0.0
+        self.pitch_rad = 0.0
+        self.yaw_rad = 0.0
+        self.heading_deg = 0
+        self.airspeed_mps = 0.0
+        self.climb_mps = 0.0
+        self.throttle_pct = 0
         self.received_setpoints: list[tuple[float, float, float, float]] = []
 
     def set_mode(self, mode: str) -> None:
@@ -82,6 +93,32 @@ class MockFlightController:
         self.battery_voltage_mv = voltage_mv
         self.battery_remaining_pct = remaining_pct
 
+    def set_attitude(self, roll_rad: float, pitch_rad: float, yaw_rad: float) -> None:
+        self.roll_rad = roll_rad
+        self.pitch_rad = pitch_rad
+        self.yaw_rad = yaw_rad
+
+    def set_vfr_hud(
+        self, heading_deg: int, airspeed_mps: float, climb_mps: float, throttle_pct: int
+    ) -> None:
+        self.heading_deg = heading_deg
+        self.airspeed_mps = airspeed_mps
+        self.climb_mps = climb_mps
+        self.throttle_pct = throttle_pct
+
+    def set_rc_rssi(self, rssi: int) -> None:
+        """Pass 255 to simulate the standard "unknown" sentinel."""
+        self.rc_rssi = rssi
+
+    def set_gps_dilution(self, hdop_x100: int, vdop_x100: int) -> None:
+        """Pass 65535 to simulate the standard "unknown" sentinel."""
+        self.hdop_x100 = hdop_x100
+        self.vdop_x100 = vdop_x100
+
+    def set_current_battery(self, current_ca: int) -> None:
+        """Pass -1 to simulate the standard "not measured" sentinel."""
+        self.current_battery_ca = current_ca
+
     def set_fence_state(self, enabled: bool, breached: bool = False) -> None:
         """`breached` only means anything when `enabled` is True - matches
         real ArduPilot semantics (SYS_STATUS's health bit for a sensor that
@@ -109,7 +146,7 @@ class MockFlightController:
             deflected, 1500, 1500, 1500,
             1500, 1500, 1500, 1500,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            255,
+            self.rc_rssi,
         )
 
     def _send_global_position(self) -> None:
@@ -127,7 +164,7 @@ class MockFlightController:
             int(time.time() * 1e6) & 0xFFFFFFFFFFFFFFFF,
             self.gps_fix_type,
             int(self.lat * 1e7), int(self.lon * 1e7), int(self.alt_m * 1000),
-            0, 0, 0, 0,
+            self.hdop_x100, self.vdop_x100, 0, 0,
             self.satellites_visible,
         )
 
@@ -136,8 +173,21 @@ class MockFlightController:
         self._conn.mav.battery_status_send(
             0, 0, 0, 32767,  # id, battery_function, type, temperature (32767 = unknown)
             voltages,
-            -1, -1, -1,  # current_battery, current_consumed, energy_consumed - all "not measured"
+            self.current_battery_ca, -1, -1,  # current_consumed, energy_consumed - not measured
             self.battery_remaining_pct,
+        )
+
+    def _send_attitude(self) -> None:
+        self._conn.mav.attitude_send(
+            int(time.time() * 1000) & 0xFFFFFFFF,
+            self.roll_rad, self.pitch_rad, self.yaw_rad,
+            0.0, 0.0, 0.0,
+        )
+
+    def _send_vfr_hud(self) -> None:
+        self._conn.mav.vfr_hud_send(
+            self.airspeed_mps, 0.0, self.heading_deg, self.throttle_pct,
+            self.alt_m, self.climb_mps,
         )
 
     def _send_sys_status(self) -> None:
@@ -196,5 +246,7 @@ class MockFlightController:
             self._send_gps_raw_int()
             self._send_battery_status()
             self._send_sys_status()
+            self._send_attitude()
+            self._send_vfr_hud()
             self.poll_incoming()
             await asyncio.sleep(period)

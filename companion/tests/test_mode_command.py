@@ -102,6 +102,33 @@ def test_live_parameter_update_while_already_in_follow_does_not_reset_pid(tmp_pa
     recorder.close()
 
 
+def test_follow_max_speed_override_updates_controller_live(tmp_path):
+    """The Android speed slider sends follow_max_speed_mps on the
+    mode_command message; the Pi must apply it live via
+    FollowController.set_max_speed(), same as the separation/altitude
+    sliders already do for their own fields."""
+    orchestrator, recorder = _build_minimal_orchestrator(tmp_path)
+    ceiling = orchestrator.follow.limits["max_speed_mps"]
+
+    orchestrator._on_mode_command({"mode": "follow", "follow_max_speed_mps": 1.0})
+    assert orchestrator.follow.limits["max_speed_mps"] == 1.0
+
+    # Clamped to the config ceiling, not applied verbatim, if the app ever
+    # sent something above it.
+    orchestrator._on_mode_command({"mode": "follow", "follow_max_speed_mps": ceiling + 100.0})
+    assert orchestrator.follow.limits["max_speed_mps"] == ceiling
+    recorder.close()
+
+
+def test_orbit_max_speed_override_updates_controller_live(tmp_path):
+    orchestrator, recorder = _build_minimal_orchestrator(tmp_path)
+
+    orchestrator._on_mode_command({"mode": "orbit", "orbit_max_speed_mps": 1.5})
+
+    assert orchestrator.orbit.limits["max_speed_mps"] == 1.5
+    recorder.close()
+
+
 def test_follow_altitude_override_updates_controller_live(tmp_path):
     orchestrator, recorder = _build_minimal_orchestrator(tmp_path)
     assert orchestrator.follow.limits["target_altitude_m"] is None

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
@@ -52,6 +53,17 @@ class TelemetrySnapshot:
     home_lon: Optional[float] = None
     satellites_visible: Optional[int] = None
     gps_fix_type: Optional[int] = None
+    hdop: Optional[float] = None
+    vdop: Optional[float] = None
+    roll_deg: Optional[float] = None
+    pitch_deg: Optional[float] = None
+    yaw_deg: Optional[float] = None
+    heading_deg: Optional[float] = None
+    airspeed_mps: Optional[float] = None
+    climb_mps: Optional[float] = None
+    throttle_pct: Optional[int] = None
+    rc_rssi_pct: Optional[int] = None
+    current_battery_a: Optional[float] = None
 
 
 class MavlinkBridge:
@@ -151,6 +163,11 @@ class MavlinkBridge:
             self.telemetry.satellites_visible = (
                 msg.satellites_visible if msg.satellites_visible != 255 else None
             )
+            # eph/epv are HDOP/VDOP * 100 per the MAVLink spec; 65535 (UINT16_MAX)
+            # is the standard "unknown" sentinel, same pattern as every other
+            # unknown-value field in this bridge.
+            self.telemetry.hdop = msg.eph / 100.0 if msg.eph != 65535 else None
+            self.telemetry.vdop = msg.epv / 100.0 if msg.epv != 65535 else None
         elif msg_type == "BATTERY_STATUS":
             if msg.voltages and msg.voltages[0] != 65535:
                 self.telemetry.battery_voltage_v = msg.voltages[0] / 1000.0
@@ -164,10 +181,29 @@ class MavlinkBridge:
             self.telemetry.battery_remaining_pct = (
                 msg.battery_remaining if msg.battery_remaining != -1 else None
             )
+            # current_battery is centiamps; -1 is the standard "not measured"
+            # sentinel for this field per the MAVLink spec.
+            self.telemetry.current_battery_a = (
+                msg.current_battery / 100.0 if msg.current_battery != -1 else None
+            )
         elif msg_type == "RC_CHANNELS":
             self.telemetry.rc_channels = {
                 i: getattr(msg, f"chan{i}_raw") for i in range(1, 9)
             }
+            # rssi is 0-254 (mapped to a 0-100% signal strength for display);
+            # 255 is the standard "unknown" sentinel.
+            self.telemetry.rc_rssi_pct = (
+                round(msg.rssi * 100 / 254) if msg.rssi != 255 else None
+            )
+        elif msg_type == "ATTITUDE":
+            self.telemetry.roll_deg = math.degrees(msg.roll)
+            self.telemetry.pitch_deg = math.degrees(msg.pitch)
+            self.telemetry.yaw_deg = math.degrees(msg.yaw) % 360.0
+        elif msg_type == "VFR_HUD":
+            self.telemetry.heading_deg = float(msg.heading)
+            self.telemetry.airspeed_mps = msg.airspeed
+            self.telemetry.climb_mps = msg.climb
+            self.telemetry.throttle_pct = msg.throttle
         elif msg_type == "SYS_STATUS":
             # ArduPilot reports geofence status as a bit in SYS_STATUS's
             # sensor bitmasks, not a dedicated message - "enabled" means a

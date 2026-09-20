@@ -58,7 +58,7 @@ class GroundStationScreenTest {
 
     @Test
     fun abortButtonRemainsReachableOnEveryTab() {
-        listOf("Fly", "Control", "AI Modes", "Settings").forEach { tabLabel ->
+        listOf("Fly", "Control", "AI Modes", "Status", "Settings").forEach { tabLabel ->
             composeTestRule.onNodeWithText(tabLabel).performClick()
             composeTestRule.onNodeWithText("STOP / ABORT").assertExists()
         }
@@ -69,6 +69,15 @@ class GroundStationScreenTest {
         composeTestRule.onNodeWithText("Control").performClick()
         composeTestRule.onNodeWithText("Flight Control").assertExists()
         composeTestRule.onNodeWithText("ARM").assertExists()
+    }
+
+    @Test
+    fun statusTabShowsTheTelemetryDashboardAndHomeRadar() {
+        composeTestRule.onNodeWithText("Status").performClick()
+        composeTestRule.onNodeWithText("VEHICLE").assertExists()
+        composeTestRule.onNodeWithText("GPS").assertExists()
+        composeTestRule.onNodeWithText("HOME RADAR").assertExists()
+        composeTestRule.onNodeWithText("Buzzer & voice alerts").assertExists()
     }
 
     @Test

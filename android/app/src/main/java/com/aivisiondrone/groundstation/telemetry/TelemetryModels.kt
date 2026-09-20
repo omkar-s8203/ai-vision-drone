@@ -20,6 +20,29 @@ data class TelemetryState(
     // inferred (imprecisely) from lat being non-null.
     val satellitesVisible: Int? = null,
     val gpsFixType: Int? = null,
+    // From real GPS_RAW_INT.eph/epv - null on the standard 65535 "unknown"
+    // sentinel (companion/mavlink/bridge.py).
+    val hdop: Double? = null,
+    val vdop: Double? = null,
+    val homeLat: Double? = null,
+    val homeLon: Double? = null,
+    // Computed on the Pi from a real HOME_POSITION + the current GPS fix
+    // (companion/guidance/geo.py) - both null until home is known.
+    val distanceToHomeM: Double? = null,
+    val homeBearingDeg: Double? = null,
+    // From a real ATTITUDE message (degrees).
+    val rollDeg: Double? = null,
+    val pitchDeg: Double? = null,
+    val yawDeg: Double? = null,
+    // From a real VFR_HUD message.
+    val headingDeg: Double? = null,
+    val airspeedMps: Double? = null,
+    val climbMps: Double? = null,
+    val throttlePct: Int? = null,
+    // From RC_CHANNELS.rssi rescaled to 0-100% - null on the standard 255
+    // "unknown" sentinel.
+    val rcRssiPct: Int? = null,
+    val currentBatteryA: Double? = null,
 )
 
 data class HealthState(

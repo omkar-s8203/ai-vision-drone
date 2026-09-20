@@ -16,6 +16,8 @@ GPS_FC_PORT = 14726
 GPS_BRIDGE_PORT = 14727
 BATTERY_FC_PORT = 14728
 BATTERY_BRIDGE_PORT = 14729
+STATUS_FC_PORT = 14732
+STATUS_BRIDGE_PORT = 14733
 
 
 @pytest.mark.asyncio
@@ -210,6 +212,65 @@ async def test_bridge_resets_battery_voltage_on_the_unknown_sentinel():
         await wait_until(lambda: mavlink.telemetry.battery_voltage_v is not None, timeout=2.0)
         assert mavlink.telemetry.battery_voltage_v == pytest.approx(11.8, abs=1e-6)
         assert mavlink.telemetry.battery_remaining_pct == 15
+    finally:
+        fc_task.cancel()
+        mavlink_task.cancel()
+        await asyncio.gather(fc_task, mavlink_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_bridge_reflects_real_attitude_navigation_and_rc_link_fields():
+    """The Android Status tab (a QGroundControl-style telemetry dashboard,
+    added alongside a target-lock buzzer/voice alert feature) needs
+    attitude, heading/speed/climb/throttle, RC link quality, and GPS
+    dilution - none of which anything in this project parsed before. This
+    proves each is read correctly from real ATTITUDE/VFR_HUD/RC_CHANNELS/
+    GPS_RAW_INT/BATTERY_STATUS messages over real MAVLink, using pymavlink's
+    own confirmed send signatures, including the 255/65535/-1 "unknown"
+    sentinels already established elsewhere in this bridge."""
+    import math
+
+    mock_fc = MockFlightController(f"udpin:127.0.0.1:{STATUS_FC_PORT}")
+    fc_task = asyncio.create_task(mock_fc.run(rate_hz=20.0))
+
+    mavlink = MavlinkBridge(f"udpin:127.0.0.1:{STATUS_BRIDGE_PORT}")
+    mavlink.connect()
+    mavlink.prime_udp_peer("127.0.0.1", STATUS_FC_PORT)
+    mavlink_task = asyncio.create_task(mavlink.run(on_message=lambda _msg: None))
+
+    try:
+        await wait_until(lambda: mavlink.telemetry.last_heartbeat_ts is not None, timeout=3.0)
+
+        mock_fc.set_attitude(roll_rad=0.1, pitch_rad=-0.05, yaw_rad=math.pi / 2)
+        mock_fc.set_vfr_hud(heading_deg=90, airspeed_mps=3.5, climb_mps=0.8, throttle_pct=55)
+        mock_fc.set_rc_rssi(200)
+        mock_fc.set_gps_dilution(hdop_x100=120, vdop_x100=180)
+        mock_fc.set_current_battery(current_ca=1500)
+
+        # heading_deg defaults to 0 (not None) from the very first message,
+        # so "is not None" would race past the setters above before their
+        # new values are actually sent on the next loop iteration - wait for
+        # the specific value we just set instead.
+        await wait_until(lambda: mavlink.telemetry.heading_deg == 90.0, timeout=2.0)
+        assert mavlink.telemetry.roll_deg == pytest.approx(5.73, abs=0.1)
+        assert mavlink.telemetry.pitch_deg == pytest.approx(-2.86, abs=0.1)
+        assert mavlink.telemetry.yaw_deg == pytest.approx(90.0, abs=0.1)
+        assert mavlink.telemetry.heading_deg == pytest.approx(90.0, abs=1e-6)
+        assert mavlink.telemetry.airspeed_mps == pytest.approx(3.5, abs=1e-6)
+        assert mavlink.telemetry.climb_mps == pytest.approx(0.8, abs=1e-6)
+        assert mavlink.telemetry.throttle_pct == 55
+        assert mavlink.telemetry.rc_rssi_pct == pytest.approx(round(200 * 100 / 254), abs=1)
+        assert mavlink.telemetry.hdop == pytest.approx(1.2, abs=1e-6)
+        assert mavlink.telemetry.vdop == pytest.approx(1.8, abs=1e-6)
+        assert mavlink.telemetry.current_battery_a == pytest.approx(15.0, abs=1e-6)
+
+        mock_fc.set_rc_rssi(255)  # unknown sentinel
+        mock_fc.set_gps_dilution(hdop_x100=65535, vdop_x100=65535)
+        mock_fc.set_current_battery(current_ca=-1)
+        await wait_until(lambda: mavlink.telemetry.rc_rssi_pct is None, timeout=2.0)
+        assert mavlink.telemetry.hdop is None
+        assert mavlink.telemetry.vdop is None
+        assert mavlink.telemetry.current_battery_a is None
     finally:
         fc_task.cancel()
         mavlink_task.cancel()

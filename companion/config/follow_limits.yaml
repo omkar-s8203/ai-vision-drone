@@ -1,4 +1,7 @@
 max_speed_mps: 3.0
+# Floor for the Android speed slider (setFollowMaxSpeed) - never fully 0,
+# so a "slow" Follow still makes forward progress rather than stalling.
+min_speed_mps: 0.5
 max_accel_mps2: 1.5
 min_separation_m: 3.0
 max_separation_m: 15.0

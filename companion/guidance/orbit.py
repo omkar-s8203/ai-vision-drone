@@ -29,6 +29,9 @@ class OrbitController:
 
     def __init__(self, limits: dict) -> None:
         self.limits = limits
+        # See FollowController.set_max_speed()'s docstring - same ceiling
+        # capture, same reasoning.
+        self._max_speed_ceiling = limits["max_speed_mps"]
         pid_cfg = limits["pid"]
         self._distance_pid = Pid(**pid_cfg["distance"], out_limit=limits["max_speed_mps"])
         self._lateral_pid = Pid(**pid_cfg["lateral"], out_limit=1.0)  # rad/s
@@ -41,6 +44,22 @@ class OrbitController:
         self._lateral_pid.reset()
         self._vertical_pid.reset()
         self._altitude_pid.reset()
+
+    def set_max_speed(self, max_speed_mps: float) -> None:
+        """Live speed-limit update (Android speed slider) - see
+        FollowController.set_max_speed()'s docstring for the full
+        reasoning (same clamp-to-config-ceiling behavior, same need to
+        also update each PID's out_limit directly). Note this caps the
+        tangential orbit speed (vy) too, via the outer clamp in compute()
+        - a slower orbit sweeps the target more gently, not just approaches/
+        retreats more gently."""
+        clamped = max(
+            self.limits["min_speed_mps"], min(self._max_speed_ceiling, max_speed_mps)
+        )
+        self.limits["max_speed_mps"] = clamped
+        self._distance_pid.out_limit = clamped
+        self._vertical_pid.out_limit = clamped
+        self._altitude_pid.out_limit = clamped
 
     def compute(
         self,

@@ -22,6 +22,8 @@ import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.aivisiondrone.groundstation.MainViewModel
+import com.aivisiondrone.groundstation.audio.AlertSoundPlayer
 import com.aivisiondrone.groundstation.control.AbortButton
 import com.aivisiondrone.groundstation.control.LandConfirmationDialog
 import com.aivisiondrone.groundstation.ui.theme.DroneColors
@@ -39,6 +42,7 @@ import com.aivisiondrone.groundstation.ui.tabs.AiModesTab
 import com.aivisiondrone.groundstation.ui.tabs.ControlTab
 import com.aivisiondrone.groundstation.ui.tabs.FlyTab
 import com.aivisiondrone.groundstation.ui.tabs.SettingsTab
+import com.aivisiondrone.groundstation.ui.tabs.StatusTab
 import org.webrtc.EglBase
 
 /** Width above which we switch from a bottom nav bar to a side nav rail -
@@ -64,12 +68,31 @@ fun GroundStationScreen(viewModel: MainViewModel, eglBase: EglBase, context: Con
     val followAltitude by viewModel.followAltitudeM.collectAsState()
     val orbitRadius by viewModel.orbitRadiusM.collectAsState()
     val orbitAltitude by viewModel.orbitAltitudeM.collectAsState()
+    val followMaxSpeed by viewModel.followMaxSpeedMps.collectAsState()
+    val orbitMaxSpeed by viewModel.orbitMaxSpeedMps.collectAsState()
     val remoteVideoTrack by viewModel.remoteVideoTrack.collectAsState()
     val recording by viewModel.recording.collectAsState()
     val showTargetActionSheet by viewModel.showTargetActionSheet.collectAsState()
     val landConfirmationRequest by viewModel.landConfirmationRequest.collectAsState()
+    val alertsMuted by viewModel.alertsMuted.collectAsState()
 
     var selectedTab by remember { mutableStateOf(AppTab.FLY) }
+
+    // Buzzer + voice alerts for tracking/guidance state changes (target
+    // locked/lost, follow/orbit engaged, RTL, etc.) - lives at this
+    // top level, not inside a tab, so it keeps firing no matter which tab
+    // is open, same reasoning as the abort button and land-confirmation
+    // dialog below.
+    val alertSoundPlayer = remember { AlertSoundPlayer(context) }
+    DisposableEffect(Unit) {
+        onDispose { alertSoundPlayer.release() }
+    }
+    LaunchedEffect(alertsMuted) {
+        alertSoundPlayer.muted = alertsMuted
+    }
+    LaunchedEffect(Unit) {
+        viewModel.alertEvents.collect { event -> alertSoundPlayer.play(event) }
+    }
 
     // Rendered here (not inside a tab) so it's reachable no matter which
     // tab is open when target-loss recovery decides to ask, same
@@ -115,8 +138,17 @@ fun GroundStationScreen(viewModel: MainViewModel, eglBase: EglBase, context: Con
                     followAltitudeM = followAltitude,
                     orbitRadiusM = orbitRadius,
                     orbitAltitudeM = orbitAltitude,
+                    followMaxSpeedMps = followMaxSpeed,
+                    orbitMaxSpeedMps = orbitMaxSpeed,
                     tracking = tracking,
                     detections = detections,
+                    modifier = contentModifier,
+                )
+                AppTab.STATUS -> StatusTab(
+                    telemetry = telemetry,
+                    health = health,
+                    alertsMuted = alertsMuted,
+                    onSetAlertsMuted = { viewModel.setAlertsMuted(it) },
                     modifier = contentModifier,
                 )
                 AppTab.SETTINGS -> SettingsTab(

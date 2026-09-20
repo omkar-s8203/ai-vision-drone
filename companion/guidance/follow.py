@@ -24,6 +24,12 @@ class FollowController:
 
     def __init__(self, limits: dict) -> None:
         self.limits = limits
+        # The config's max_speed_mps is the safety-vetted hard ceiling -
+        # set_max_speed() (the Android speed slider) can only ever dial
+        # speed down from it, never raise it past what's in the YAML.
+        # Captured here because set_max_speed() overwrites limits["max_speed_mps"]
+        # itself to apply a live cap.
+        self._max_speed_ceiling = limits["max_speed_mps"]
         pid_cfg = limits["pid"]
         self._distance_pid = Pid(**pid_cfg["distance"], out_limit=limits["max_speed_mps"])
         self._lateral_pid = Pid(**pid_cfg["lateral"], out_limit=1.0)  # rad/s
@@ -36,6 +42,23 @@ class FollowController:
         self._lateral_pid.reset()
         self._vertical_pid.reset()
         self._altitude_pid.reset()
+
+    def set_max_speed(self, max_speed_mps: float) -> None:
+        """Live speed-limit update (Android speed slider). Clamped to
+        [min_speed_mps, the configured max_speed_mps ceiling] - the app can
+        only make the drone slower than its safety-vetted config ceiling
+        for extra caution, never faster than it from a phone mid-flight.
+        Also updates each PID's own out_limit directly: that's baked in at
+        construction time, so just mutating limits["max_speed_mps"] alone
+        would silently keep every PID capped at the old value while only
+        the outer per-axis clamp in compute() actually saw the new one."""
+        clamped = max(
+            self.limits["min_speed_mps"], min(self._max_speed_ceiling, max_speed_mps)
+        )
+        self.limits["max_speed_mps"] = clamped
+        self._distance_pid.out_limit = clamped
+        self._vertical_pid.out_limit = clamped
+        self._altitude_pid.out_limit = clamped
 
     def compute(
         self,

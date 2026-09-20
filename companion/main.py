@@ -24,7 +24,7 @@ from companion.config.loader import load_yaml
 from companion.guidance.approach_test import ApproachInputs, ApproachTestController
 from companion.guidance.distance import CameraIntrinsics, DistanceEstimator
 from companion.guidance.follow import FollowController
-from companion.guidance.geo import haversine_distance_m
+from companion.guidance.geo import bearing_deg, haversine_distance_m
 from companion.guidance.orbit import OrbitController
 from companion.guidance.smart_shot import ShotType, SmartShotController, SmartShotState
 from companion.guidance.target_recovery import RecoveryPhase, TargetRecoveryController
@@ -201,6 +201,12 @@ class CompanionOrchestrator:
         orbit_altitude = payload.get("orbit_altitude_m")
         if orbit_altitude is not None:
             self.orbit.limits["target_altitude_m"] = float(orbit_altitude)
+        follow_max_speed = payload.get("follow_max_speed_mps")
+        if follow_max_speed is not None:
+            self.follow.set_max_speed(float(follow_max_speed))
+        orbit_max_speed = payload.get("orbit_max_speed_mps")
+        if orbit_max_speed is not None:
+            self.orbit.set_max_speed(float(orbit_max_speed))
         self.recorder.record(
             "mode_command",
             mode=mode.name,
@@ -208,6 +214,8 @@ class CompanionOrchestrator:
             follow_altitude_m=altitude,
             orbit_radius_m=orbit_radius,
             orbit_altitude_m=orbit_altitude,
+            follow_max_speed_mps=follow_max_speed,
+            orbit_max_speed_mps=orbit_max_speed,
         )
 
     def _on_abort(self, payload: dict) -> None:
@@ -371,11 +379,7 @@ class CompanionOrchestrator:
             self.mavlink.request_home_position()
         self._was_armed = armed_now
 
-        distance_to_home_m = None
-        home_lat, home_lon = self.mavlink.telemetry.home_lat, self.mavlink.telemetry.home_lon
-        cur_lat, cur_lon = self.mavlink.telemetry.lat, self.mavlink.telemetry.lon
-        if None not in (home_lat, home_lon, cur_lat, cur_lon):
-            distance_to_home_m = haversine_distance_m(home_lat, home_lon, cur_lat, cur_lon)
+        distance_to_home_m, _home_bearing_deg = self._distance_and_bearing_to_home()
 
         # Target-loss recovery (docs/safety-case.md): only engages for
         # Follow/Orbit, which is what's actually driving the aircraft
@@ -586,8 +590,22 @@ class CompanionOrchestrator:
             "command_sent": sent,
         }
 
+    def _distance_and_bearing_to_home(self) -> tuple[Optional[float], Optional[float]]:
+        """Real geodesy off HOME_POSITION + the current GPS fix - both None
+        until home is known (see request_home_position()) and a fix exists.
+        Shared by the target-recovery RTL-vs-land estimate and the Status
+        tab's telemetry payload/home-radar widget so there's one source of
+        truth instead of two computations that could drift apart."""
+        t = self.mavlink.telemetry
+        if None in (t.home_lat, t.home_lon, t.lat, t.lon):
+            return None, None
+        distance_m = haversine_distance_m(t.home_lat, t.home_lon, t.lat, t.lon)
+        bearing = bearing_deg(t.lat, t.lon, t.home_lat, t.home_lon)
+        return distance_m, bearing
+
     def _build_telemetry_payload(self) -> dict:
         t = self.mavlink.telemetry
+        distance_to_home_m, home_bearing_deg = self._distance_and_bearing_to_home()
         return {
             "fc_mode": t.fc_mode,
             "armed": t.armed,
@@ -597,10 +615,25 @@ class CompanionOrchestrator:
             "groundspeed_mps": t.groundspeed_mps,
             "battery_voltage_v": t.battery_voltage_v,
             "battery_remaining_pct": t.battery_remaining_pct,
+            "current_battery_a": t.current_battery_a,
             "fence_enabled": t.fence_enabled,
             "fence_breached": t.fence_breached,
             "satellites_visible": t.satellites_visible,
             "gps_fix_type": t.gps_fix_type,
+            "hdop": t.hdop,
+            "vdop": t.vdop,
+            "home_lat": t.home_lat,
+            "home_lon": t.home_lon,
+            "distance_to_home_m": distance_to_home_m,
+            "home_bearing_deg": home_bearing_deg,
+            "roll_deg": t.roll_deg,
+            "pitch_deg": t.pitch_deg,
+            "yaw_deg": t.yaw_deg,
+            "heading_deg": t.heading_deg,
+            "airspeed_mps": t.airspeed_mps,
+            "climb_mps": t.climb_mps,
+            "throttle_pct": t.throttle_pct,
+            "rc_rssi_pct": t.rc_rssi_pct,
         }
 
     def _current_fps(self) -> Optional[float]:

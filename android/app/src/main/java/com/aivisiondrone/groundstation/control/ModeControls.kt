@@ -43,6 +43,14 @@ enum class DroneMode(val wireValue: String, val label: String) {
     PARABOLA("parabola", "Parabola"),
 }
 
+// Mirrors follow_limits.yaml/orbit_limits.yaml's min_speed_mps/max_speed_mps -
+// the slider's own range must match the server-side floor/ceiling
+// (FollowController/OrbitController.set_max_speed both clamp to this same
+// range regardless of what the slider sends, but a mismatched UI range
+// would be misleading about what's actually achievable).
+private const val MIN_SPEED_MPS = 0.5f
+private const val MAX_SPEED_MPS = 3.0f
+
 @Composable
 fun ModeControls(
     currentMode: DroneMode,
@@ -50,11 +58,15 @@ fun ModeControls(
     followAltitudeM: Float,
     orbitRadiusM: Float,
     orbitAltitudeM: Float,
+    followMaxSpeedMps: Float,
+    orbitMaxSpeedMps: Float,
     onModeSelected: (DroneMode) -> Unit,
     onFollowSeparationChanged: (Float) -> Unit,
     onFollowAltitudeChanged: (Float) -> Unit,
     onOrbitRadiusChanged: (Float) -> Unit,
     onOrbitAltitudeChanged: (Float) -> Unit,
+    onFollowMaxSpeedChanged: (Float) -> Unit,
+    onOrbitMaxSpeedChanged: (Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Card(
@@ -113,6 +125,14 @@ fun ModeControls(
                     onValueChange = onFollowAltitudeChanged,
                     valueRange = 2f..30f,
                 )
+                Spacer(modifier = Modifier.height(12.dp))
+                LabeledSlider(
+                    label = "Speed",
+                    valueText = "${"%.1f".format(followMaxSpeedMps)} m/s",
+                    value = followMaxSpeedMps,
+                    onValueChange = onFollowMaxSpeedChanged,
+                    valueRange = MIN_SPEED_MPS..MAX_SPEED_MPS,
+                )
             }
             if (currentMode == DroneMode.ORBITING) {
                 LabeledSlider(
@@ -129,6 +149,14 @@ fun ModeControls(
                     value = orbitAltitudeM,
                     onValueChange = onOrbitAltitudeChanged,
                     valueRange = 2f..30f,
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                LabeledSlider(
+                    label = "Speed",
+                    valueText = "${"%.1f".format(orbitMaxSpeedMps)} m/s",
+                    value = orbitMaxSpeedMps,
+                    onValueChange = onOrbitMaxSpeedChanged,
+                    valueRange = MIN_SPEED_MPS..MAX_SPEED_MPS,
                 )
             }
         }

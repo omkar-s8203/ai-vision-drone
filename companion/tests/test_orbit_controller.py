@@ -1,3 +1,5 @@
+import pytest
+
 from companion.config.loader import load_yaml
 from companion.guidance.orbit import OrbitController
 from companion.tracking.base import TrackedTarget
@@ -102,3 +104,32 @@ def test_altitude_hold_climbs_when_below_target_altitude():
         dt=0.1, current_altitude_m=5.0,
     )
     assert cmd.vz_mps < 0  # NED: negative = climb
+
+
+def test_set_max_speed_actually_lowers_the_pid_internal_cap():
+    """See FollowController's identical test for the real bug this guards
+    against - each PID's out_limit is baked in at construction, so a naive
+    dict-only update would leave it stuck at the old (higher) value."""
+    limits = load_yaml("orbit_limits.yaml")
+    controller = OrbitController(limits)
+    controller.set_max_speed(1.0)
+    assert limits["max_speed_mps"] == 1.0
+    target = make_target(IMAGE_W / 2, IMAGE_H / 2)
+    cmd = controller.compute(target, distance_m=1000.0, image_width=IMAGE_W, image_height=IMAGE_H, dt=0.1)
+    assert cmd.vx_mps == pytest.approx(1.0)
+
+
+def test_set_max_speed_cannot_exceed_the_configured_ceiling():
+    limits = load_yaml("orbit_limits.yaml")
+    ceiling = limits["max_speed_mps"]
+    controller = OrbitController(limits)
+    controller.set_max_speed(ceiling + 50.0)
+    assert limits["max_speed_mps"] == ceiling
+
+
+def test_set_max_speed_cannot_go_below_the_configured_floor():
+    limits = load_yaml("orbit_limits.yaml")
+    floor = limits["min_speed_mps"]
+    controller = OrbitController(limits)
+    controller.set_max_speed(-5.0)
+    assert limits["max_speed_mps"] == floor

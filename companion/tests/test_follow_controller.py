@@ -1,3 +1,5 @@
+import pytest
+
 from companion.config.loader import load_yaml
 from companion.guidance.follow import FollowController
 from companion.tracking.base import TrackedTarget
@@ -112,3 +114,40 @@ def test_no_altitude_configured_uses_pixel_framing_by_default():
         dt=0.1, current_altitude_m=100.0,  # ignored since target_altitude_m is unset
     )
     assert cmd.vz_mps == 0.0
+
+
+def test_set_max_speed_actually_lowers_the_pid_internal_cap():
+    """A real bug this test guards against: each PID's out_limit is baked
+    in at construction from the initial max_speed_mps - naively mutating
+    limits["max_speed_mps"] alone (like the live separation/altitude
+    updates do) would leave the PID's own internal clamp stuck at the old
+    value, so only the redundant outer clamp in compute() would ever see
+    the new number. This drives the distance error hard enough that the
+    PID itself (not just the outer clamp) would saturate, and checks the
+    lowered cap is actually respected."""
+    limits = load_yaml("follow_limits.yaml")
+    controller = FollowController(limits)
+    controller.set_max_speed(1.0)
+    assert limits["max_speed_mps"] == 1.0
+    target = make_target(IMAGE_W / 2, IMAGE_H / 2)
+    cmd = controller.compute(target, distance_m=1000.0, image_width=IMAGE_W, image_height=IMAGE_H, dt=0.1)
+    assert cmd.vx_mps == pytest.approx(1.0)
+
+
+def test_set_max_speed_cannot_exceed_the_configured_ceiling():
+    """The Android speed slider must only ever dial speed DOWN from the
+    safety-vetted config ceiling, never up past it from a phone
+    mid-flight - a request above the ceiling is clamped, not honored."""
+    limits = load_yaml("follow_limits.yaml")
+    ceiling = limits["max_speed_mps"]
+    controller = FollowController(limits)
+    controller.set_max_speed(ceiling + 50.0)
+    assert limits["max_speed_mps"] == ceiling
+
+
+def test_set_max_speed_cannot_go_below_the_configured_floor():
+    limits = load_yaml("follow_limits.yaml")
+    floor = limits["min_speed_mps"]
+    controller = FollowController(limits)
+    controller.set_max_speed(-5.0)
+    assert limits["max_speed_mps"] == floor

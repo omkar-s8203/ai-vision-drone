@@ -272,6 +272,60 @@ reassuring at exactly the moment the reading is least trustworthy. Now
 uses one consistent fallback (`"--"`, neutral color), matching how
 SAT/ALT/SPD already handle missing data elsewhere on the same HUD.
 
+**New: a fifth tab, `ui/tabs/StatusTab.kt`** - a full QGroundControl-style
+MAVLink telemetry dashboard (Vehicle/Position/GPS/Attitude/Navigation/
+Battery/RC Input/Health cards), plus a live "home radar" compass widget
+(cyan needle = the aircraft's own heading from a real `VFR_HUD` message,
+red needle = the real computed bearing toward home). Every field is real,
+newly-wired MAVLink data, not a placeholder - `companion/mavlink/bridge.py`
+gained parsing for `ATTITUDE` (roll/pitch/yaw), `VFR_HUD` (heading/airspeed/
+climb/throttle), `RC_CHANNELS.rssi`, `GPS_RAW_INT.eph`/`epv` (HDOP/VDOP), and
+`BATTERY_STATUS.current_battery`; `companion/guidance/geo.py` gained a
+`bearing_deg()` alongside the existing `haversine_distance_m()` so
+`distance_to_home_m`/`home_bearing_deg` are computed once and shared between
+the Status tab and the target-recovery RTL-vs-land estimate. Mission/ADS-B
+cards from a typical QGC layout are deliberately left out - this app has
+neither feature, and showing a permanently-empty card for something that
+doesn't exist isn't "status," it's clutter. Verified with a new real
+MAVLink loopback test against the mock FC
+(`test_bridge_reflects_real_attitude_navigation_and_rc_link_fields`) and a
+clean `gradle assembleDebug`; not yet confirmed against a real FC's actual
+output for these new message types.
+
+**New: buzzer + voice alerts** (`audio/AlertEvent.kt`,
+`audio/AlertSoundPlayer.kt`) - a short tone (`ToneGenerator`) immediately
+followed by a spoken line (`TextToSpeech`, e.g. "Target locked", "Target
+lost", "Following target", "Returning home") on real tracking/guidance
+state transitions, so an operator whose eyes are on the aircraft still
+knows what it just did. Strictly edge-triggered in `MainViewModel` (fires
+once per real transition - target acquired/lost, Follow/Orbit/Search
+engaged, a forced safety stop, an autonomous RTL inferred from a real
+`fc_mode` change, a geofence breach, a land-confirmation prompt - never
+once per telemetry frame, since most of these fields are otherwise re-sent
+unchanged on every tick). A mute switch lives on the new Status tab.
+Build-verified; not yet heard on a physical device this round.
+
+**New: a live speed slider for Follow/Orbit** (`ModeControls.kt`) - the
+same live-update pattern as the existing separation/altitude/radius
+sliders, sending `follow_max_speed_mps`/`orbit_max_speed_mps` on
+`mode_command`. On the Pi side, `FollowController.set_max_speed()`/
+`OrbitController.set_max_speed()` (`companion/guidance/follow.py`,
+`companion/guidance/orbit.py`) clamp the request to
+`[min_speed_mps, the configured max_speed_mps ceiling]` from
+`follow_limits.yaml`/`orbit_limits.yaml` - the slider can only ever make
+the drone *slower* than its safety-vetted config ceiling, never faster
+than it from a phone mid-flight (raising the actual ceiling requires
+editing config and is deliberately not an in-flight control). **Fixed a
+real bug before it shipped**: each guidance PID's own `out_limit` is baked
+in at construction from the initial `max_speed_mps` - naively mutating the
+limits dict alone (like the separation/altitude live-updates do) would
+have left every PID's internal clamp stuck at the old value, so raising
+the slider would have silently done nothing while lowering it would have
+"worked" only because the separate outer clamp happened to be more
+restrictive. `set_max_speed()` updates each PID's `out_limit` directly,
+caught by a new test that drives the PID hard enough to saturate on its
+own, not just the outer clamp. Build-verified.
+
 ## Layout
 
 ```
@@ -300,15 +354,21 @@ app/src/main/java/com/aivisiondrone/groundstation/
                 safety), RecordButton.kt (local video record toggle),
                 AbortButton.kt
   telemetry/    TelemetryModels.kt, TelemetryPanel.kt, HealthPanel.kt
+  audio/        AlertEvent.kt (edge-triggered tracking/guidance state-change
+                events), AlertSoundPlayer.kt (ToneGenerator beep +
+                TextToSpeech voice line per event, STREAM_MUSIC)
   ui/           GroundStationScreen.kt (Scaffold + bottom nav/side rail
                 host), AppTab.kt, LinkStatusChip.kt,
                 theme/Theme.kt (dark ground-control color scheme)
   ui/tabs/      FlyTab.kt (video + overlays + quick action sheet + the
                 main-screen RecordButton), ControlTab.kt (FlightControlDock,
                 full screen), AiModesTab.kt (ModeControls + live detections
-                list), SettingsTab.kt (Pi host/port connection, persisted
+                list), StatusTab.kt (full MAVLink telemetry dashboard + the
+                live home-radar compass widget + alerts mute switch),
+                SettingsTab.kt (Pi host/port connection, persisted
                 to SharedPreferences)
-  MainActivity.kt, MainViewModel.kt (MVVM glue)
+  MainActivity.kt, MainViewModel.kt (MVVM glue, incl. alert-event
+  edge-detection off telemetry/tracking_update transitions)
 
 app/src/androidTest/java/com/aivisiondrone/groundstation/
   GroundStationScreenTest.kt (instrumented Compose UI tests - abort

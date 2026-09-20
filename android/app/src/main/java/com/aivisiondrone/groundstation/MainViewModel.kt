@@ -3,6 +3,7 @@ package com.aivisiondrone.groundstation
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aivisiondrone.groundstation.audio.AlertEvent
 import com.aivisiondrone.groundstation.comms.Envelope
 import com.aivisiondrone.groundstation.comms.GroundStationClient
 import com.aivisiondrone.groundstation.comms.MessageType
@@ -22,7 +23,9 @@ import com.aivisiondrone.groundstation.video.LocalVideoRecorder
 import com.aivisiondrone.groundstation.video.WebRtcClient
 import com.aivisiondrone.groundstation.comms.LinkState
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -35,6 +38,10 @@ private const val RECONNECT_DELAY_MS = 3000L
 // SupervisorState names - see the TRACKING_UPDATE handling below.
 private val SAFE_OR_IDLE_STATES = setOf("IDLE", "SAFE")
 private val ONE_SHOT_MODES = setOf(DroneMode.DRONIE, DroneMode.PARABOLA)
+
+// Supervisor states that were actively driving the aircraft - used to tell
+// a real forced-SAFE (guidance was running, now isn't) from just idling.
+private val ACTIVE_GUIDANCE_STATES = setOf("FOLLOWING", "ORBITING", "APPROACHING", "SEARCHING", "SMART_SHOT")
 
 /**
  * Ties the WebSocket control/telemetry channel and the WebRTC video channel
@@ -82,6 +89,15 @@ class MainViewModel : ViewModel() {
     private val _orbitAltitudeM = MutableStateFlow(10f)
     val orbitAltitudeM = _orbitAltitudeM.asStateFlow()
 
+    // Defaults match follow_limits.yaml/orbit_limits.yaml's max_speed_mps
+    // ceiling - the slider starts at "full speed" and only ever dials
+    // down from there (see FollowController/OrbitController.set_max_speed).
+    private val _followMaxSpeedMps = MutableStateFlow(3f)
+    val followMaxSpeedMps = _followMaxSpeedMps.asStateFlow()
+
+    private val _orbitMaxSpeedMps = MutableStateFlow(3f)
+    val orbitMaxSpeedMps = _orbitMaxSpeedMps.asStateFlow()
+
     private val _recording = MutableStateFlow(RecordingState())
     val recording = _recording.asStateFlow()
 
@@ -92,6 +108,21 @@ class MainViewModel : ViewModel() {
 
     private val _remoteVideoTrack = MutableStateFlow<VideoTrack?>(null)
     val remoteVideoTrack = _remoteVideoTrack.asStateFlow()
+
+    /** Edge-triggered tracking/guidance state-change events for the buzzer/
+     * voice alert system (see audio/AlertSoundPlayer.kt) - each fires once
+     * per real transition, not once per telemetry frame. Buffered (not
+     * conflated) so two alerts arriving in the same frame (e.g. target
+     * lost + search started) both reach the collector. */
+    private val _alertEvents = MutableSharedFlow<AlertEvent>(extraBufferCapacity = 8)
+    val alertEvents = _alertEvents.asSharedFlow()
+
+    private val _alertsMuted = MutableStateFlow(false)
+    val alertsMuted = _alertsMuted.asStateFlow()
+
+    fun setAlertsMuted(muted: Boolean) {
+        _alertsMuted.value = muted
+    }
 
     init {
         viewModelScope.launch {
@@ -164,7 +195,12 @@ class MainViewModel : ViewModel() {
         val followAltitude = if (newMode == DroneMode.FOLLOWING) _followAltitudeM.value.toDouble() else null
         val orbitRadius = if (newMode == DroneMode.ORBITING) _orbitRadiusM.value.toDouble() else null
         val orbitAltitude = if (newMode == DroneMode.ORBITING) _orbitAltitudeM.value.toDouble() else null
-        client.sendModeCommand(newMode.wireValue, separation, followAltitude, orbitRadius, orbitAltitude)
+        val followMaxSpeed = if (newMode == DroneMode.FOLLOWING) _followMaxSpeedMps.value.toDouble() else null
+        val orbitMaxSpeed = if (newMode == DroneMode.ORBITING) _orbitMaxSpeedMps.value.toDouble() else null
+        client.sendModeCommand(
+            newMode.wireValue, separation, followAltitude, orbitRadius, orbitAltitude,
+            followMaxSpeed, orbitMaxSpeed,
+        )
     }
 
     /** Chooses an action from the quick action sheet after a tap-select -
@@ -207,6 +243,24 @@ class MainViewModel : ViewModel() {
                 DroneMode.ORBITING.wireValue, orbitRadiusM = _orbitRadiusM.value.toDouble(),
                 orbitAltitudeM = meters.toDouble(),
             )
+        }
+    }
+
+    /** The speed slider - clamped server-side to [min_speed_mps, the
+     * configured max_speed_mps ceiling] (FollowController.set_max_speed),
+     * so this can only ever make the drone slower than its safety-vetted
+     * config ceiling, never faster. */
+    fun setFollowMaxSpeed(metersPerSecond: Float) {
+        _followMaxSpeedMps.value = metersPerSecond
+        if (_mode.value == DroneMode.FOLLOWING) {
+            client.sendModeCommand(DroneMode.FOLLOWING.wireValue, followMaxSpeedMps = metersPerSecond.toDouble())
+        }
+    }
+
+    fun setOrbitMaxSpeed(metersPerSecond: Float) {
+        _orbitMaxSpeedMps.value = metersPerSecond
+        if (_mode.value == DroneMode.ORBITING) {
+            client.sendModeCommand(DroneMode.ORBITING.wireValue, orbitMaxSpeedMps = metersPerSecond.toDouble())
         }
     }
 
@@ -273,7 +327,12 @@ class MainViewModel : ViewModel() {
 
     private fun handleEnvelope(envelope: Envelope) {
         when (envelope.type) {
-            MessageType.TELEMETRY -> _telemetry.value = parseTelemetry(envelope.payload)
+            MessageType.TELEMETRY -> {
+                val previous = _telemetry.value
+                val parsed = parseTelemetry(envelope.payload)
+                emitTelemetryAlerts(previous, parsed)
+                _telemetry.value = parsed
+            }
             MessageType.HEALTH -> {
                 val health = parseHealth(envelope.payload)
                 _health.value = health
@@ -285,7 +344,9 @@ class MainViewModel : ViewModel() {
                 }
             }
             MessageType.TRACKING_UPDATE -> {
+                val previous = _tracking.value
                 val parsed = parseTracking(envelope.payload)
+                emitTrackingAlerts(previous, parsed)
                 _tracking.value = parsed
                 // A Dronie/Parabola smart shot stops itself on the Pi side
                 // once its fixed duration elapses (companion/main.py resets
@@ -301,12 +362,15 @@ class MainViewModel : ViewModel() {
                 }
             }
             MessageType.DETECTIONS_UPDATE -> _detections.value = parseDetections(envelope.payload)
-            MessageType.LAND_CONFIRMATION_REQUEST -> _landConfirmationRequest.value = LandConfirmationRequest(
-                distanceToHomeM = envelope.payload.optDoubleOrNull("distance_to_home_m"),
-                batteryRemainingPct = envelope.payload.optIntOrNull("battery_remaining_pct"),
-                obstacleDetected = envelope.payload.optBoolean("obstacle_detected", false),
-                obstacleClassName = envelope.payload.optStringOrNull("obstacle_class_name"),
-            )
+            MessageType.LAND_CONFIRMATION_REQUEST -> {
+                _landConfirmationRequest.value = LandConfirmationRequest(
+                    distanceToHomeM = envelope.payload.optDoubleOrNull("distance_to_home_m"),
+                    batteryRemainingPct = envelope.payload.optIntOrNull("battery_remaining_pct"),
+                    obstacleDetected = envelope.payload.optBoolean("obstacle_detected", false),
+                    obstacleClassName = envelope.payload.optStringOrNull("obstacle_class_name"),
+                )
+                _alertEvents.tryEmit(AlertEvent.LAND_CONFIRMATION_NEEDED)
+            }
             MessageType.RECORDING_STATE -> _recording.value = RecordingState(
                 recording = envelope.payload.optBoolean("recording", false),
                 durationS = envelope.payload.optDoubleOrNull("duration_s") ?: 0.0,
@@ -330,7 +394,63 @@ class MainViewModel : ViewModel() {
         fenceBreached = p.optBoolean("fence_breached", false),
         satellitesVisible = p.optIntOrNull("satellites_visible"),
         gpsFixType = p.optIntOrNull("gps_fix_type"),
+        hdop = p.optDoubleOrNull("hdop"),
+        vdop = p.optDoubleOrNull("vdop"),
+        homeLat = p.optDoubleOrNull("home_lat"),
+        homeLon = p.optDoubleOrNull("home_lon"),
+        distanceToHomeM = p.optDoubleOrNull("distance_to_home_m"),
+        homeBearingDeg = p.optDoubleOrNull("home_bearing_deg"),
+        rollDeg = p.optDoubleOrNull("roll_deg"),
+        pitchDeg = p.optDoubleOrNull("pitch_deg"),
+        yawDeg = p.optDoubleOrNull("yaw_deg"),
+        headingDeg = p.optDoubleOrNull("heading_deg"),
+        airspeedMps = p.optDoubleOrNull("airspeed_mps"),
+        climbMps = p.optDoubleOrNull("climb_mps"),
+        throttlePct = p.optIntOrNull("throttle_pct"),
+        rcRssiPct = p.optIntOrNull("rc_rssi_pct"),
+        currentBatteryA = p.optDoubleOrNull("current_battery_a"),
     )
+
+    /** Fires buzzer/voice events off real fc_mode/fence transitions - an
+     * autonomous RTL is a direct FC mode change (companion/main.py's
+     * target-recovery path), not its own wire message, so "just entered
+     * RTL" is inferred from the mode change itself. The `previous.flightMode
+     * != null` guard stops a spurious RTL_TRIGGERED firing if the FC simply
+     * happens to already be in RTL when the app first connects. */
+    private fun emitTelemetryAlerts(previous: TelemetryState, current: TelemetryState) {
+        if (current.flightMode == "RTL" && previous.flightMode != null && previous.flightMode != "RTL") {
+            _alertEvents.tryEmit(AlertEvent.RTL_TRIGGERED)
+        }
+        if (current.fenceBreached && !previous.fenceBreached) {
+            _alertEvents.tryEmit(AlertEvent.FENCE_BREACHED)
+        }
+    }
+
+    /** Fires buzzer/voice events off real tracking-lifecycle (state) and
+     * guidance (supervisorState) transitions - each only on a genuine edge,
+     * not every frame, since both fields are otherwise re-sent unchanged on
+     * every telemetry tick. REACQUIRE (a brief, by-design transient state)
+     * deliberately does not fire its own alert. */
+    private fun emitTrackingAlerts(previous: TrackingState, current: TrackingState) {
+        if (current.state == "TRACKING" && previous.state != "TRACKING") {
+            _alertEvents.tryEmit(AlertEvent.TARGET_LOCKED)
+        } else if (current.state == "TARGET_LOST" && previous.state != "TARGET_LOST") {
+            _alertEvents.tryEmit(AlertEvent.TARGET_LOST)
+        }
+
+        val prevSupervisor = previous.supervisorState
+        val currentSupervisor = current.supervisorState
+        if (currentSupervisor != prevSupervisor) {
+            when (currentSupervisor) {
+                "FOLLOWING" -> _alertEvents.tryEmit(AlertEvent.FOLLOWING_ENGAGED)
+                "ORBITING" -> _alertEvents.tryEmit(AlertEvent.ORBITING_ENGAGED)
+                "SEARCHING" -> _alertEvents.tryEmit(AlertEvent.SEARCHING_STARTED)
+                "SAFE" -> if (prevSupervisor in ACTIVE_GUIDANCE_STATES) {
+                    _alertEvents.tryEmit(AlertEvent.GUIDANCE_STOPPED)
+                }
+            }
+        }
+    }
 
     private fun parseHealth(p: JSONObject) = HealthState(
         piOk = p.optBoolean("pi_ok", false),

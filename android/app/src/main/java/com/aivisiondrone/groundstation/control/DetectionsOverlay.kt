@@ -1,15 +1,17 @@
 package com.aivisiondrone.groundstation.control
 
 import android.graphics.Paint
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import com.aivisiondrone.groundstation.telemetry.DetectionsState
@@ -23,6 +25,16 @@ import com.aivisiondrone.groundstation.ui.theme.DroneColors
  */
 @Composable
 fun DetectionsOverlay(detections: DetectionsState, modifier: Modifier = Modifier) {
+    val alpha = remember { Animatable(0f) }
+    
+    LaunchedEffect(detections.detections.isNotEmpty()) {
+        if (detections.detections.isNotEmpty()) {
+            alpha.animateTo(1f, animationSpec = tween(400))
+        } else {
+            alpha.animateTo(0f, animationSpec = tween(400))
+        }
+    }
+
     val srcWidth = detections.imageWidth
     val srcHeight = detections.imageHeight
     val labelPaint = remember {
@@ -43,7 +55,7 @@ fun DetectionsOverlay(detections: DetectionsState, modifier: Modifier = Modifier
             val boxSize = Size((det.bbox.w * scaleX).toFloat(), (det.bbox.h * scaleY).toFloat())
             
             // Minimal detection corners
-            val color = DroneColors.Accent.copy(alpha = 0.6f)
+            val color = DroneColors.Accent.copy(alpha = 0.6f * alpha.value)
             val stroke = 1.5f
             val cornerLen = 12f
             
@@ -61,11 +73,12 @@ fun DetectionsOverlay(detections: DetectionsState, modifier: Modifier = Modifier
             val bottomRight = topLeft.copy(x = topLeft.x + boxSize.width, y = topLeft.y + boxSize.height)
             drawLine(color, bottomRight, bottomRight.copy(x = bottomRight.x - cornerLen), stroke)
             drawLine(color, bottomRight, bottomRight.copy(y = bottomRight.y - cornerLen), stroke)
+            
             drawContext.canvas.nativeCanvas.drawText(
                 "${det.className} ${(det.score * 100).toInt()}%",
                 topLeft.x,
                 (topLeft.y - 6f).coerceAtLeast(20f),
-                labelPaint,
+                labelPaint.apply { this.alpha = (255 * alpha.value).toInt() },
             )
         }
     }

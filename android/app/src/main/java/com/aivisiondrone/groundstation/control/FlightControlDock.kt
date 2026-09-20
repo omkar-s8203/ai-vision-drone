@@ -86,15 +86,20 @@ fun FlightControlDock(
                 onClick = { if (armed) onArmChanged(false) else showArmConfirm = true },
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (armed) DroneColors.Danger else DroneColors.SurfaceElevated,
-                    contentColor = if (armed) Color.White else DroneColors.TextPrimary,
+                    containerColor = if (armed) DroneColors.Danger else DroneColors.Accent,
+                    contentColor = if (armed) Color.White else Color.Black,
                 ),
                 modifier = Modifier.fillMaxWidth().height(50.dp),
             ) {
-                Icon(Icons.Filled.FlightTakeoff, contentDescription = null, modifier = Modifier.size(20.dp))
+                Icon(
+                    Icons.Filled.FlightTakeoff, 
+                    contentDescription = null, 
+                    modifier = Modifier.size(20.dp),
+                    tint = if (armed) Color.White else Color.Black
+                )
                 Text(
                     text = if (armed) "DISARM" else "ARM",
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.Black,
                     modifier = Modifier.padding(start = 8.dp)
                 )
             }

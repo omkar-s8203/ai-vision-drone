@@ -1,16 +1,30 @@
 package com.aivisiondrone.groundstation.ui.tabs
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import android.content.Context
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -26,11 +40,15 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.viewinterop.AndroidView
 import com.aivisiondrone.groundstation.MainViewModel
+import com.aivisiondrone.groundstation.R
+import com.aivisiondrone.groundstation.comms.LinkState
 import com.aivisiondrone.groundstation.control.DetectionsOverlay
 import com.aivisiondrone.groundstation.control.DroneMode
 import com.aivisiondrone.groundstation.control.GuidanceCommandPanel
@@ -47,7 +65,6 @@ import com.aivisiondrone.groundstation.telemetry.TelemetryPanel
 import com.aivisiondrone.groundstation.telemetry.TelemetryState
 import com.aivisiondrone.groundstation.telemetry.TrackingState
 import com.aivisiondrone.groundstation.ui.LinkStatusChip
-import com.aivisiondrone.groundstation.comms.LinkState
 import com.aivisiondrone.groundstation.ui.theme.DroneColors
 import org.webrtc.EglBase
 import org.webrtc.SurfaceViewRenderer
@@ -149,42 +166,95 @@ fun FlyTab(
         )
 
         // TOP BAR HUD
-        Row(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.8f), Color.Transparent)))
-                .padding(horizontal = 20.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Top
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                HealthPanel(health = health)
-                LinkStatusChip(linkState = linkState)
-            }
-            
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                // gpsFixType follows MAV_GPS_FIX_TYPE (3+ = 3D fix or better) -
-                // the real, authoritative signal from GPS_RAW_INT, not an
-                // inferred proxy from lat being non-null (a stale/degraded
-                // fix can still report a non-null last-known position).
-                val hasFix = (telemetry.gpsFixType ?: 0) >= 3
-                HUDTelemetryItem(label = "GPS", value = if (hasFix) "FIX" else "NO FIX", color = if (hasFix) DroneColors.Safe else DroneColors.Danger)
-                HUDTelemetryItem(label = "SAT", value = telemetry.satellitesVisible?.toString() ?: "--", color = DroneColors.TextPrimary)
-                // Previously used two different fallbacks for the same null
-                // field (0 for the displayed text, 100 for the color check),
-                // so "no telemetry yet" rendered as a self-contradictory
-                // "0% BAT" in Safe/green. Missing data now reads "--" in a
-                // neutral color, matching SAT/ALT/SPD elsewhere.
-                val batteryPct = telemetry.batteryRemainingPct
-                HUDTelemetryItem(
-                    label = "BAT",
-                    value = batteryPct?.let { "$it%" } ?: "--",
-                    color = when {
-                        batteryPct == null -> DroneColors.TextPrimary
-                        batteryPct < 20 -> DroneColors.Danger
-                        else -> DroneColors.Safe
-                    },
+                .background(
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        0f to Color.Black.copy(alpha = 0.95f),
+                        0.8f to Color.Black.copy(alpha = 0.6f),
+                        1f to Color.Transparent
+                    )
                 )
+                .statusBarsPadding()
+                .padding(horizontal = 24.dp, vertical = 14.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Image(
+                            painter = painterResource(id = R.drawable.app_logo),
+                            contentDescription = "App Logo",
+                            modifier = Modifier.size(32.dp)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        HealthPanel(health = health)
+                    }
+                    // Link status now integrated more cleanly
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .background(DroneColors.Overlay, RoundedCornerShape(8.dp))
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .background(
+                                    if (linkState == LinkState.CONNECTED) DroneColors.Safe else DroneColors.Danger,
+                                    androidx.compose.foundation.shape.CircleShape
+                                )
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (linkState == LinkState.CONNECTED) "LINK: CONNECTED" else "LINK: DISCONNECTED",
+                            color = if (linkState == LinkState.CONNECTED) DroneColors.TextPrimary else DroneColors.Danger,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 0.5.sp
+                        )
+                    }
+                }
+                
+                Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    val hasFix = (telemetry.gpsFixType ?: 0) >= 3
+                    HUDTelemetryItem(label = "GPS", value = if (hasFix) "FIX" else "NO FIX", color = if (hasFix) DroneColors.Safe else DroneColors.Danger)
+                    HUDTelemetryItem(label = "SAT", value = telemetry.satellitesVisible?.toString() ?: "--", color = DroneColors.TextPrimary)
+                    HUDTelemetryItem(label = "RSSI", value = telemetry.rcRssiPct?.let { "$it%" } ?: "--", color = DroneColors.TextPrimary)
+
+                    val batteryPct = telemetry.batteryRemainingPct
+                    val isLowBattery = batteryPct != null && batteryPct < 20
+                    
+                    val infiniteTransition = rememberInfiniteTransition(label = "BatteryPulse")
+                    val alpha by if (isLowBattery) {
+                        infiniteTransition.animateFloat(
+                            initialValue = 0.4f,
+                            targetValue = 1f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(500),
+                                repeatMode = RepeatMode.Reverse
+                            ),
+                            label = "AlphaPulse"
+                        )
+                    } else {
+                        remember { mutableStateOf(1f) }
+                    }
+
+                    HUDTelemetryItem(
+                        label = "BAT",
+                        value = batteryPct?.let { "$it%" } ?: "--",
+                        color = when {
+                            batteryPct == null -> DroneColors.TextPrimary
+                            batteryPct < 20 -> DroneColors.Danger
+                            else -> DroneColors.Safe
+                        },
+                        modifier = Modifier.alpha(alpha)
+                    )
+                }
             }
         }
 
@@ -213,13 +283,17 @@ fun FlyTab(
             )
         }
 
-        tracking.guidanceReason?.let { reason ->
-            GuidanceWarningBanner(
-                reason = reason,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 80.dp),
-            )
+        AnimatedVisibility(
+            visible = tracking.guidanceReason != null,
+            enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 80.dp)
+        ) {
+            tracking.guidanceReason?.let { reason ->
+                GuidanceWarningBanner(reason = reason)
+            }
         }
 
         if (showTargetActionSheet) {
@@ -241,19 +315,44 @@ fun FlyTab(
 private fun HUDCrosshair(modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
-            .size(40.dp)
-            .alpha(0.4f),
+            .size(48.dp)
+            .alpha(0.6f),
         contentAlignment = Alignment.Center
     ) {
-        Box(modifier = Modifier.size(24.dp, 1.5.dp).background(Color.White))
-        Box(modifier = Modifier.size(1.5.dp, 24.dp).background(Color.White))
+        // Shadow/glow for visibility
+        Box(modifier = Modifier.size(26.dp, 2.5.dp).background(Color.Black.copy(alpha = 0.3f)))
+        Box(modifier = Modifier.size(2.5.dp, 26.dp).background(Color.Black.copy(alpha = 0.3f)))
+        
+        // Main lines
+        Box(modifier = Modifier.size(24.dp, 1.2.dp).background(Color.White))
+        Box(modifier = Modifier.size(1.2.dp, 24.dp).background(Color.White))
+        
+        // Center precision dot
+        Box(modifier = Modifier.size(2.dp).background(DroneColors.Accent, androidx.compose.foundation.shape.CircleShape))
     }
 }
 
 @Composable
-private fun HUDTelemetryItem(label: String, value: String, color: Color) {
-    Column(horizontalAlignment = Alignment.End) {
-        Text(label, color = DroneColors.TextSecondary, style = MaterialTheme.typography.labelSmall)
-        Text(value, color = color, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+private fun HUDTelemetryItem(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
+    Column(
+        horizontalAlignment = Alignment.End,
+        modifier = modifier
+            .background(DroneColors.Overlay, RoundedCornerShape(8.dp))
+            .padding(horizontal = 10.dp, vertical = 6.dp)
+            .width(64.dp) // Fixed width for alignment consistency
+    ) {
+        Text(
+            text = label, 
+            color = DroneColors.TextSecondary, 
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            text = value, 
+            color = color, 
+            style = MaterialTheme.typography.bodyMedium, 
+            fontWeight = FontWeight.Black,
+            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+        )
     }
 }

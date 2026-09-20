@@ -1,16 +1,43 @@
 package com.aivisiondrone.groundstation.ui
 
 import android.content.Context
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Flight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -32,7 +59,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.aivisiondrone.groundstation.R
 import com.aivisiondrone.groundstation.MainViewModel
 import com.aivisiondrone.groundstation.audio.AlertSoundPlayer
 import com.aivisiondrone.groundstation.control.AbortButton
@@ -77,6 +108,7 @@ fun GroundStationScreen(viewModel: MainViewModel, eglBase: EglBase, context: Con
     val alertsMuted by viewModel.alertsMuted.collectAsState()
 
     var selectedTab by remember { mutableStateOf(AppTab.FLY) }
+    var menuVisible by remember { mutableStateOf(true) }
 
     // Buzzer + voice alerts for tracking/guidance state changes (target
     // locked/lost, follow/orbit engaged, RTL, etc.) - lives at this
@@ -105,127 +137,215 @@ fun GroundStationScreen(viewModel: MainViewModel, eglBase: EglBase, context: Con
         )
     }
 
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
         val isWideScreen = maxWidth >= WIDE_SCREEN_BREAKPOINT
 
         val content: @Composable (Modifier) -> Unit = { contentModifier ->
-            when (selectedTab) {
-                AppTab.FLY -> FlyTab(
-                    viewModel = viewModel,
-                    eglBase = eglBase,
-                    context = context,
-                    linkState = linkState,
-                    telemetry = telemetry,
-                    health = health,
-                    tracking = tracking,
-                    detections = detections,
-                    mode = mode,
-                    remoteVideoTrack = remoteVideoTrack,
-                    showTargetActionSheet = showTargetActionSheet,
-                    recording = recording,
-                    onToggleRecording = { viewModel.toggleRecording() },
-                    modifier = contentModifier,
-                )
-                AppTab.CONTROL -> ControlTab(
-                    viewModel = viewModel,
-                    telemetry = telemetry,
-                    modifier = contentModifier,
-                )
-                AppTab.AI -> AiModesTab(
-                    viewModel = viewModel,
-                    mode = mode,
-                    followSeparationM = followSeparation,
-                    followAltitudeM = followAltitude,
-                    orbitRadiusM = orbitRadius,
-                    orbitAltitudeM = orbitAltitude,
-                    followMaxSpeedMps = followMaxSpeed,
-                    orbitMaxSpeedMps = orbitMaxSpeed,
-                    tracking = tracking,
-                    detections = detections,
-                    modifier = contentModifier,
-                )
-                AppTab.STATUS -> StatusTab(
-                    telemetry = telemetry,
-                    health = health,
-                    alertsMuted = alertsMuted,
-                    onSetAlertsMuted = { viewModel.setAlertsMuted(it) },
-                    modifier = contentModifier,
-                )
-                AppTab.SETTINGS -> SettingsTab(
-                    viewModel = viewModel,
-                    eglBase = eglBase,
-                    context = context,
-                    linkState = linkState,
-                    modifier = contentModifier,
-                )
-            }
-        }
-
-        if (isWideScreen) {
-            Row(modifier = Modifier.fillMaxSize().background(DroneColors.Background)) {
-                NavigationRail(
-                    containerColor = DroneColors.Surface,
-                    modifier = Modifier.width(80.dp),
-                    header = {
-                        Spacer(modifier = Modifier.height(20.dp))
-                    }
-                ) {
-                    AppTab.entries.forEach { tab ->
-                        NavigationRailItem(
-                            selected = tab == selectedTab,
-                            onClick = { selectedTab = tab },
-                            icon = { Icon(tab.icon, contentDescription = tab.label, modifier = Modifier.size(24.dp)) },
-                            label = { Text(tab.label, style = MaterialTheme.typography.labelSmall) },
-                            colors = NavigationRailItemDefaults.colors(
-                                selectedIconColor = DroneColors.Accent,
-                                selectedTextColor = DroneColors.Accent,
-                                unselectedIconColor = DroneColors.TextSecondary,
-                                unselectedTextColor = DroneColors.TextSecondary,
-                                indicatorColor = Color.Transparent,
-                            ),
-                        )
-                    }
-                }
-                Box(modifier = Modifier.fillMaxSize()) {
-                    content(Modifier.fillMaxSize())
-                    AbortButton(
-                        onAbort = { viewModel.abort() },
-                        modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+            Crossfade(
+                targetState = selectedTab,
+                animationSpec = tween(durationMillis = 300),
+                modifier = contentModifier
+            ) { tab ->
+                when (tab) {
+                    AppTab.FLY -> FlyTab(
+                        viewModel = viewModel,
+                        eglBase = eglBase,
+                        context = context,
+                        linkState = linkState,
+                        telemetry = telemetry,
+                        health = health,
+                        tracking = tracking,
+                        detections = detections,
+                        mode = mode,
+                        remoteVideoTrack = remoteVideoTrack,
+                        showTargetActionSheet = showTargetActionSheet,
+                        recording = recording,
+                        onToggleRecording = { viewModel.toggleRecording() },
+                    )
+                    AppTab.CONTROL -> ControlTab(
+                        viewModel = viewModel,
+                        telemetry = telemetry,
+                    )
+                    AppTab.AI -> AiModesTab(
+                        viewModel = viewModel,
+                        mode = mode,
+                        followSeparationM = followSeparation,
+                        followAltitudeM = followAltitude,
+                        orbitRadiusM = orbitRadius,
+                        orbitAltitudeM = orbitAltitude,
+                        followMaxSpeedMps = followMaxSpeed,
+                        orbitMaxSpeedMps = orbitMaxSpeed,
+                        tracking = tracking,
+                        detections = detections,
+                    )
+                    AppTab.STATUS -> StatusTab(
+                        telemetry = telemetry,
+                        health = health,
+                        alertsMuted = alertsMuted,
+                        onSetAlertsMuted = { viewModel.setAlertsMuted(it) },
+                    )
+                    AppTab.SETTINGS -> SettingsTab(
+                        viewModel = viewModel,
+                        eglBase = eglBase,
+                        context = context,
+                        linkState = linkState,
                     )
                 }
             }
         }
-else {
+
+        if (isWideScreen) {
+            Row(modifier = Modifier.fillMaxSize()) {
+                AnimatedVisibility(
+                    visible = menuVisible,
+                    enter = expandHorizontally(),
+                    exit = shrinkHorizontally()
+                ) {
+                    NavigationRail(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        modifier = Modifier.width(84.dp),
+                        header = {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .statusBarsPadding()
+                                    .padding(vertical = 12.dp)
+                            ) {
+                                // Stylized Brand Identity
+                                Image(
+                                    painter = painterResource(id = R.drawable.app_logo),
+                                    contentDescription = "App Logo",
+                                    modifier = Modifier
+                                        .size(44.dp)
+                                        .background(Color.Black, RoundedCornerShape(10.dp))
+                                        .padding(4.dp)
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    "AI VISION",
+                                    color = DroneColors.Accent,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = 9.sp
+                                )
+                            }
+                        }
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState()),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            AppTab.entries.forEach { tab ->
+                                NavigationRailItem(
+                                    selected = tab == selectedTab,
+                                    onClick = { selectedTab = tab },
+                                    icon = { Icon(tab.icon, contentDescription = tab.label, modifier = Modifier.size(22.dp)) },
+                                    label = { Text(tab.label, style = MaterialTheme.typography.labelSmall, fontSize = 10.sp) },
+                                    colors = NavigationRailItemDefaults.colors(
+                                        selectedIconColor = DroneColors.Accent,
+                                        selectedTextColor = DroneColors.Accent,
+                                        unselectedIconColor = DroneColors.TextSecondary,
+                                        unselectedTextColor = DroneColors.TextSecondary,
+                                        indicatorColor = Color.Transparent,
+                                    ),
+                                )
+                            }
+                        }
+                    }
+                }
+                
+                Box(modifier = Modifier.fillMaxSize()) {
+                    content(Modifier.fillMaxSize())
+                    
+                    // TOGGLE BUTTON (Wide Screen)
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.CenterStart)
+                            .padding(start = if (menuVisible) 0.dp else 8.dp)
+                            .size(32.dp)
+                            .background(DroneColors.Overlay, CircleShape)
+                            .clickable { menuVisible = !menuVisible },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (menuVisible) Icons.Filled.ChevronLeft else Icons.Filled.ChevronRight,
+                            contentDescription = "Toggle Menu",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    AbortButton(
+                        onAbort = { viewModel.abort() },
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(bottom = 20.dp, end = 20.dp),
+                    )
+                }
+            }
+        } else {
             Scaffold(
                 bottomBar = {
-                    NavigationBar(
-                        containerColor = DroneColors.Surface,
-                        tonalElevation = 0.dp
+                    AnimatedVisibility(
+                        visible = menuVisible,
+                        enter = expandVertically(),
+                        exit = shrinkVertically()
                     ) {
-                        AppTab.entries.forEach { tab ->
-                            NavigationBarItem(
-                                selected = tab == selectedTab,
-                                onClick = { selectedTab = tab },
-                                icon = { Icon(tab.icon, contentDescription = tab.label) },
-                                label = { Text(tab.label) },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = DroneColors.Accent,
-                                    selectedTextColor = DroneColors.Accent,
-                                    unselectedIconColor = DroneColors.TextSecondary,
-                                    unselectedTextColor = DroneColors.TextSecondary,
-                                    indicatorColor = Color.Transparent,
-                                ),
-                            )
+                        NavigationBar(
+                            containerColor = MaterialTheme.colorScheme.surface,
+                            tonalElevation = 0.dp
+                        ) {
+                            AppTab.entries.forEach { tab ->
+                                NavigationBarItem(
+                                    selected = tab == selectedTab,
+                                    onClick = { selectedTab = tab },
+                                    icon = { Icon(tab.icon, contentDescription = tab.label) },
+                                    label = { Text(tab.label) },
+                                    colors = NavigationBarItemDefaults.colors(
+                                        selectedIconColor = DroneColors.Accent,
+                                        selectedTextColor = DroneColors.Accent,
+                                        unselectedIconColor = DroneColors.TextSecondary,
+                                        unselectedTextColor = DroneColors.TextSecondary,
+                                        indicatorColor = Color.Transparent,
+                                    ),
+                                )
+                            }
                         }
                     }
                 },
-                containerColor = DroneColors.Background,
+                containerColor = MaterialTheme.colorScheme.background,
             ) { paddingValues ->
                 Box(modifier = Modifier.padding(paddingValues).fillMaxSize()) {
                     content(Modifier.fillMaxSize())
+                    
+                    // TOGGLE BUTTON (Small Screen)
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = if (menuVisible) 0.dp else 12.dp)
+                            .size(40.dp, 24.dp)
+                            .background(DroneColors.Overlay, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
+                            .clickable { menuVisible = !menuVisible },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (menuVisible) Icons.Filled.ExpandMore else Icons.Filled.ExpandLess,
+                            contentDescription = "Toggle Menu",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
                     AbortButton(
                         onAbort = { viewModel.abort() },
-                        modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 16.dp, end = 16.dp),
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
                     )
                 }
             }

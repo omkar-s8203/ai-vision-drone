@@ -90,13 +90,13 @@ fun ModeControls(
                         onClick = { onModeSelected(mode) },
                         shape = RoundedCornerShape(12.dp),
                         colors = if (mode == currentMode) {
-                            ButtonDefaults.buttonColors(containerColor = DroneColors.Accent, contentColor = Color.White)
+                            ButtonDefaults.buttonColors(containerColor = DroneColors.Accent, contentColor = Color.Black)
                         } else {
                             ButtonDefaults.buttonColors(containerColor = DroneColors.SurfaceElevated, contentColor = DroneColors.TextPrimary)
                         },
                         modifier = Modifier.height(40.dp)
                     ) {
-                        Text(mode.label, fontWeight = FontWeight.SemiBold)
+                        Text(mode.label, fontWeight = FontWeight.Black)
                     }
                 }
             }

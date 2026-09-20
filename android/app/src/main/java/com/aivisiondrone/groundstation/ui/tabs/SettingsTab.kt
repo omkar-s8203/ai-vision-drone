@@ -21,10 +21,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,20 +74,20 @@ fun SettingsTab(
     ) {
         Text(
             "Settings",
-            color = DroneColors.TextPrimary,
+            color = MaterialTheme.colorScheme.onSurface,
             style = MaterialTheme.typography.headlineSmall,
             modifier = Modifier.padding(start = 4.dp)
         )
 
         Card(
             shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = DroneColors.Surface),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(modifier = Modifier.padding(vertical = 8.dp)) {
                 Text(
-                    "CONNECTION",
-                    color = DroneColors.TextSecondary,
+                    "LINK STATUS",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.labelMedium,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                 )
@@ -97,7 +100,7 @@ fun SettingsTab(
                 HorizontalDivider(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                     thickness = 0.5.dp,
-                    color = DroneColors.SurfaceElevated
+                    color = MaterialTheme.colorScheme.surfaceVariant
                 )
 
                 TextField(
@@ -110,10 +113,10 @@ fun SettingsTab(
                         unfocusedContainerColor = Color.Transparent,
                         focusedIndicatorColor = Color.Transparent,
                         unfocusedIndicatorColor = Color.Transparent,
-                        focusedTextColor = DroneColors.TextPrimary,
-                        unfocusedTextColor = DroneColors.TextPrimary,
+                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
                         focusedLabelColor = DroneColors.Accent,
-                        unfocusedLabelColor = DroneColors.TextSecondary
+                        unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant
                     ),
                     singleLine = true
                 )
@@ -121,7 +124,7 @@ fun SettingsTab(
                 HorizontalDivider(
                     modifier = Modifier.padding(horizontal = 16.dp),
                     thickness = 0.5.dp,
-                    color = DroneColors.SurfaceElevated
+                    color = MaterialTheme.colorScheme.surfaceVariant
                 )
 
                 TextField(
@@ -134,10 +137,10 @@ fun SettingsTab(
                         unfocusedContainerColor = Color.Transparent,
                         focusedIndicatorColor = Color.Transparent,
                         unfocusedIndicatorColor = Color.Transparent,
-                        focusedTextColor = DroneColors.TextPrimary,
-                        unfocusedTextColor = DroneColors.TextPrimary,
+                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
                         focusedLabelColor = DroneColors.Accent,
-                        unfocusedLabelColor = DroneColors.TextSecondary
+                        unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant
                     ),
                     singleLine = true
                 )
@@ -165,9 +168,47 @@ fun SettingsTab(
                 onClick = { viewModel.disconnect() },
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier.weight(1f).height(50.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, DroneColors.SurfaceElevated)
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)
             ) {
-                Text("Disconnect", color = DroneColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+                Text("Disconnect", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
+            }
+        }
+
+        // Theme Customization Card
+        val isDarkMode by viewModel.isDarkMode.collectAsState()
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        "Dark Mode",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        "Toggle light or dark theme for the console UI",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+                Switch(
+                    checked = isDarkMode,
+                    onCheckedChange = { viewModel.setDarkMode(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = DroneColors.Accent,
+                        checkedTrackColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                )
             }
         }
 
@@ -177,7 +218,7 @@ fun SettingsTab(
             "AI Vision Drone Ground Station - companion computer control app. " +
                     "The flight controller remains the sole flight authority at all " +
                     "times; the RC transmitter's mode switch always overrides this app.",
-            color = DroneColors.TextSecondary,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(horizontal = 4.dp)
         )

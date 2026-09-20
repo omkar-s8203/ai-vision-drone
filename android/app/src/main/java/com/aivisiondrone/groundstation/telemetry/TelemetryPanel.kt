@@ -31,7 +31,7 @@ fun TelemetryPanel(telemetry: TelemetryState, modifier: Modifier = Modifier) {
                 text = telemetry.flightMode ?: "DISCONNECTED",
                 color = DroneColors.Accent,
                 style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.Black,
             )
             Text(
                 text = if (telemetry.armed) "ARMED" else "SAFE",

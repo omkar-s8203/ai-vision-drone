@@ -120,6 +120,13 @@ class MainViewModel : ViewModel() {
     private val _alertsMuted = MutableStateFlow(false)
     val alertsMuted = _alertsMuted.asStateFlow()
 
+    private val _isDarkMode = MutableStateFlow(true)
+    val isDarkMode = _isDarkMode.asStateFlow()
+
+    fun setDarkMode(dark: Boolean) {
+        _isDarkMode.value = dark
+    }
+
     fun setAlertsMuted(muted: Boolean) {
         _alertsMuted.value = muted
     }

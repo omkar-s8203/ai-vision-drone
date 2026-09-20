@@ -67,8 +67,8 @@ fun TrackingOverlay(tracking: TrackingState, orbiting: Boolean = false, modifier
                 }
 
                 // Modern Corner Brackets
-                val bracketLen = 20f
-                val strokeWidth = 6f
+                val bracketLen = (boxSize.width * 0.2f).coerceAtLeast(15f).coerceAtMost(30f)
+                val strokeWidth = 3.dp.toPx()
                 
                 // Top-Left
                 drawLine(statusColor, topLeft, topLeft.copy(x = topLeft.x + bracketLen), strokeWidth)

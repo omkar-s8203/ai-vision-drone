@@ -20,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aivisiondrone.groundstation.MainViewModel
@@ -158,10 +159,13 @@ private fun DetectionRow(detection: RawDetection, onSelect: () -> Unit) {
             Button(
                 onClick = onSelect,
                 shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = DroneColors.Accent),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = DroneColors.Accent,
+                    contentColor = Color.Black
+                ),
                 modifier = Modifier.height(36.dp)
             ) {
-                Text("Select", fontWeight = FontWeight.SemiBold)
+                Text("Select", fontWeight = FontWeight.Black)
             }
         }
     }

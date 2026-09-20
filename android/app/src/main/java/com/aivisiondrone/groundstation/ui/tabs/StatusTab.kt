@@ -151,7 +151,7 @@ fun StatusTab(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    "Cyan = nose heading   ·   Red = direction to home",
+                    "Yellow = nose heading   ·   Red = direction to home",
                     color = DroneColors.TextSecondary,
                     style = MaterialTheme.typography.labelSmall,
                 )
@@ -249,7 +249,7 @@ private fun HomeRadar(headingDeg: Double?, homeBearingDeg: Double?, modifier: Mo
         if (headingDeg != null) {
             val rad = Math.toRadians(headingDeg - 90.0)
             val tip = Offset(center.x + radius * 0.55f * cos(rad).toFloat(), center.y + radius * 0.55f * sin(rad).toFloat())
-            drawLine(DroneColors.Accent, center, tip, strokeWidth = strokeWidth * 2)
+            drawLine(DroneColors.Accent, center, tip, strokeWidth = strokeWidth * 2.5f)
             drawCircle(DroneColors.Accent, radius = 5.dp.toPx(), center = tip)
         }
 

@@ -272,9 +272,10 @@ class MainViewModel : ViewModel() {
 
     /** Administrative FC command, independent of AI guidance mode - the
      * confirmation dialog before an arm request lives in the UI layer
-     * (GroundStationScreen), not here. */
-    fun setArmed(armed: Boolean) {
-        client.sendArmCommand(armed)
+     * (GroundStationScreen), not here. `force` is only meaningful for a
+     * disarm - see GroundStationClient.sendArmCommand's docstring. */
+    fun setArmed(armed: Boolean, force: Boolean = false) {
+        client.sendArmCommand(armed, force)
     }
 
     fun setFlightMode(mode: String) {

@@ -326,6 +326,23 @@ restrictive. `set_max_speed()` updates each PID's `out_limit` directly,
 caught by a new test that drives the PID hard enough to saturate on its
 own, not just the outer clamp. Build-verified.
 
+**Fixed a real field-reported bug: "I can't disarm from the app."** The
+DISARM button showed correctly and sent the command, but the drone stayed
+armed - root cause is on the flight-controller side, not this app:
+ArduCopter refuses a normal (unforced) `MAV_CMD_COMPONENT_ARM_DISARM` if
+its own land-detector believes the aircraft is flying, a real documented
+behavior (confirmed against pymavlink's own bundled command definitions,
+not guessed) that a bench test with props spinning can trip as a false
+positive - and `MavlinkBridge` never listened for `COMMAND_ACK`, so the
+rejection was invisible on both ends. Fixed with a `force` flag through to
+`MAV_CMD_COMPONENT_ARM_DISARM`'s own documented param2=21196 override,
+surfaced as a separate, deliberately less-prominent **"Force disarm"**
+text button in `FlightControlDock.kt` (only shown while armed, own
+stronger confirmation dialog warning it overrides the FC's in-flight
+protection) - kept apart from the main DISARM button so it's never reached
+for by accident, and never wired to arming at all, so a stray `force` can't
+bypass a pre-arm check. Build-verified.
+
 ## Layout
 
 ```

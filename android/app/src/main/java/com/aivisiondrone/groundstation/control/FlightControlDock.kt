@@ -64,10 +64,12 @@ fun FlightControlDock(
     armed: Boolean,
     flightMode: String?,
     onArmChanged: (Boolean) -> Unit,
+    onForceDisarm: () -> Unit,
     onFlightModeSelected: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var showArmConfirm by remember { mutableStateOf(false) }
+    var showForceDisarmConfirm by remember { mutableStateOf(false) }
     var modeMenuExpanded by remember { mutableStateOf(false) }
 
     Card(
@@ -95,6 +97,30 @@ fun FlightControlDock(
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(start = 8.dp)
                 )
+            }
+
+            // A real field-reported gap: ArduCopter refuses a normal
+            // (unforced) disarm outright if its own land-detector believes
+            // the aircraft is flying - a bench test with props spinning can
+            // trip that as a false positive, and the DISARM button above
+            // then does nothing with no visible error (this bridge doesn't
+            // listen for COMMAND_ACK). This sends the command's own
+            // documented "force" override for exactly that case - kept as
+            // a separate, less prominent control with its own stronger
+            // confirmation, not folded into the main button, since it
+            // bypasses a real in-flight safety protection and should never
+            // be reached for by accident.
+            if (armed) {
+                TextButton(
+                    onClick = { showForceDisarmConfirm = true },
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                ) {
+                    Text(
+                        "Force disarm (if DISARM doesn't respond)",
+                        color = DroneColors.Warning,
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
             }
 
             ExposedDropdownMenuBox(
@@ -163,6 +189,31 @@ fun FlightControlDock(
             },
             dismissButton = {
                 TextButton(onClick = { showArmConfirm = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (showForceDisarmConfirm) {
+        AlertDialog(
+            onDismissRequest = { showForceDisarmConfirm = false },
+            icon = { Icon(Icons.Filled.Warning, contentDescription = null, tint = DroneColors.Danger) },
+            title = { Text("Force disarm?") },
+            text = {
+                Text(
+                    "Only use this if the normal DISARM button did nothing " +
+                        "and you are certain the aircraft is on the ground. " +
+                        "This overrides the flight controller's own " +
+                        "protection against disarming while it thinks it's flying."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showForceDisarmConfirm = false
+                    onForceDisarm()
+                }) { Text("FORCE DISARM", color = DroneColors.Danger) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showForceDisarmConfirm = false }) { Text("Cancel") }
             },
         )
     }

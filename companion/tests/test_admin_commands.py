@@ -102,6 +102,32 @@ def test_disarm_command_sends_param1_zero(tmp_path):
         recorder.close()
 
 
+def test_force_disarm_command_sends_the_documented_force_value(tmp_path):
+    """A real field-reported bug: the app's DISARM button did nothing on a
+    real bench test - ArduCopter was silently refusing the normal
+    (unforced) disarm because its land-detector believed the aircraft was
+    flying (see MavlinkBridge.arm()'s docstring). The Android "Force
+    disarm" control sends {"armed": false, "force": true}; this proves
+    _on_arm_command actually threads `force` through to the FC command."""
+    with _build_orchestrator(tmp_path) as (orchestrator, recorder, conn, mock_mavutil):
+        orchestrator._on_arm_command({"armed": False, "force": True})
+
+        conn.mav.command_long_send.assert_called_once_with(
+            1, 1, mock_mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0, 0, 21196, 0, 0, 0, 0, 0
+        )
+        recorder.close()
+
+
+def test_arm_command_ignores_a_stray_force_flag(tmp_path):
+    with _build_orchestrator(tmp_path) as (orchestrator, recorder, conn, mock_mavutil):
+        orchestrator._on_arm_command({"armed": True, "force": True})
+
+        conn.mav.command_long_send.assert_called_once_with(
+            1, 1, mock_mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0, 1, 0, 0, 0, 0, 0, 0
+        )
+        recorder.close()
+
+
 def test_set_flight_mode_command_sends_correct_mode_number(tmp_path):
     with _build_orchestrator(tmp_path) as (orchestrator, recorder, conn, mock_mavutil):
         orchestrator._on_set_flight_mode({"mode": "RTL"})

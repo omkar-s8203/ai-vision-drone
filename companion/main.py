@@ -231,10 +231,14 @@ class CompanionOrchestrator:
         """Arm/disarm is an administrative FC command, not a guidance
         setpoint - it goes straight to the FC like a standard GCS would send
         it, bypassing the Safety Supervisor's guidance gate (that gate only
-        concerns itself with velocity setpoints during active AI guidance)."""
+        concerns itself with velocity setpoints during active AI guidance).
+        `force` (Android's separate "Force disarm" control) is only ever
+        meaningful for a disarm - see MavlinkBridge.arm()'s docstring for
+        why an unforced disarm can be silently refused by the FC itself."""
         armed = bool(payload.get("armed", False))
-        self.mavlink.arm(armed)
-        self.recorder.record("arm_command", armed=armed)
+        force = bool(payload.get("force", False))
+        self.mavlink.arm(armed, force=force)
+        self.recorder.record("arm_command", armed=armed, force=force)
 
     def _on_set_flight_mode(self, payload: dict) -> None:
         mode = str(payload.get("mode", ""))

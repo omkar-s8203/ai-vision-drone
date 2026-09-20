@@ -9,6 +9,13 @@ from typing import Callable, Optional
 
 from pymavlink import mavutil
 
+# MAV_CMD_COMPONENT_ARM_DISARM's documented param2 "force" value - not a
+# pymavlink-exposed named constant (checked directly: no such enum exists),
+# only documented in the command's own param description text via
+# pymavlink's bundled dialect ("21196: force arming/disarming (e.g. allow
+# arming to override preflight checks and disarming in flight)").
+FORCE_ARM_DISARM_MAGIC_NUMBER = 21196
+
 # SET_POSITION_TARGET_LOCAL_NED type_mask: use velocity (vx,vy,vz) and
 # yaw_rate only - ignore position, acceleration, and yaw angle.
 TYPE_MASK_VELOCITY_AND_YAW_RATE = (
@@ -228,22 +235,44 @@ class MavlinkBridge:
             self.telemetry.home_lat = msg.latitude / 1e7
             self.telemetry.home_lon = msg.longitude / 1e7
 
-    def arm(self, armed: bool) -> None:
+    def arm(self, armed: bool, force: bool = False) -> None:
         """Sends MAV_CMD_COMPONENT_ARM_DISARM - a direct, standard GCS
         command (the same thing Mission Planner/QGroundControl send), not
         gated by the Safety Supervisor. That gate exists specifically for
         autonomous guidance velocity setpoints during Follow/Approach-Test,
         not administrative FC commands - the FC's own pre-arm safety checks
-        are the real guard against an unsafe arm. Never force-arms (no
-        pre-arm-check bypass)."""
+        are the real guard against an unsafe arm. `force` is never used for
+        arming (never bypasses pre-arm checks - the whole point of them).
+
+        For disarming, ArduCopter refuses an unforced (param2=0) disarm
+        outright if its own land-detector believes the aircraft is
+        currently flying - real, documented MAV_CMD_COMPONENT_ARM_DISARM
+        behavior (verified against pymavlink's own bundled command
+        definitions, not guessed), not a bug in this bridge. That's the
+        right default (a stray/errant disarm mid-flight would drop the
+        aircraft), but it also means a bench test with props spinning can
+        trip a false "is flying" positive and silently ignore every normal
+        disarm request - this bridge doesn't listen for COMMAND_ACK, so
+        that rejection is otherwise invisible. `force=True` sends
+        MAV_CMD_COMPONENT_ARM_DISARM's documented param2=21196 "force" value,
+        which overrides that refusal - reserved for exactly that known
+        false-positive case (or a genuine emergency stop), never the
+        default path. See FlightControlDock.kt's separate "Force disarm"
+        control and its own stronger confirmation dialog."""
         assert self._conn is not None, "call connect() first"
+        # force only ever applies to disarming - `armed and force` is
+        # deliberately not wired to anything, so a caller passing
+        # force=True alongside armed=True can never accidentally bypass a
+        # pre-arm check.
+        apply_force = force and not armed
         self._conn.mav.command_long_send(
             self._conn.target_system,
             self._conn.target_component,
             mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
             0,
             1 if armed else 0,
-            0, 0, 0, 0, 0, 0,
+            FORCE_ARM_DISARM_MAGIC_NUMBER if apply_force else 0,
+            0, 0, 0, 0, 0,
         )
 
     def request_home_position(self) -> None:

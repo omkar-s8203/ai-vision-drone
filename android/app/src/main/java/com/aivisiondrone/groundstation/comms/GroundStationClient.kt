@@ -132,9 +132,15 @@ class GroundStationClient(private val client: OkHttpClient = OkHttpClient()) {
     }
 
     /** Administrative FC command - arm/disarm goes straight to the flight
-     * controller like a standard GCS, independent of AI guidance state. */
-    fun sendArmCommand(armed: Boolean) {
-        send(MessageType.ARM_COMMAND, JSONObject().put("armed", armed))
+     * controller like a standard GCS, independent of AI guidance state.
+     * `force` is only meaningful for a disarm - see docs/protocol.md and
+     * MavlinkBridge.arm()'s docstring: ArduCopter refuses a normal disarm
+     * outright if its land-detector thinks it's flying, which a bench test
+     * with props spinning can trip as a false positive. */
+    fun sendArmCommand(armed: Boolean, force: Boolean = false) {
+        val payload = JSONObject().put("armed", armed)
+        if (force) payload.put("force", true)
+        send(MessageType.ARM_COMMAND, payload)
     }
 
     fun sendSetFlightMode(mode: String) {

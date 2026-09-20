@@ -50,6 +50,7 @@ fun ControlTab(
             armed = telemetry.armed,
             flightMode = telemetry.flightMode,
             onArmChanged = { viewModel.setArmed(it) },
+            onForceDisarm = { viewModel.setArmed(false, force = true) },
             onFlightModeSelected = { viewModel.setFlightMode(it) },
             modifier = Modifier.fillMaxWidth(),
         )

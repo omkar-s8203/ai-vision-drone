@@ -263,6 +263,15 @@ last-known position. Verified via a real MAVLink loopback test against
 the mock FC (`test_bridge_reflects_real_gps_satellite_count_and_fix_type`);
 not yet confirmed against a real FC's actual `GPS_RAW_INT` output.
 
+**Fixed a second real bug found in a deep code-review audit** right next
+to the one above: the HUD's "BAT" tile used two different fallbacks for
+the same null field - `"0%"` for the displayed text but `100` for the
+color check. Before telemetry arrives (or right after a reconnect), this
+rendered a self-contradictory "0% BAT" in Safe/green - misleadingly
+reassuring at exactly the moment the reading is least trustworthy. Now
+uses one consistent fallback (`"--"`, neutral color), matching how
+SAT/ALT/SPD already handle missing data elsewhere on the same HUD.
+
 ## Layout
 
 ```

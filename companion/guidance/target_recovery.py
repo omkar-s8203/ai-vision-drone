@@ -95,7 +95,15 @@ class TargetRecoveryController:
         obstacle_detected: bool,
         obstacle_class_name: Optional[str] = None,
     ) -> RecoveryResult:
-        if target_reacquired and self._searching_since is not None:
+        # Gated on `is_active` (searching OR awaiting a land confirmation),
+        # not just `_searching_since is not None` - the timeout branch below
+        # clears `_searching_since` the moment it decides to ask the operator
+        # to confirm a landing, before `_awaiting_confirmation` is even set.
+        # Gating on `_searching_since` alone meant a target reacquired while
+        # a land_confirmation_request was outstanding was silently ignored -
+        # this kept waiting on the operator forever instead of resuming
+        # Follow/Orbit on the now-visible target.
+        if target_reacquired and self.is_active:
             self.cancel()
             return RecoveryResult(phase=RecoveryPhase.FOUND)
 

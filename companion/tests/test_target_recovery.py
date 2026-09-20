@@ -187,3 +187,29 @@ def test_cancel_resets_a_search_in_progress():
         battery_remaining_pct=None, obstacle_detected=False,
     )
     assert result.phase == RecoveryPhase.IDLE
+
+
+def test_reacquiring_target_while_awaiting_land_confirmation_resumes_follow():
+    """A real bug found in a code-review audit: the reacquire-cancel check
+    was gated on `_searching_since is not None`, which the timeout branch
+    already clears the moment it decides to ask for a land confirmation -
+    before `_awaiting_confirmation` is even set. A target reacquired while
+    that request was outstanding was silently ignored, leaving the
+    controller stuck waiting on the operator forever instead of resuming
+    Follow/Orbit on the now-visible target."""
+    controller = make_controller(search_timeout_s=10.0, low_battery_pct_threshold=20)
+    controller.start_search(now=0.0)
+    requested = controller.update(
+        now=10.0, target_reacquired=False, distance_to_home_m=5000.0,
+        battery_remaining_pct=5, obstacle_detected=False,
+    )
+    assert requested.phase == RecoveryPhase.LAND_CONFIRMATION_REQUESTED
+    assert controller.is_active is True
+
+    result = controller.update(
+        now=12.0, target_reacquired=True, distance_to_home_m=5000.0,
+        battery_remaining_pct=5, obstacle_detected=False,
+    )
+
+    assert result.phase == RecoveryPhase.FOUND
+    assert controller.is_active is False

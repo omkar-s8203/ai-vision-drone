@@ -160,6 +160,24 @@ class CompanionOrchestrator:
     def _on_mode_command(self, payload: dict) -> None:
         mode_str = payload.get("mode", "idle")
         mode = MODE_COMMAND_MAP.get(mode_str, SupervisorState.IDLE)
+        # An in-progress target-loss search (companion/guidance/target_recovery.py)
+        # is only ever started for Follow/Orbit and otherwise runs to
+        # completion on its own timer, deaf to `requested_mode` - previously
+        # only _on_abort() cancelled it, so explicitly commanding away from
+        # Follow/Orbit (e.g. selecting "Normal RC"/idle) did not stop the
+        # yaw-sweep search already in flight. Cancel it here too, for any
+        # mode change that isn't itself Follow/Orbit.
+        if mode not in (SupervisorState.FOLLOWING, SupervisorState.ORBITING) and self.recovery.is_active:
+            self.recovery.cancel()
+        # Reset PID integral/derivative state when freshly (re)entering
+        # Follow/Orbit, not on every live-parameter update while already
+        # active (setFollowSeparation/etc. resend the same mode) - otherwise
+        # windup accumulated during a previous stint (or while another mode
+        # was active) would bleed into the next one.
+        if mode == SupervisorState.FOLLOWING and self.requested_mode != SupervisorState.FOLLOWING:
+            self.follow.reset()
+        if mode == SupervisorState.ORBITING and self.requested_mode != SupervisorState.ORBITING:
+            self.orbit.reset()
         self.requested_mode = mode
         if mode == SupervisorState.APPROACHING:
             self.approach.start()
@@ -284,7 +302,16 @@ class CompanionOrchestrator:
             self._recent_frame_ts.pop(0)
         self._frame_size = (frame.width, frame.height)
         if self.video_recorder is not None and self.video_recorder.is_recording:
-            self.video_recorder.write(self._camera_frame())
+            frame_bgr = self._camera_frame()
+            if frame_bgr is not None:
+                # cv2.VideoWriter.write() is a blocking encode+disk-I/O call;
+                # calling it inline here would stall this coroutine (and with
+                # it MAVLink parsing and the WebRTC track) for the duration of
+                # every frame's write while local recording is on. Run it off
+                # the event loop thread instead.
+                await asyncio.get_event_loop().run_in_executor(
+                    None, self.video_recorder.write, frame_bgr
+                )
         detections = self.detector.parse(frame.raw_detection_output, frame.ts)
 
         if self._pending_selection is not None and self.state_machine.state == TrackingState.IDLE:
@@ -376,10 +403,23 @@ class CompanionOrchestrator:
         elif recovery_result.phase == RecoveryPhase.FOUND:
             self.recorder.record("target_recovery_found")
         elif recovery_result.phase == RecoveryPhase.RTL_TRIGGERED:
-            self.mavlink.set_mode("RTL")
-            self.recorder.record(
-                "target_recovery_rtl", distance_to_home_m=recovery_result.distance_to_home_m
-            )
+            # RTL is a direct FC mode change (like arm()/set_mode()), deliberately
+            # not gated through SafetySupervisor.evaluate() - but that means it
+            # was previously fired unconditionally even if the pilot had already
+            # taken RC stick override mid-search, contradicting "RC override
+            # always takes precedence" (docs/safety-case.md). Suppress it in
+            # that case: the pilot is already flying manually, so there is
+            # nothing for an autonomous RTL to usefully override.
+            if not rc_override:
+                self.mavlink.set_mode("RTL")
+                self.recorder.record(
+                    "target_recovery_rtl", distance_to_home_m=recovery_result.distance_to_home_m
+                )
+            else:
+                self.recorder.record(
+                    "target_recovery_rtl_suppressed_rc_override",
+                    distance_to_home_m=recovery_result.distance_to_home_m,
+                )
             self.requested_mode = SupervisorState.IDLE
             effective_requested_state = SupervisorState.IDLE
         elif recovery_result.phase == RecoveryPhase.LAND_CONFIRMATION_REQUESTED:

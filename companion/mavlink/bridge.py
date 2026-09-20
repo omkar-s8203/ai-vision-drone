@@ -154,6 +154,13 @@ class MavlinkBridge:
         elif msg_type == "BATTERY_STATUS":
             if msg.voltages and msg.voltages[0] != 65535:
                 self.telemetry.battery_voltage_v = msg.voltages[0] / 1000.0
+            else:
+                # 65535 is the standard "unknown" sentinel (same idea as
+                # GPS_RAW_INT's satellites_visible=255) - without this reset,
+                # a later sensor fault left the last real voltage frozen
+                # forever, silently masking the fault instead of reporting
+                # "no data" like battery_remaining_pct already does below.
+                self.telemetry.battery_voltage_v = None
             self.telemetry.battery_remaining_pct = (
                 msg.battery_remaining if msg.battery_remaining != -1 else None
             )

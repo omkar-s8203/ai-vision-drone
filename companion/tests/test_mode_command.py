@@ -69,6 +69,39 @@ def test_mode_command_without_separation_leaves_default(tmp_path):
     recorder.close()
 
 
+def test_freshly_entering_follow_resets_pid_state(tmp_path):
+    """A real bug found in a code-review audit: FollowController.reset()
+    existed but was never called from main.py. Windup accumulated during a
+    previous Follow stint (or while a large tracking error built up before
+    the operator switched away) would otherwise bleed into the next
+    session as a velocity-command transient sized by stale error, not the
+    current one."""
+    orchestrator, recorder = _build_minimal_orchestrator(tmp_path)
+    orchestrator._on_mode_command({"mode": "follow"})
+    orchestrator.follow._distance_pid._integral = 42.0  # simulate accumulated windup
+
+    orchestrator._on_mode_command({"mode": "idle"})
+    orchestrator._on_mode_command({"mode": "follow"})
+
+    assert orchestrator.follow._distance_pid._integral == 0.0
+    recorder.close()
+
+
+def test_live_parameter_update_while_already_in_follow_does_not_reset_pid(tmp_path):
+    """The reset above must only fire on a fresh (re)entry into Follow, not
+    on every mode_command while already active - the Android separation/
+    altitude sliders resend {"mode": "follow", ...} on every drag, and
+    resetting the PID mid-adjustment would fight the operator's own tuning."""
+    orchestrator, recorder = _build_minimal_orchestrator(tmp_path)
+    orchestrator._on_mode_command({"mode": "follow"})
+    orchestrator.follow._distance_pid._integral = 42.0
+
+    orchestrator._on_mode_command({"mode": "follow", "follow_separation_m": 9.5})
+
+    assert orchestrator.follow._distance_pid._integral == 42.0
+    recorder.close()
+
+
 def test_follow_altitude_override_updates_controller_live(tmp_path):
     orchestrator, recorder = _build_minimal_orchestrator(tmp_path)
     assert orchestrator.follow.limits["target_altitude_m"] is None

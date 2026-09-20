@@ -46,6 +46,8 @@ class MockFlightController:
         self.home_set = False
         self.gps_fix_type = 3  # 3D fix by default - matches MAV_GPS_FIX_TYPE
         self.satellites_visible = 12
+        self.battery_voltage_mv = 12400  # a healthy-looking pack voltage
+        self.battery_remaining_pct = 80
         self.received_setpoints: list[tuple[float, float, float, float]] = []
 
     def set_mode(self, mode: str) -> None:
@@ -73,6 +75,12 @@ class MockFlightController:
     def set_gps(self, fix_type: int, satellites_visible: int) -> None:
         self.gps_fix_type = fix_type
         self.satellites_visible = satellites_visible
+
+    def set_battery(self, voltage_mv: int, remaining_pct: int) -> None:
+        """Pass voltage_mv=65535 or remaining_pct=-1 to simulate the
+        standard MAVLink "unknown" sentinel for that one field."""
+        self.battery_voltage_mv = voltage_mv
+        self.battery_remaining_pct = remaining_pct
 
     def set_fence_state(self, enabled: bool, breached: bool = False) -> None:
         """`breached` only means anything when `enabled` is True - matches
@@ -121,6 +129,15 @@ class MockFlightController:
             int(self.lat * 1e7), int(self.lon * 1e7), int(self.alt_m * 1000),
             0, 0, 0, 0,
             self.satellites_visible,
+        )
+
+    def _send_battery_status(self) -> None:
+        voltages = [self.battery_voltage_mv] + [65535] * 9  # only cell/pack slot 0 is used here
+        self._conn.mav.battery_status_send(
+            0, 0, 0, 32767,  # id, battery_function, type, temperature (32767 = unknown)
+            voltages,
+            -1, -1, -1,  # current_battery, current_consumed, energy_consumed - all "not measured"
+            self.battery_remaining_pct,
         )
 
     def _send_sys_status(self) -> None:
@@ -177,6 +194,7 @@ class MockFlightController:
             self._send_rc_channels()
             self._send_global_position()
             self._send_gps_raw_int()
+            self._send_battery_status()
             self._send_sys_status()
             self.poll_incoming()
             await asyncio.sleep(period)

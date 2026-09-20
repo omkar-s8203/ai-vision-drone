@@ -170,7 +170,21 @@ fun FlyTab(
                 val hasFix = (telemetry.gpsFixType ?: 0) >= 3
                 HUDTelemetryItem(label = "GPS", value = if (hasFix) "FIX" else "NO FIX", color = if (hasFix) DroneColors.Safe else DroneColors.Danger)
                 HUDTelemetryItem(label = "SAT", value = telemetry.satellitesVisible?.toString() ?: "--", color = DroneColors.TextPrimary)
-                HUDTelemetryItem(label = "BAT", value = "${telemetry.batteryRemainingPct ?: 0}%", color = if ((telemetry.batteryRemainingPct ?: 100) < 20) DroneColors.Danger else DroneColors.Safe)
+                // Previously used two different fallbacks for the same null
+                // field (0 for the displayed text, 100 for the color check),
+                // so "no telemetry yet" rendered as a self-contradictory
+                // "0% BAT" in Safe/green. Missing data now reads "--" in a
+                // neutral color, matching SAT/ALT/SPD elsewhere.
+                val batteryPct = telemetry.batteryRemainingPct
+                HUDTelemetryItem(
+                    label = "BAT",
+                    value = batteryPct?.let { "$it%" } ?: "--",
+                    color = when {
+                        batteryPct == null -> DroneColors.TextPrimary
+                        batteryPct < 20 -> DroneColors.Danger
+                        else -> DroneColors.Safe
+                    },
+                )
             }
         }
 

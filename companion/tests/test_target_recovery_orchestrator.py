@@ -216,6 +216,54 @@ async def test_operator_approving_landing_sets_land_mode(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_mode_command_away_from_follow_cancels_an_active_search(tmp_path):
+    """A real bug found in a code-review audit: only _on_abort() cancelled
+    an in-progress target-loss search - explicitly commanding away from
+    Follow/Orbit (e.g. selecting "Normal RC"/idle in the app) left the
+    yaw-sweep search running to completion on its own timer, deaf to the
+    operator's own mode change."""
+    with _build_orchestrator(tmp_path) as (orchestrator, recorder, conn, transport):
+        await _engage_follow(orchestrator)
+
+        ts = 0.1
+        for _ in range(6):
+            await orchestrator.process_frame(Frame(ts=ts, width=1280, height=720, raw_detection_output=[]))
+            ts += 0.05
+        assert orchestrator.recovery.is_active is True
+
+        orchestrator._on_mode_command({"mode": "idle"})
+
+        assert orchestrator.recovery.is_active is False
+        recorder.close()
+
+
+@pytest.mark.asyncio
+async def test_rtl_is_suppressed_while_pilot_has_rc_override(tmp_path):
+    """A real bug found in a code-review audit: RTL_TRIGGERED fired
+    mavlink.set_mode("RTL") unconditionally, even if the pilot had already
+    taken RC stick override mid-search - contradicting "RC override always
+    takes precedence" (docs/safety-case.md). The pilot is already flying
+    manually at that point; an autonomous RTL has nothing useful to
+    override and would yank control away from them instead."""
+    with _build_orchestrator(tmp_path) as (orchestrator, recorder, conn, transport):
+        await _engage_follow(orchestrator)
+        orchestrator.mavlink.telemetry.battery_remaining_pct = 80
+        orchestrator.mavlink.telemetry.home_lat = 37.7749
+        orchestrator.mavlink.telemetry.home_lon = -122.4194
+        orchestrator.mavlink.telemetry.lat = 37.7749
+        orchestrator.mavlink.telemetry.lon = -122.4194
+        orchestrator.mavlink.telemetry.rc_channels = {1: 1900}  # roll stick deflected - override
+
+        ts = 0.1
+        for _ in range(10):  # comfortably past the fast 0.2s search_timeout_s
+            await orchestrator.process_frame(Frame(ts=ts, width=1280, height=720, raw_detection_output=[]))
+            ts += 0.05
+
+        assert all(call.args[2] != 6 for call in conn.mav.set_mode_send.call_args_list)  # RTL (6) never sent
+        recorder.close()
+
+
+@pytest.mark.asyncio
 async def test_operator_denying_landing_does_not_land(tmp_path):
     with _build_orchestrator(tmp_path) as (orchestrator, recorder, conn, transport):
         await _engage_follow(orchestrator)

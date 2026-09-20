@@ -14,6 +14,8 @@ HOME_FC_PORT = 14724
 HOME_BRIDGE_PORT = 14725
 GPS_FC_PORT = 14726
 GPS_BRIDGE_PORT = 14727
+BATTERY_FC_PORT = 14728
+BATTERY_BRIDGE_PORT = 14729
 
 
 @pytest.mark.asyncio
@@ -168,6 +170,46 @@ async def test_bridge_reflects_real_gps_satellite_count_and_fix_type():
         mock_fc.set_gps(fix_type=3, satellites_visible=255)  # 255 = genuinely unknown
         await wait_until(lambda: mavlink.telemetry.gps_fix_type == 3, timeout=2.0)
         assert mavlink.telemetry.satellites_visible is None
+    finally:
+        fc_task.cancel()
+        mavlink_task.cancel()
+        await asyncio.gather(fc_task, mavlink_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_bridge_resets_battery_voltage_on_the_unknown_sentinel():
+    """A real bug found in a code-review audit: battery_voltage_v was only
+    ever updated on a valid reading, with no else-branch to clear it on
+    BATTERY_STATUS's standard 65535 "unknown" sentinel (unlike
+    battery_remaining_pct, which already resets on its own -1 sentinel a
+    few lines below). A real sensor/wiring fault reporting 65535 would
+    otherwise leave the last good voltage frozen forever, masking the
+    fault as "battery looks fine" on the Android HUD. This is the first
+    real MAVLink loopback test for BATTERY_STATUS at all - the mock FC
+    never sent one before this."""
+    mock_fc = MockFlightController(f"udpin:127.0.0.1:{BATTERY_FC_PORT}")
+    fc_task = asyncio.create_task(mock_fc.run(rate_hz=20.0))
+
+    mavlink = MavlinkBridge(f"udpin:127.0.0.1:{BATTERY_BRIDGE_PORT}")
+    mavlink.connect()
+    mavlink.prime_udp_peer("127.0.0.1", BATTERY_FC_PORT)
+    mavlink_task = asyncio.create_task(mavlink.run(on_message=lambda _msg: None))
+
+    try:
+        await wait_until(lambda: mavlink.telemetry.last_heartbeat_ts is not None, timeout=3.0)
+        # MockFlightController defaults to a healthy 12.4V / 80% reading.
+        await wait_until(lambda: mavlink.telemetry.battery_voltage_v is not None, timeout=2.0)
+        assert mavlink.telemetry.battery_voltage_v == pytest.approx(12.4, abs=1e-6)
+        assert mavlink.telemetry.battery_remaining_pct == 80
+
+        mock_fc.set_battery(voltage_mv=65535, remaining_pct=-1)  # a real sensor fault
+        await wait_until(lambda: mavlink.telemetry.battery_remaining_pct is None, timeout=2.0)
+        assert mavlink.telemetry.battery_voltage_v is None  # must not stay frozen at 12.4V
+
+        mock_fc.set_battery(voltage_mv=11800, remaining_pct=15)  # sensor recovers
+        await wait_until(lambda: mavlink.telemetry.battery_voltage_v is not None, timeout=2.0)
+        assert mavlink.telemetry.battery_voltage_v == pytest.approx(11.8, abs=1e-6)
+        assert mavlink.telemetry.battery_remaining_pct == 15
     finally:
         fc_task.cancel()
         mavlink_task.cancel()

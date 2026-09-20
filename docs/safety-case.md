@@ -36,6 +36,32 @@ mechanism is never silent to the operator.
   touching the mode switch" - it depends on the Pi being alive and reading
   `RC_CHANNELS`, so it is explicitly *not* a substitute for the hardware
   switch.
+- **A real bug found in a code-review audit, now fixed**: target-loss
+  recovery's automatic RTL (`companion/main.py`, see "Follow/Orbit-only"
+  below) fired `mavlink.set_mode("RTL")` unconditionally when its search
+  timed out - even if the pilot had already taken RC stick override
+  mid-search. That contradicted "RC override always takes precedence": the
+  pilot was already flying manually at that point, and an autonomous RTL
+  had nothing useful to override, only something to yank away. RTL is now
+  suppressed whenever `rc_override_active` is true at the moment the
+  timeout fires (`test_rtl_is_suppressed_while_pilot_has_rc_override`).
+  This is the one place in this project where an override-adjacent
+  decision lived outside `SafetySupervisor.evaluate()` itself (RTL is a
+  direct FC mode change, not a velocity setpoint, so it was never gated by
+  it) - worth remembering if a similar direct-mode-change path is ever
+  added elsewhere.
+- **A related known gap, deliberately not fixed here**: the software
+  backstop's fail-safe direction assumes `RC_CHANNELS` keeps arriving. If
+  a real FC only streams the legacy `RC_CHANNELS_RAW` message, or
+  `RC_CHANNELS` stops arriving mid-flight for any reason,
+  `telemetry.rc_channels` stays at its last value (or empty) and
+  `is_overriding()` silently keeps returning `False` forever - a stuck
+  backstop that looks alive. This wasn't fixed because it changes RC-
+  override safety semantics (e.g. what should "no RC telemetry" *do* -
+  fail open, force `SAFE`, or something else) and needs a decision plus
+  real-hardware validation, not just a mechanical patch. Flagged here so
+  it isn't lost - the hardware switch above is what actually makes this
+  gap non-critical in practice.
 - **Status**: software backstop implemented and unit/integration tested.
   **The hardware switch itself is not yet configured on the transmitter**
   (`FLTMODE_CH` param) - see root README "What's next" #4. Until that's
@@ -98,17 +124,25 @@ graceful fallback:
      (RC override, comms loss, obstacle proximity, stale subsystems all
      still apply). If the target reappears (via the tracker's own
      REACQUIRE window or the appearance-rematch above), the search cancels
-     and Follow/Orbit resumes normally with no operator action needed.
+     and Follow/Orbit resumes normally with no operator action needed. The
+     operator can also cancel it explicitly by commanding any mode other
+     than Follow/Orbit (e.g. "Normal RC") - **a real bug found in a
+     code-review audit**: only an explicit abort used to cancel an
+     in-progress search, so switching modes away from Follow/Orbit left
+     the yaw-sweep running to completion on its own timer regardless
+     (`test_mode_command_away_from_follow_cancels_an_active_search`).
   2. **Decision** (if the search times out): RTL by default
      (`MavlinkBridge.set_mode("RTL")`, a direct FC mode change, not a
      guidance setpoint - same category as `arm()`/`set_mode()` already
-     bypassing the velocity-setpoint gate). Only considers landing in
-     place instead if battery is below `low_battery_pct_threshold`
-     (default 20%) **and** an estimated RTL-feasibility check says the
-     aircraft likely can't make it home - see the honest caveat on that
-     estimate below. Missing telemetry (no GPS fix, no home position, no
-     battery reading) always defaults to RTL rather than guessing at a
-     landing decision with incomplete information.
+     bypassing the velocity-setpoint gate, and **suppressed if the pilot
+     has RC override active at that moment** - see "RC override" above).
+     Only considers landing in place instead if battery is below
+     `low_battery_pct_threshold` (default 20%) **and** an estimated
+     RTL-feasibility check says the aircraft likely can't make it home -
+     see the honest caveat on that estimate below. Missing telemetry (no
+     GPS fix, no home position, no battery reading) always defaults to RTL
+     rather than guessing at a landing decision with incomplete
+     information.
   3. **Landing requires an explicit operator decision** - never automatic.
      A `land_confirmation_request` message (distance to home, battery,
      and whether the existing obstacle-proximity detector currently sees
@@ -117,7 +151,14 @@ graceful fallback:
      `land_confirmation_response` arrives. Only `{"approved": true}`
      triggers `set_mode("LAND")`; a denial (or no response) leaves the
      aircraft exactly where the FC's own behavior already puts it (e.g.
-     GUIDED's setpoint-timeout hold).
+     GUIDED's setpoint-timeout hold). **A real bug found in a code-review
+     audit**: the target-reacquired check was gated on the search still
+     being active, but the timeout path clears that state the instant it
+     decides to ask for a landing - a target that reappeared while a
+     confirmation was outstanding was silently ignored, leaving the
+     operator stuck answering a question about a target that was already
+     back in view instead of just resuming Follow/Orbit
+     (`test_reacquiring_target_while_awaiting_land_confirmation_resumes_follow`).
 - **Distance-to-home**: `MavlinkBridge` requests a real `HOME_POSITION`
   message (`MAV_CMD_GET_HOME_POSITION`) once, on the arm transition, and
   parses ArduPilot's real reply - `companion/guidance/geo.py`'s haversine
@@ -285,7 +326,7 @@ Every mechanism above that has a corresponding `SafetySupervisor` gate is
 covered by at least one test that independently trips *only that
 condition* and asserts guidance is denied - this is what "fault injection"
 means in this codebase's test suite, not a separate framework. As of this
-writing: 200 companion tests passing
+writing: 207 companion tests passing
 (`.venv/Scripts/python -m pytest -q`), including a real end-to-end test
 (`test_integration_websocket.py`) that drives the actual JSON wire
 protocol over a real WebSocket and real MAVLink link, and real-MAVLink
@@ -326,3 +367,31 @@ just in-process Python calls.
   load-bearing starting at stage 4** (Follow-mode actually flying) - that
   stage, and everything after it, is correctly gated on both being closed
   first; stages 1-3 are not.
+- **Two known gaps found in a code-review audit, deliberately not fixed
+  yet** (beyond the RC_CHANNELS-staleness one under "RC override" above):
+  - `SessionRecorder.record()` (`companion/logging_/session_recorder.py`)
+    does a synchronous file write + flush on every call, from inside the
+    async per-frame hot loop, with no executor offload. Several calls can
+    fire within a single frame (an obstacle alert, a guidance command,
+    etc.), and on Pi SD/eMMC storage under contention (e.g. concurrent
+    video recording) each flush is a blocking syscall that can stall
+    MAVLink receive and WebRTC delivery for its duration. Not fixed here
+    because a safe fix needs either an async-aware logging path or an
+    explicit durability trade-off (buffered writes vs. crash-safety for a
+    safety-relevant flight log) - not a mechanical patch, and `record()`
+    is called from many synchronous, non-awaitable callback sites.
+  - `DistanceEstimator.estimate()` (`companion/guidance/distance.py`)
+    returns a single rangefinder reading for every detection in the frame
+    it's asked about, not specifically the tracked target's own distance.
+    Currently unreachable in practice - `RangefinderSource.__init__`
+    always raises `NotImplementedError`, since the M4 rangefinder hasn't
+    been purchased yet (see root README) - but once real rangefinder
+    hardware is wired up, this would make `check_proximity()` report the
+    tracked target's distance for every object in frame, including
+    untracked obstacles at a genuinely different distance, silently
+    defeating the obstacle-proximity check for anything not being
+    tracked. Flagged here now so it isn't rediscovered the hard way when
+    the rangefinder decision is finally made - fixing it needs a product
+    decision (e.g. only trust the rangefinder reading for the actively
+    tracked target, fall back to vision-only for everything else), not
+    just a mechanical patch.

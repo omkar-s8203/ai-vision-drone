@@ -1,3 +1,5 @@
+import threading
+import time
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -65,6 +67,57 @@ def test_start_returns_none_when_every_codec_fails_to_open(tmp_path):
     assert recorder.is_recording is False
     # Every fallback codec was tried, not just the first.
     assert fake_writer.isOpened.call_count == len(VideoRecorder._CODEC_FALLBACKS)
+
+
+def test_write_does_not_block_the_caller_while_the_encoder_is_slow(tmp_path):
+    """Real field-reported bug: recording used to make the whole live feed
+    "get slow" - traced to write() blocking its caller for the duration of
+    a real cv2.VideoWriter.write() call, once per frame. write() must
+    return essentially immediately regardless of how long the underlying
+    encode actually takes."""
+    recorder = VideoRecorder(tmp_path, fps=10)
+    slow_writer = MagicMock()
+    release_called = threading.Event()
+
+    def slow_write(_frame):
+        time.sleep(0.2)
+
+    slow_writer.write.side_effect = slow_write
+    slow_writer.isOpened.return_value = True
+
+    def fake_release():
+        release_called.set()
+
+    slow_writer.release.side_effect = fake_release
+
+    with patch("cv2.VideoWriter", return_value=slow_writer), patch("cv2.VideoWriter_fourcc"):
+        recorder.start(width=64, height=48)
+        frame = np.zeros((48, 64, 3), dtype=np.uint8)
+
+        started_at = time.monotonic()
+        recorder.write(frame)
+        elapsed = time.monotonic() - started_at
+
+        assert elapsed < 0.1  # nowhere near the encoder's own 0.2s
+        assert not release_called.is_set()  # the write hasn't even landed yet
+
+        recorder.stop()
+        assert release_called.is_set()  # stop() drained the slow write first
+
+
+def test_stop_waits_for_every_submitted_write_before_releasing(tmp_path):
+    """stop() must drain the write queue before finalizing the container -
+    releasing while writes are still in flight would drop trailing frames
+    or race with the encoder."""
+    recorder = VideoRecorder(tmp_path, fps=10)
+    recorder.start(width=64, height=48)
+    frame = np.zeros((48, 64, 3), dtype=np.uint8)
+    for _ in range(20):
+        recorder.write(frame)
+    path = recorder.stop()
+
+    assert path is not None
+    assert path.stat().st_size > 0
 
 
 def test_start_falls_back_to_a_working_codec(tmp_path):

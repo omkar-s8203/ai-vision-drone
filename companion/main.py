@@ -290,19 +290,27 @@ class CompanionOrchestrator:
     async def _handle_record_command(self, want_recording: bool) -> None:
         if self.video_recorder is None:
             return
+        loop = asyncio.get_event_loop()
         if want_recording and not self.video_recorder.is_recording:
             width, height = self._frame_size or (
                 self.camera.width if hasattr(self.camera, "width") else 1280,
                 self.camera.height if hasattr(self.camera, "height") else 720,
             )
-            path = self.video_recorder.start(width=width, height=height)
+            # Unlike write() (see VideoRecorder's own docstring), start()
+            # and stop() are one-off calls, not once-per-frame - offloading
+            # them via run_in_executor here is genuinely non-blocking
+            # (nothing else is waiting on this coroutine to keep pumping
+            # frames), and avoids a real field-reported bug where stop()'s
+            # cv2.VideoWriter.release() call froze the live video feed for
+            # its whole duration by blocking the shared event loop.
+            path = await loop.run_in_executor(None, self.video_recorder.start, width, height)
             if path is not None:
                 self.recorder.record("record_start", path=str(path))
             else:
                 log.error("VideoRecorder failed to open any codec - recording did not start")
                 self.recorder.record("record_start_failed")
         elif not want_recording and self.video_recorder.is_recording:
-            path = self.video_recorder.stop()
+            path = await loop.run_in_executor(None, self.video_recorder.stop)
             self.recorder.record("record_stop", path=str(path) if path else None)
         await self.link.send_recording_state(
             {
@@ -351,14 +359,16 @@ class CompanionOrchestrator:
         if self.video_recorder is not None and self.video_recorder.is_recording:
             frame_bgr = self._camera_frame()
             if frame_bgr is not None:
-                # cv2.VideoWriter.write() is a blocking encode+disk-I/O call;
-                # calling it inline here would stall this coroutine (and with
-                # it MAVLink parsing and the WebRTC track) for the duration of
-                # every frame's write while local recording is on. Run it off
-                # the event loop thread instead.
-                await asyncio.get_event_loop().run_in_executor(
-                    None, self.video_recorder.write, frame_bgr
-                )
+                # VideoRecorder.write() is non-blocking (submits to its own
+                # worker thread and returns immediately) - see its class
+                # docstring. It must NOT be awaited via run_in_executor
+                # here: that only stops it from blocking other tasks on the
+                # event loop, not from stalling this coroutine itself,
+                # which is the one actually producing frames for the live
+                # feed - awaiting it inline here was the real cause of a
+                # field-reported bug ("video gets slow when recording
+                # starts").
+                self.video_recorder.write(frame_bgr)
         detections = self.detector.parse(frame.raw_detection_output, frame.ts)
 
         if self._pending_selection is not None and self.state_machine.state == TrackingState.IDLE:

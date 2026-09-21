@@ -27,6 +27,12 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
 ]
+benchmark = [
+    # tools/benchmark_detection.py's CPU-usage measurement - optional,
+    # degrades gracefully (reports "unavailable" instead of failing) if
+    # not installed, see that module's own ImportError handling.
+    "psutil>=5.9",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["companion/tests"]

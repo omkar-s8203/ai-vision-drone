@@ -1,6 +1,7 @@
 package com.aivisiondrone.groundstation
 
 import android.content.Context
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aivisiondrone.groundstation.audio.AlertEvent
@@ -41,6 +42,7 @@ import org.webrtc.EglBase
 import org.webrtc.VideoTrack
 
 private const val RECONNECT_DELAY_MS = 3000L
+private const val TAG = "MainViewModel"
 
 // Mirrors the relevant subset of companion/safety/supervisor.py's
 // SupervisorState names - see the TRACKING_UPDATE handling below.
@@ -49,7 +51,13 @@ private val ONE_SHOT_MODES = setOf(DroneMode.DRONIE, DroneMode.PARABOLA)
 
 // Supervisor states that were actively driving the aircraft - used to tell
 // a real forced-SAFE (guidance was running, now isn't) from just idling.
-private val ACTIVE_GUIDANCE_STATES = setOf("FOLLOWING", "ORBITING", "APPROACHING", "SEARCHING", "SMART_SHOT")
+// GRID_SEARCH was missing here until a code-review audit caught it: an RC
+// override (or any other fault) interrupting a grid search produced no
+// "Guidance stopped" alert, even though the exact same interruption during
+// Follow/Orbit/Search/Approach/SmartShot always did - an inconsistent,
+// safety-relevant gap purely because this set predates that mode.
+private val ACTIVE_GUIDANCE_STATES =
+    setOf("FOLLOWING", "ORBITING", "APPROACHING", "SEARCHING", "SMART_SHOT", "GRID_SEARCH")
 
 /**
  * Ties the WebSocket control/telemetry channel and the WebRTC video channel
@@ -255,7 +263,26 @@ class MainViewModel : ViewModel() {
 
     init {
         viewModelScope.launch {
-            client.messages.collect { envelope -> handleEnvelope(envelope) }
+            // A real robustness bug: handleEnvelope() used to run
+            // unguarded here. Flow.collect propagates any exception its
+            // lambda throws, which cancels *this* collector coroutine -
+            // since nothing ever restarted it, one malformed/unexpected
+            // payload (a parse function hitting a value it didn't expect)
+            // would silently stop *every* future telemetry/tracking/
+            // detections/grid-search update from ever reaching the UI
+            // again, for the rest of the app's life, with the link itself
+            // still showing CONNECTED the whole time - a worse failure
+            // mode than any of the "no video"/"no GPS" states already
+            // handled, because nothing on screen would say so. One bad
+            // message should be dropped and logged, never take down every
+            // later one.
+            client.messages.collect { envelope ->
+                try {
+                    handleEnvelope(envelope)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to handle a ${envelope.type} message - dropping it, link stays up", e)
+                }
+            }
         }
         viewModelScope.launch {
             client.linkState.collect { state ->
@@ -451,6 +478,12 @@ class MainViewModel : ViewModel() {
         // the operator just told it to forget.
         _tracking.value = TrackingState()
         _trailSnapshot.value = TrailSnapshot(emptyList(), null, null)
+        // Same reasoning, found in the same audit: a running grid search
+        // (companion/main.py's _on_abort() already resets it Pi-side) used
+        // to keep showing "Sweeping - leg X of Y" and a Stop button here
+        // until the next grid_search_update round-trip caught up, instead
+        // of reflecting the abort immediately like tracking/the trail do.
+        _gridSearchState.value = GridSearchState()
         client.sendAbort("operator")
     }
 
@@ -669,6 +702,7 @@ class MainViewModel : ViewModel() {
                 "FOLLOWING" -> _alertEvents.tryEmit(AlertEvent.FOLLOWING_ENGAGED)
                 "ORBITING" -> _alertEvents.tryEmit(AlertEvent.ORBITING_ENGAGED)
                 "SEARCHING" -> _alertEvents.tryEmit(AlertEvent.SEARCHING_STARTED)
+                "GRID_SEARCH" -> _alertEvents.tryEmit(AlertEvent.GRID_SEARCH_STARTED)
                 "SAFE" -> if (prevSupervisor in ACTIVE_GUIDANCE_STATES) {
                     _alertEvents.tryEmit(AlertEvent.GUIDANCE_STOPPED)
                 }

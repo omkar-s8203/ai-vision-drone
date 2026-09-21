@@ -26,4 +26,13 @@ enum class AlertEvent(val spokenLine: String) {
      * frames. */
     PERIMETER_BREACHED("Perimeter breach detected"),
     PERIMETER_CLEARED("Perimeter clear"),
+
+    /** Grid/lawnmower area-sweep search engaged (companion/guidance/
+     * grid_search.py) - a real gap found in a code-review audit: every
+     * other guidance mode (Follow/Orbit/Search) announces itself when
+     * engaged, but Grid Search shipped with no case in
+     * MainViewModel.emitTrackingAlerts()'s `when` block, so it silently
+     * had no audio feedback at all despite otherwise following the exact
+     * same supervisorState-transition pattern as the others. */
+    GRID_SEARCH_STARTED("Grid search engaged"),
 }

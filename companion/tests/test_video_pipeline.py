@@ -87,3 +87,29 @@ async def test_aiortc_pipeline_streams_video_to_a_real_peer():
 
     await client_pc.close()
     await pipeline.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_raising_frame_source_sends_a_blank_frame_instead_of_dying():
+    """A real robustness gap found in a code-review audit: CameraStreamTrack.
+    recv() called frame_source() with no exception handling, so a single bad
+    frame from the camera (e.g. a transient picamera2 hiccup) would raise
+    straight out of aiortc's own frame-pulling loop, permanently killing
+    video for that connected operator - same class of bug already fixed in
+    ws_server.py's _dispatch(), main.py's _perception_loop(), and
+    mavlink/bridge.py's run(). Confirms recv() still returns a usable
+    (blank) frame instead of raising."""
+    calls = {"count": 0}
+
+    def flaky_frame_source():
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("boom - simulates a transient camera glitch")
+        return np.full((480, 640, 3), 255, dtype=np.uint8)
+
+    pipeline = AiortcVideoPipeline(frame_source=flaky_frame_source, fps=10)
+    track = pipeline._track_cls()
+
+    frame = await track.recv()  # must not raise
+    assert frame.width == 640
+    assert frame.height == 480

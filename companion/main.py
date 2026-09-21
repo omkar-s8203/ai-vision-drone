@@ -779,8 +779,23 @@ class CompanionOrchestrator:
         }
 
     async def _perception_loop(self) -> None:
+        # A real robustness gap found in a code-review audit: process_frame()
+        # ran here with no exception handling at all - a bug anywhere in
+        # it (a config typo, an unexpected None, a new guidance controller
+        # like grid_search.py hitting a case its own unit tests didn't
+        # cover) would propagate straight out of this loop and out of
+        # start() itself, killing camera capture, video, MAVLink, and
+        # telemetry all at once over what might only be one bad frame.
+        # systemd's Restart=on-failure would eventually recover it, but a
+        # full process restart is a far more disruptive failure mode than
+        # skipping one frame and continuing - guidance for that one frame
+        # is simply not sent (the same safe "no command" outcome as any
+        # other frame where a controller returns nothing), not a crash.
         async for frame in self.camera.frames():
-            await self.process_frame(frame)
+            try:
+                await self.process_frame(frame)
+            except Exception:
+                log.exception("process_frame() raised - skipping this frame, camera loop stays alive")
 
 
 SIM_FC_UDP_PORT = 14550

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import Callable, Optional
 
 import cv2
 import numpy as np
+
+log = logging.getLogger(__name__)
 
 
 def overlay_latency_timestamp(frame: np.ndarray) -> np.ndarray:
@@ -62,7 +65,14 @@ class AiortcVideoPipeline(VideoPipeline):
         class CameraStreamTrack(VideoStreamTrack):
             async def recv(self):
                 pts, time_base = await self.next_timestamp()
-                array = outer.frame_source()
+                try:
+                    array = outer.frame_source()
+                except Exception:
+                    log.exception(
+                        "frame_source() raised - sending a blank frame instead of "
+                        "killing this peer's video track"
+                    )
+                    array = None
                 if array is None:
                     array = np.zeros((480, 640, 3), dtype=np.uint8)
                 frame = outer._VideoFrame.from_ndarray(array, format="bgr24")

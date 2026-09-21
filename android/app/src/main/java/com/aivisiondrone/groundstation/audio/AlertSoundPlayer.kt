@@ -68,6 +68,7 @@ class AlertSoundPlayer(context: Context) {
         AlertEvent.FENCE_BREACHED -> ToneGenerator.TONE_SUP_ERROR
         AlertEvent.PERIMETER_BREACHED -> ToneGenerator.TONE_CDMA_ABBR_ALERT
         AlertEvent.PERIMETER_CLEARED -> ToneGenerator.TONE_PROP_ACK
+        AlertEvent.GRID_SEARCH_STARTED -> ToneGenerator.TONE_PROP_BEEP2
     }
 
     companion object {

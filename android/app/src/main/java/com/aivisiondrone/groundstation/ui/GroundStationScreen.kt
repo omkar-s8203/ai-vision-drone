@@ -1,6 +1,7 @@
 package com.aivisiondrone.groundstation.ui
 
 import android.content.Context
+import android.util.Log
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
@@ -118,13 +119,28 @@ fun GroundStationScreen(viewModel: MainViewModel, eglBase: EglBase, context: Con
         alertSoundPlayer.muted = alertsMuted
     }
     LaunchedEffect(Unit) {
-        viewModel.alertEvents.collect { event -> alertSoundPlayer.play(event) }
+        // A single bad tone/TTS call here must not silently kill audio
+        // alerts for the rest of the session - same exception-isolation
+        // reasoning as MainViewModel's message collector.
+        viewModel.alertEvents.collect { event ->
+            try {
+                alertSoundPlayer.play(event)
+            } catch (e: Exception) {
+                Log.e("GroundStationScreen", "Failed to play alert for $event", e)
+            }
+        }
     }
     LaunchedEffect(Unit) {
         // Abort must silence the buzzer immediately, including anything
         // already queued from a fast-moving failsafe cascade right before
         // the operator reacted - see MainViewModel.abort()'s docstring.
-        viewModel.stopAlerts.collect { alertSoundPlayer.stopAll() }
+        viewModel.stopAlerts.collect {
+            try {
+                alertSoundPlayer.stopAll()
+            } catch (e: Exception) {
+                Log.e("GroundStationScreen", "Failed to stop alerts", e)
+            }
+        }
     }
 
     // Rendered here (not inside a tab) so it's reachable no matter which

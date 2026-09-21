@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import logging
 import math
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from pymavlink import mavutil
+
+log = logging.getLogger(__name__)
 
 # MAV_CMD_COMPONENT_ARM_DISARM's documented param2 "force" value - not a
 # pymavlink-exposed named constant (checked directly: no such enum exists),
@@ -134,9 +137,19 @@ class MavlinkBridge:
                 msg = await loop.run_in_executor(None, recv)
                 if msg is None:
                     continue
-                self._handle_message(msg)
-                if on_message:
-                    on_message(msg)
+                try:
+                    self._handle_message(msg)
+                    if on_message:
+                        on_message(msg)
+                except Exception:
+                    try:
+                        msg_type = msg.get_type()
+                    except Exception:
+                        msg_type = type(msg)
+                    log.exception(
+                        "Failed to handle a %r MAVLink message - skipping it, receive loop stays alive",
+                        msg_type,
+                    )
         finally:
             heartbeat_task.cancel()
 

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Callable, Optional
 
 from companion.comms.protocol import Envelope, MessageType, SequenceCounter, make_envelope
 from companion.comms.transport import Transport
+
+log = logging.getLogger(__name__)
 
 
 class GroundStationLink:
@@ -72,7 +75,19 @@ class GroundStationLink:
             return
         handler = self._handlers.get(envelope.type)
         if handler is not None:
-            handler(envelope.payload)
+            # A real robustness gap: an unexpected/malformed payload (a
+            # missing key, a value that won't cast to float, ...) raising
+            # here used to propagate straight out of this synchronous
+            # dispatch call, up through WebSocketTransport's `async for raw
+            # in ws:` loop - closing the *entire* connection over one bad
+            # message, forcing the Android app to notice and reconnect
+            # (recoverable, but disruptive and easy to trigger from a
+            # single stray field). One handler's bug should drop that one
+            # message, not the link.
+            try:
+                handler(envelope.payload)
+            except Exception:
+                log.exception("Handler for %r raised on payload %r - message dropped, link stays up", envelope.type, envelope.payload)
 
     async def send_webrtc_answer(self, sdp: str, sdp_type: str) -> None:
         await self._send(MessageType.WEBRTC_ANSWER, {"sdp": sdp, "sdp_type": sdp_type})

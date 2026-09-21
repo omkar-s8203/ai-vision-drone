@@ -73,6 +73,31 @@ async def test_send_tracking_update_broadcasts_envelope():
 
 
 @pytest.mark.asyncio
+async def test_a_raising_handler_does_not_break_the_link_or_later_messages():
+    """A real robustness bug: a handler raising on a malformed/unexpected
+    payload (a missing key, a value that won't cast, ...) used to
+    propagate straight out of dispatch, up through WebSocketTransport's
+    receive loop - closing the entire connection over one bad message.
+    One handler's bug should drop that one message, not the link."""
+    transport = FakeTransport()
+    link = GroundStationLink(transport)
+
+    def bad_handler(payload: dict) -> None:
+        raise ValueError("boom")
+
+    link.on_target_selected(bad_handler)
+    bad_envelope = make_envelope(MessageType.TARGET_SELECT, {"x": 1}, seq=1)
+    transport.inject(bad_envelope.to_json())  # must not raise out of this call
+
+    calls = []
+    link.on_abort(lambda payload: calls.append(payload))
+    good_envelope = make_envelope(MessageType.ABORT, {"reason": "operator"}, seq=2)
+    transport.inject(good_envelope.to_json())
+
+    assert calls == [{"reason": "operator"}]
+
+
+@pytest.mark.asyncio
 async def test_is_connected_reflects_transport():
     connected_link = GroundStationLink(FakeTransport(connected=True))
     disconnected_link = GroundStationLink(FakeTransport(connected=False))

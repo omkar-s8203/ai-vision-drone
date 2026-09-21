@@ -33,7 +33,7 @@ class AlertSoundPlayer(context: Context) {
         toneGenerator?.startTone(toneFor(event), TONE_DURATION_MS)
         if (ttsReady) {
             tts.language = Locale.US
-            tts.speak(event.spokenLine, TextToSpeech.QUEUE_ADD, null, event.spokenLine)
+            tts.speak(event.spokenLine, TextToSpeech.QUEUE_ADD, null, event.name)
         }
     }
 
@@ -66,7 +66,6 @@ class AlertSoundPlayer(context: Context) {
         AlertEvent.LAND_CONFIRMATION_NEEDED -> ToneGenerator.TONE_CDMA_ABBR_ALERT
         AlertEvent.GUIDANCE_STOPPED -> ToneGenerator.TONE_SUP_ERROR
         AlertEvent.FENCE_BREACHED -> ToneGenerator.TONE_SUP_ERROR
-        is AlertEvent.ObjectDetected -> ToneGenerator.TONE_PROP_BEEP
     }
 
     companion object {

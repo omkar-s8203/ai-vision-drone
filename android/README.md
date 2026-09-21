@@ -362,29 +362,16 @@ Abort:**
   wired to a new `MainViewModel.stopAlerts` `SharedFlow<Unit>` that
   `abort()` emits into and `GroundStationScreen` collects.
 
-**New: a per-detection announcement buzzer** ("Car detected", "Person
-detected", ...) - a direct field request: "if anything detect by AI it
-should buzzer like Car detected, person detected, this will only tell
-when percentage of object goes around 50%." `MainViewModel.
-emitDetectionAnnouncements()` checks every live detection in each
-`detections_update` message against `OBJECT_DETECTION_ANNOUNCE_THRESHOLD`
-(0.5, matching the request verbatim), and announces any class crossing it
-- debounced per class name via a 6-second cooldown
-(`OBJECT_DETECTION_ANNOUNCE_COOLDOWN_MS`) so an object sitting
-continuously in frame (detections arrive up to the camera's target FPS)
-doesn't re-announce every single frame. This required converting
-`AlertEvent` from a plain enum to a sealed class - a fixed enum can't
-express "one case per arbitrary detected class name" - with a new
-`ObjectDetected(className)` case that computes its own spoken line
-("${className} detected"). Every existing `AlertEvent.X` call site (the
-original enum-style names, kept as nested `object`s under the sealed
-class) kept compiling completely unchanged. Independent of
-`tracking`/`emitTrackingAlerts` - this fires for *every* detected class in
-frame, not just the one actively tracked, and respects the same
-`alertsMuted` switch as every other alert.
+**Added, then removed at explicit request: a per-detection announcement
+buzzer** ("Car detected", "Person detected", ...) that fired for any live
+detection at or above 50% confidence, debounced per class. Required
+converting `AlertEvent` from a plain enum to a sealed class
+(`ObjectDetected(className)`); reverted back to a plain enum (its original
+form) once the feature itself was removed, since nothing else needed the
+dynamic-case capability. Not present in the current build.
 
-All four of the above confirmed via a real `gradle assembleDebug`; none
-yet heard or seen on a physical device this round.
+All of the above confirmed via a real `gradle assembleDebug`; none yet
+heard or seen on a physical device this round.
 
 **New: `GuidanceCommandPanel.kt`** - shows the active guidance controller's
 computed velocity setpoint (vx/vy/vz/yaw rate) and whether it actually

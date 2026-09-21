@@ -39,13 +39,6 @@ import org.webrtc.VideoTrack
 
 private const val RECONNECT_DELAY_MS = 3000L
 
-// Detection-announcement buzzer ("Car detected", "Person detected", ...) -
-// see emitDetectionAnnouncements(). 0.5 matches the field request
-// verbatim ("percentage of object goes around 50%"); the cooldown keeps a
-// continuously-detected object from re-announcing every single frame.
-private const val OBJECT_DETECTION_ANNOUNCE_THRESHOLD = 0.5
-private const val OBJECT_DETECTION_ANNOUNCE_COOLDOWN_MS = 6000L
-
 // Mirrors the relevant subset of companion/safety/supervisor.py's
 // SupervisorState names - see the TRACKING_UPDATE handling below.
 private val SAFE_OR_IDLE_STATES = setOf("IDLE", "SAFE")
@@ -506,7 +499,6 @@ class MainViewModel : ViewModel() {
                 _detections.value = parsed
                 detectionHeatmap.record(parsed)
                 _heatmapSnapshot.value = detectionHeatmap.snapshot()
-                emitDetectionAnnouncements(parsed)
             }
             MessageType.LAND_CONFIRMATION_REQUEST -> {
                 _landConfirmationRequest.value = LandConfirmationRequest(
@@ -595,30 +587,6 @@ class MainViewModel : ViewModel() {
                     _alertEvents.tryEmit(AlertEvent.GUIDANCE_STOPPED)
                 }
             }
-        }
-    }
-
-    /** Announces any live detection at or above
-     * `OBJECT_DETECTION_ANNOUNCE_THRESHOLD` confidence ("Car detected",
-     * "Person detected", ...) - a real field request: "if anything detect
-     * by AI it should buzzer like Car detected, person detected, this will
-     * only tell when percentage of object goes around 50%." Debounced per
-     * class via `lastAnnouncedAtMs` so an object sitting continuously in
-     * frame (detections arrive up to the camera's target FPS) doesn't
-     * re-announce every single frame - once per class per cooldown window
-     * instead. This is independent of `tracking`/`emitTrackingAlerts`
-     * above: it fires for *every* detected class in frame, not just the
-     * one actively tracked. */
-    private val lastAnnouncedAtMs = mutableMapOf<String, Long>()
-
-    private fun emitDetectionAnnouncements(detections: DetectionsState) {
-        val now = System.currentTimeMillis()
-        for (detection in detections.detections) {
-            if (detection.score < OBJECT_DETECTION_ANNOUNCE_THRESHOLD) continue
-            val lastAnnounced = lastAnnouncedAtMs[detection.className]
-            if (lastAnnounced != null && now - lastAnnounced < OBJECT_DETECTION_ANNOUNCE_COOLDOWN_MS) continue
-            lastAnnouncedAtMs[detection.className] = now
-            _alertEvents.tryEmit(AlertEvent.ObjectDetected(detection.className))
         }
     }
 

@@ -91,6 +91,19 @@ class MavlinkBridge:
         self.baud = baud
         self._conn = None
         self.telemetry = TelemetrySnapshot()
+        # A real gap found on hardware: this bridge only ever HEARTBEATs back
+        # and passively waited for the FC to stream everything else on its
+        # own - HEARTBEAT is always sent regardless, but ArduPilot only
+        # auto-streams GLOBAL_POSITION_INT/ATTITUDE/VFR_HUD/RC_CHANNELS/
+        # SYS_STATUS/BATTERY_STATUS/GPS_RAW_INT to a link that has actually
+        # asked for them (e.g. a real GCS like Mission Planner sends
+        # REQUEST_DATA_STREAM on connect) - a companion computer that never
+        # asks can sit there getting heartbeats forever with nothing else,
+        # exactly matching a real field report: every telemetry field except
+        # fc_mode/armed stayed "--" even with "Link: OK". Requested once,
+        # right after the first heartbeat reveals the FC's target_system/
+        # target_component (see _handle_message).
+        self._requested_data_streams = False
 
     @property
     def is_connected(self) -> bool:
@@ -152,6 +165,9 @@ class MavlinkBridge:
                 msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED
             )
             self.telemetry.last_heartbeat_ts = time.monotonic()
+            if not self._requested_data_streams:
+                self.request_data_streams()
+                self._requested_data_streams = True
         elif msg_type == "GLOBAL_POSITION_INT":
             self.telemetry.lat = msg.lat / 1e7
             self.telemetry.lon = msg.lon / 1e7
@@ -234,6 +250,31 @@ class MavlinkBridge:
             # integration in this project - see docs/safety-case.md.
             self.telemetry.home_lat = msg.latitude / 1e7
             self.telemetry.home_lon = msg.longitude / 1e7
+
+    def request_data_streams(self, rate_hz: int = 4) -> None:
+        """Sends a real REQUEST_DATA_STREAM(req_stream_id=MAV_DATA_STREAM_ALL)
+        - the standard way a companion computer asks ArduPilot to actually
+        start sending GLOBAL_POSITION_INT/ATTITUDE/VFR_HUD/RC_CHANNELS/
+        SYS_STATUS/BATTERY_STATUS/GPS_RAW_INT, the same request a real GCS
+        (Mission Planner/QGroundControl) sends on connect. Without this,
+        ArduPilot has no reason to stream any of that to a link that never
+        asked - HEARTBEAT is the one exception (sent unconditionally,
+        independent of stream-rate config), which is why a real field
+        report showed a healthy "Link: OK" (real HEARTBEAT parsing) with
+        every other telemetry field stuck on "--" forever. Deprecated in
+        favor of MAV_CMD_SET_MESSAGE_INTERVAL by the MAVLink spec, but still
+        the simplest correct option here (one call covers every stream
+        group ArduPilot has, individually verified via pymavlink's own
+        request_data_stream_send signature and MAV_DATA_STREAM_* enum, not
+        guessed) and ArduPilot still honors it."""
+        assert self._conn is not None, "call connect() first"
+        self._conn.mav.request_data_stream_send(
+            self._conn.target_system,
+            self._conn.target_component,
+            mavutil.mavlink.MAV_DATA_STREAM_ALL,
+            rate_hz,
+            1,  # start_stop: 1 = start
+        )
 
     def arm(self, armed: bool, force: bool = False) -> None:
         """Sends MAV_CMD_COMPONENT_ARM_DISARM - a direct, standard GCS

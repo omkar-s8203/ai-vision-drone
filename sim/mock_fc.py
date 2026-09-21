@@ -60,6 +60,7 @@ class MockFlightController:
         self.climb_mps = 0.0
         self.throttle_pct = 0
         self.received_setpoints: list[tuple[float, float, float, float]] = []
+        self.received_data_stream_requests: list[tuple[int, int, int]] = []
 
     def set_mode(self, mode: str) -> None:
         """Simulates the pilot's hardware mode switch changing the FC mode -
@@ -236,6 +237,10 @@ class MockFlightController:
                 # project reads COMMAND_ACK for this request today.
             elif msg_type == "SET_MODE":
                 self.fc_mode = COPTER_NUMBER_TO_MODE.get(msg.custom_mode, self.fc_mode)
+            elif msg_type == "REQUEST_DATA_STREAM":
+                self.received_data_stream_requests.append(
+                    (msg.req_stream_id, msg.req_message_rate, msg.start_stop)
+                )
 
     async def run(self, rate_hz: float = 4.0) -> None:
         period = 1.0 / rate_hz

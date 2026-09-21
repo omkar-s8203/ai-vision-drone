@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+from pymavlink import mavutil
 
 from companion.mavlink.bridge import MavlinkBridge
 from companion.tests.conftest import wait_until
@@ -18,6 +19,8 @@ BATTERY_FC_PORT = 14728
 BATTERY_BRIDGE_PORT = 14729
 STATUS_FC_PORT = 14732
 STATUS_BRIDGE_PORT = 14733
+STREAM_REQUEST_FC_PORT = 14734
+STREAM_REQUEST_BRIDGE_PORT = 14735
 
 
 @pytest.mark.asyncio
@@ -271,6 +274,46 @@ async def test_bridge_reflects_real_attitude_navigation_and_rc_link_fields():
         assert mavlink.telemetry.hdop is None
         assert mavlink.telemetry.vdop is None
         assert mavlink.telemetry.current_battery_a is None
+    finally:
+        fc_task.cancel()
+        mavlink_task.cancel()
+        await asyncio.gather(fc_task, mavlink_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_bridge_requests_data_streams_once_after_first_heartbeat():
+    """A real bug found from a field report: 'Link: OK' (real HEARTBEAT
+    parsing) but every other telemetry field stuck on '--' forever, even
+    lat/lon/GPS fields that worked in earlier hardware sessions. Root
+    cause: this bridge only ever heartbeats back and passively waits for
+    the FC to stream everything else - HEARTBEAT is unconditional, but
+    ArduPilot only auto-streams GLOBAL_POSITION_INT/ATTITUDE/VFR_HUD/
+    RC_CHANNELS/SYS_STATUS/BATTERY_STATUS/GPS_RAW_INT to a link that
+    actually asked, the way a real GCS does on connect. This proves a real
+    REQUEST_DATA_STREAM(MAV_DATA_STREAM_ALL) reaches a real (mock) FC
+    exactly once, not once per heartbeat (the mock FC sends heartbeats at
+    20Hz in this test - repeating the request every time would still work
+    functionally but would be needless spam)."""
+    mock_fc = MockFlightController(f"udpin:127.0.0.1:{STREAM_REQUEST_FC_PORT}")
+    fc_task = asyncio.create_task(mock_fc.run(rate_hz=20.0))
+
+    mavlink = MavlinkBridge(f"udpin:127.0.0.1:{STREAM_REQUEST_BRIDGE_PORT}")
+    mavlink.connect()
+    mavlink.prime_udp_peer("127.0.0.1", STREAM_REQUEST_FC_PORT)
+    mavlink_task = asyncio.create_task(mavlink.run(on_message=lambda _msg: None))
+
+    try:
+        await wait_until(lambda: mavlink.telemetry.last_heartbeat_ts is not None, timeout=3.0)
+        # Give a few more heartbeat cycles a chance to (wrongly) trigger
+        # repeat requests, so this test would actually catch a regression.
+        await asyncio.sleep(0.3)
+        mock_fc.poll_incoming()
+
+        assert len(mock_fc.received_data_stream_requests) == 1
+        req_stream_id, req_message_rate, start_stop = mock_fc.received_data_stream_requests[0]
+        assert req_stream_id == mavutil.mavlink.MAV_DATA_STREAM_ALL
+        assert req_message_rate > 0
+        assert start_stop == 1
     finally:
         fc_task.cancel()
         mavlink_task.cancel()

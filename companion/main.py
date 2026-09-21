@@ -44,6 +44,7 @@ from companion.safety.supervisor import (
 from companion.safety.watchdog import HeartbeatWatchdog, SystemdWatchdog
 from companion.tracking.appearance import AppearanceMemory
 from companion.tracking.base import Tracker
+from companion.tracking.bytetrack_impl import ByteTrackTracker
 from companion.tracking.iou_tracker import IouKalmanTracker
 from companion.tracking.state import TrackingState, TrackingStateMachine
 from companion.tracking.target_selector import select_target, select_target_at_point
@@ -802,6 +803,25 @@ SIM_FC_UDP_PORT = 14550
 SIM_BRIDGE_UDP_PORT = 14551
 
 
+def build_tracker(hardware_cfg: dict) -> Tracker:
+    """Picks the tracker implementation from `hardware.yaml`'s `tracker.impl`
+    (default "iou", also accepts "bytetrack") instead of hardcoding
+    IouKalmanTracker - ByteTrackTracker is fully implemented and unit-tested
+    (companion/tracking/bytetrack_impl.py) but has never been run against
+    real hardware, so it stays opt-in via config rather than the default."""
+    tracker_cfg = hardware_cfg.get("tracker", {})
+    impl = tracker_cfg.get("impl", "iou")
+    if impl == "bytetrack":
+        return ByteTrackTracker(
+            high_score_thresh=tracker_cfg.get("high_score_thresh", 0.6),
+            low_score_thresh=tracker_cfg.get("low_score_thresh", 0.1),
+            min_iou=tracker_cfg.get("min_iou", 0.3),
+        )
+    if impl != "iou":
+        raise ValueError(f"Unknown tracker.impl {impl!r} in hardware.yaml - expected 'iou' or 'bytetrack'")
+    return IouKalmanTracker()
+
+
 def build_sim_orchestrator() -> tuple[CompanionOrchestrator, "object"]:
     """Builds a fully self-contained sim-mode stack: synthetic camera/target
     and an embedded MockFlightController, so `python -m companion.main`
@@ -836,7 +856,7 @@ def build_sim_orchestrator() -> tuple[CompanionOrchestrator, "object"]:
         detection_source=generator.detections_at,
     )
     detector = PassthroughDetector()
-    tracker = IouKalmanTracker()
+    tracker = build_tracker(hardware_cfg)
     distance_estimator = DistanceEstimator(CameraIntrinsics.from_dict(calib_cfg))
     follow_controller = FollowController(follow_cfg)
     orbit_controller = OrbitController(orbit_cfg)
@@ -924,7 +944,7 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
         class_names=intrinsics.labels,
         score_threshold=hardware_cfg["camera"].get("score_threshold", 0.5),
     )
-    tracker = IouKalmanTracker()
+    tracker = build_tracker(hardware_cfg)
     rangefinder = None
     rangefinder_cfg = hardware_cfg.get("rangefinder", {})
     if rangefinder_cfg.get("enabled"):

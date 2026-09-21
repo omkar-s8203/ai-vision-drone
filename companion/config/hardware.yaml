@@ -48,3 +48,15 @@ rangefinder:
   enabled: false
   port: /dev/serial1
   baud: 115200
+
+# Tracker implementation (companion/main.py's build_tracker()). "iou" (the
+# default) is IouKalmanTracker, confirmed working live against real hardware.
+# "bytetrack" selects ByteTrackTracker (companion/tracking/bytetrack_impl.py)
+# - implemented and unit-tested against synthetic sequences, but not yet run
+# against real hardware, so it stays opt-in here rather than the default.
+tracker:
+  impl: iou
+  # Only read when impl is "bytetrack":
+  high_score_thresh: 0.6
+  low_score_thresh: 0.1
+  min_iou: 0.3

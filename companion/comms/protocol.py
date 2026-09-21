@@ -18,6 +18,7 @@ class MessageType:
     LAND_CONFIRMATION_RESPONSE = "land_confirmation_response"
     TRACKING_UPDATE = "tracking_update"
     DETECTIONS_UPDATE = "detections_update"
+    GRID_SEARCH_UPDATE = "grid_search_update"
     TELEMETRY = "telemetry"
     HEALTH = "health"
     ACK = "ack"

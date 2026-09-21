@@ -41,6 +41,13 @@ enum class DroneMode(val wireValue: String, val label: String) {
     APPROACHING("approach", "Approach Test"),
     DRONIE("dronie", "Dronie"),
     PARABOLA("parabola", "Parabola"),
+    // Deliberately excluded from ModeControls' auto-generated button row
+    // below (unlike every other mode, selecting it needs width/height
+    // parameters first - see GridSearchControls.kt) - a field request
+    // extending the existing single-target search into deliberate area
+    // coverage, the same recon/surveillance use case as the Android app's
+    // perimeter/intrusion alert.
+    GRID_SEARCH("grid_search", "Grid Search"),
 }
 
 // Mirrors follow_limits.yaml/orbit_limits.yaml's min_speed_mps/max_speed_mps -
@@ -85,7 +92,7 @@ fun ModeControls(
                 modifier = Modifier.horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                DroneMode.entries.forEach { mode ->
+                DroneMode.entries.filter { it != DroneMode.GRID_SEARCH }.forEach { mode ->
                     Button(
                         onClick = { onModeSelected(mode) },
                         shape = RoundedCornerShape(12.dp),
@@ -163,8 +170,9 @@ fun ModeControls(
     }
 }
 
+/** Not private: reused by GridSearchControls.kt in this same package. */
 @Composable
-private fun LabeledSlider(
+fun LabeledSlider(
     label: String,
     valueText: String,
     value: Float,

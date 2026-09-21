@@ -19,6 +19,7 @@ class SupervisorState(Enum):
     APPROACHING = auto()
     SMART_SHOT = auto()  # one-shot cinematic move (Dronie/Parabola) - see smart_shot.py
     SEARCHING = auto()  # bounded yaw-sweep after losing a Follow/Orbit target - see target_recovery.py
+    GRID_SEARCH = auto()  # deliberate lawnmower area-sweep - see grid_search.py
     SAFE = auto()  # fault or pilot override in effect - guidance disabled
 
 
@@ -95,7 +96,11 @@ class SafetySupervisor:
         # SEARCHING is intentionally not in this tuple - the orchestrator
         # only ever requests it once the target is already lost (see
         # target_recovery.py), so target_lost is what SEARCHING is *for*,
-        # not a reason to block it.
+        # not a reason to block it. GRID_SEARCH is also not in this tuple,
+        # for a different reason: it never tracks a visual target at all
+        # (grid_search.py flies a pre-planned GPS route), so a stale/
+        # nonexistent tracking_state has nothing to do with whether it
+        # should be allowed to continue.
         if inputs.tracking_state == TrackingState.TARGET_LOST and inputs.requested_state in (
             SupervisorState.FOLLOWING,
             SupervisorState.ORBITING,
@@ -112,5 +117,6 @@ class SafetySupervisor:
             SupervisorState.APPROACHING,
             SupervisorState.SMART_SHOT,
             SupervisorState.SEARCHING,
+            SupervisorState.GRID_SEARCH,
         )
         return SupervisorDecision(self.state, allowed, None)

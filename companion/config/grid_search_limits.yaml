@@ -1,0 +1,45 @@
+# Grid/lawnmower area-sweep search mode (companion/guidance/grid_search.py) -
+# a field request extending the existing single-target yaw-sweep search
+# (target_recovery.yaml, which searches in place) into deliberate area
+# coverage for the same recon/surveillance use case as the Android app's
+# perimeter/intrusion alert.
+
+# How far apart parallel sweep legs are, in meters - the effective "swath
+# width" of whatever the camera can usefully see at the search altitude.
+# Smaller = more thorough coverage but a longer, slower sweep.
+leg_spacing_m: 15.0
+
+# Forward speed while actually facing a waypoint (see
+# max_heading_error_deg_to_advance below) - deliberately conservative, this
+# is a systematic-coverage mode, not a race to finish.
+search_speed_mps: 2.5
+
+# A waypoint counts as "reached" once within this radius - too small risks
+# oscillating around a point it can't precisely hit; too large skips real
+# coverage near each turn.
+waypoint_radius_m: 3.0
+
+# Only move forward once the heading error to the next waypoint is under
+# this - translating sideways at speed while still turning to face the
+# right way would send the aircraft off in the wrong direction rather than
+# toward the next point.
+max_heading_error_deg_to_advance: 25.0
+
+max_yaw_rate_rads: 0.5
+
+max_speed_mps: 2.5
+
+# null = no altitude hold, vertical stays wherever the aircraft already is
+# when the mode engages. Set a real value once flight-tested, per this
+# project's own "verify against real hardware before trusting it" pattern.
+search_altitude_m: null
+
+pid:
+  yaw:
+    kp: 0.02
+    ki: 0.0
+    kd: 0.005
+  altitude:
+    kp: 0.5
+    ki: 0.05
+    kd: 0.1

@@ -27,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aivisiondrone.groundstation.MainViewModel
 import com.aivisiondrone.groundstation.control.DroneMode
+import com.aivisiondrone.groundstation.control.GridSearchControls
 import com.aivisiondrone.groundstation.control.ModeControls
 import com.aivisiondrone.groundstation.telemetry.RawDetection
 import com.aivisiondrone.groundstation.ui.theme.DroneColors
@@ -54,6 +55,7 @@ fun AiModesTab(
     val orbitMaxSpeedMps by viewModel.orbitMaxSpeedMps.collectAsState()
     val tracking by viewModel.tracking.collectAsState()
     val detections by viewModel.detections.collectAsState()
+    val gridSearchState by viewModel.gridSearchState.collectAsState()
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
@@ -86,6 +88,15 @@ fun AiModesTab(
                 onOrbitAltitudeChanged = { viewModel.setOrbitAltitude(it) },
                 onFollowMaxSpeedChanged = { viewModel.setFollowMaxSpeed(it) },
                 onOrbitMaxSpeedChanged = { viewModel.setOrbitMaxSpeed(it) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+
+        item {
+            GridSearchControls(
+                gridSearchState = gridSearchState,
+                onStart = { widthM, heightM -> viewModel.startGridSearch(widthM, heightM) },
+                onStop = { viewModel.stopGridSearch() },
                 modifier = Modifier.fillMaxWidth(),
             )
         }

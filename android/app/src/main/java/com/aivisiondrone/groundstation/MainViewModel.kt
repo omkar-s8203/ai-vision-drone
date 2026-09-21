@@ -12,12 +12,15 @@ import com.aivisiondrone.groundstation.comms.optIntOrNull
 import com.aivisiondrone.groundstation.comms.optStringOrNull
 import com.aivisiondrone.groundstation.control.DetectionHeatmap
 import com.aivisiondrone.groundstation.control.DroneMode
+import com.aivisiondrone.groundstation.control.FlightPathTrail
 import com.aivisiondrone.groundstation.control.HeatmapSnapshot
 import com.aivisiondrone.groundstation.control.TargetTrail
 import com.aivisiondrone.groundstation.control.TrailSnapshot
 import com.aivisiondrone.groundstation.telemetry.DetectionsState
+import com.aivisiondrone.groundstation.telemetry.GridSearchState
 import com.aivisiondrone.groundstation.telemetry.HealthState
 import com.aivisiondrone.groundstation.telemetry.LandConfirmationRequest
+import com.aivisiondrone.groundstation.telemetry.LatLon
 import com.aivisiondrone.groundstation.telemetry.RawDetection
 import com.aivisiondrone.groundstation.telemetry.RecordingState
 import com.aivisiondrone.groundstation.telemetry.TargetBBox
@@ -101,6 +104,13 @@ class MainViewModel : ViewModel() {
     private val _trailSnapshot = MutableStateFlow(TrailSnapshot(emptyList(), null, null))
     val trailSnapshot = _trailSnapshot.asStateFlow()
 
+    /** The aircraft's own GPS track - see control/FlightPathTrail.kt. Part
+     * of a field request: "live map view (drone position, home, flight
+     * path)." */
+    private val flightPathTrail = FlightPathTrail()
+    private val _flightPathSnapshot = MutableStateFlow<List<LatLon>>(emptyList())
+    val flightPathSnapshot = _flightPathSnapshot.asStateFlow()
+
     /** Perimeter/intrusion zone - a defence-relevant field request:
      * "perimeter / intrusion alert." The operator drags out a rectangle on
      * the live video (FlyTab's "PERIMETER" HUD chip); any live detection
@@ -145,6 +155,30 @@ class MainViewModel : ViewModel() {
             _alertEvents.tryEmit(AlertEvent.PERIMETER_CLEARED)
         }
         _perimeterBreached.value = occupiedNow
+    }
+
+    /** Systematic area-sweep ("lawnmower") search - see
+     * control/GridSearchControls.kt and companion/guidance/grid_search.py.
+     * A field request extending the existing single-target search into
+     * deliberate area coverage, the same recon/surveillance use case as
+     * the perimeter/intrusion alert above. */
+    private val _gridSearchState = MutableStateFlow(GridSearchState())
+    val gridSearchState = _gridSearchState.asStateFlow()
+
+    /** The area's start corner is the aircraft's own current position at
+     * the moment the Pi handles this message (companion/main.py reads it
+     * directly from live telemetry) - no lat/lon is sent from here. */
+    fun startGridSearch(widthM: Float, heightM: Float) {
+        _mode.value = DroneMode.GRID_SEARCH
+        client.sendModeCommand(
+            DroneMode.GRID_SEARCH.wireValue,
+            gridSearchWidthM = widthM.toDouble(),
+            gridSearchHeightM = heightM.toDouble(),
+        )
+    }
+
+    fun stopGridSearch() {
+        setMode(DroneMode.IDLE)
     }
 
     /** Non-null exactly while a land_confirmation_request is awaiting the
@@ -509,6 +543,8 @@ class MainViewModel : ViewModel() {
                 val parsed = parseTelemetry(envelope.payload)
                 emitTelemetryAlerts(previous, parsed)
                 _telemetry.value = parsed
+                flightPathTrail.record(parsed.lat, parsed.lon)
+                _flightPathSnapshot.value = flightPathTrail.snapshot()
             }
             MessageType.HEALTH -> {
                 val health = parseHealth(envelope.payload)
@@ -546,6 +582,9 @@ class MainViewModel : ViewModel() {
                 detectionHeatmap.record(parsed)
                 _heatmapSnapshot.value = detectionHeatmap.snapshot()
                 checkPerimeterIntrusion(parsed)
+            }
+            MessageType.GRID_SEARCH_UPDATE -> {
+                _gridSearchState.value = parseGridSearchState(envelope.payload)
             }
             MessageType.LAND_CONFIRMATION_REQUEST -> {
                 _landConfirmationRequest.value = LandConfirmationRequest(
@@ -696,6 +735,23 @@ class MainViewModel : ViewModel() {
             imageWidth = p.optIntOrNull("image_width"),
             imageHeight = p.optIntOrNull("image_height"),
             detections = list,
+        )
+    }
+
+    private fun parseGridSearchState(p: JSONObject): GridSearchState {
+        val array = p.optJSONArray("waypoints")
+        val waypoints = mutableListOf<LatLon>()
+        if (array != null) {
+            for (i in 0 until array.length()) {
+                val pair = array.getJSONArray(i)
+                waypoints.add(LatLon(pair.getDouble(0), pair.getDouble(1)))
+            }
+        }
+        return GridSearchState(
+            active = p.optBoolean("active", false),
+            phase = p.optString("phase", "IDLE"),
+            waypoints = waypoints,
+            currentIndex = p.optInt("current_index", 0),
         )
     }
 }

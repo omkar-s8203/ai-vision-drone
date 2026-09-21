@@ -124,3 +124,17 @@ data class LandConfirmationRequest(
     val obstacleDetected: Boolean = false,
     val obstacleClassName: String? = null,
 )
+
+data class LatLon(val lat: Double, val lon: Double)
+
+/** Grid/lawnmower area-sweep search mode (companion/guidance/grid_search.py) -
+ * a field request extending the existing single-target yaw-sweep search
+ * into deliberate area coverage. Sent every frame regardless of mode
+ * (mirroring detections_update/tracking_update), so the live map always
+ * has current state without needing a separate one-shot "final" message. */
+data class GridSearchState(
+    val active: Boolean = false,
+    val phase: String = "IDLE",
+    val waypoints: List<LatLon> = emptyList(),
+    val currentIndex: Int = 0,
+)

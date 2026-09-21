@@ -116,6 +116,9 @@ class GroundStationClient(private val client: OkHttpClient = OkHttpClient()) {
         orbitAltitudeM: Double? = null,
         followMaxSpeedMps: Double? = null,
         orbitMaxSpeedMps: Double? = null,
+        gridSearchWidthM: Double? = null,
+        gridSearchHeightM: Double? = null,
+        gridSearchHeadingDeg: Double? = null,
     ) {
         val payload = JSONObject().put("mode", mode)
         if (followSeparationM != null) payload.put("follow_separation_m", followSeparationM)
@@ -124,6 +127,13 @@ class GroundStationClient(private val client: OkHttpClient = OkHttpClient()) {
         if (orbitAltitudeM != null) payload.put("orbit_altitude_m", orbitAltitudeM)
         if (followMaxSpeedMps != null) payload.put("follow_max_speed_mps", followMaxSpeedMps)
         if (orbitMaxSpeedMps != null) payload.put("orbit_max_speed_mps", orbitMaxSpeedMps)
+        // Only required to actually start a fresh sweep - the Pi plans it
+        // from wherever the aircraft currently is at the moment it handles
+        // this message (companion/main.py's _on_mode_command), so no
+        // lat/lon is sent from here at all.
+        if (gridSearchWidthM != null) payload.put("grid_search_width_m", gridSearchWidthM)
+        if (gridSearchHeightM != null) payload.put("grid_search_height_m", gridSearchHeightM)
+        if (gridSearchHeadingDeg != null) payload.put("grid_search_heading_deg", gridSearchHeadingDeg)
         send(MessageType.MODE_COMMAND, payload)
     }
 

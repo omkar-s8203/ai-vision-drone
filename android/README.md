@@ -393,6 +393,47 @@ tracking/guidance - runs continuously regardless of AI mode, since a
 perimeter watch is a standalone situational-awareness function, not tied
 to whether a target happens to be locked.
 
+**New: a live, fully offline flight map** (`control/FlightMapView.kt`,
+`control/FlightPathTrail.kt`), a direct field request ("live map view -
+drone position, home, flight path"). Deliberately no online map tiles -
+this app never uses internet access anywhere, by design (see root
+README's "Offline operation"). `FlightMapView` is a vector-drawn `Canvas`
+plotting home, the aircraft's current position (an arrow rotated to its
+live compass heading via `telemetry.headingDeg`), its accumulated
+flight-path trail, and - when a grid search is active - the planned
+lawnmower route with progress (visited waypoints dimmed), all as
+local-meters offsets from a reference point (home if known, else the
+aircraft's own current position) using a flat equirectangular
+approximation - entirely adequate at the scale this drone actually
+operates over, not meant for long-range navigation (the Pi's own guidance
+math, `companion/guidance/geo.py`, uses real spherical geodesy). The view
+auto-scales to fit whatever's currently plotted, with two faint range
+rings for a sense of scale. `FlightPathTrail` records the aircraft's own
+GPS track from every `telemetry` message (not `tracking_update` - this is
+the aircraft's own position, orthogonal to whatever it's tracking) into a
+bounded ~500-point ring buffer, the same design as `TargetTrail.kt`'s
+target-movement trail. Added to the Status tab, next to the existing
+home-radar compass widget.
+
+**New: Grid Search mode controls** (`control/GridSearchControls.kt`),
+pairing with the Pi's new `GridSearchController`
+(`companion/guidance/grid_search.py`, a field request extending the
+existing single-target search into deliberate area coverage - the same
+recon/surveillance use case as the perimeter alert above). Its own card in
+the AI Modes tab, deliberately not folded into `ModeControls`' button row:
+unlike every other mode, starting this one needs width/height parameters
+up front that aren't live-adjustable once the sweep is planned, so it
+shows either a start form (area-size sliders + a "Start Grid Search"
+button) or live progress ("Sweeping - leg X of Y" + a "Stop Sweep"
+button), never both. `MainViewModel.startGridSearch()` sends only the
+area dimensions - no lat/lon - since the Pi plans the route from wherever
+the aircraft actually is at the moment it handles the mode command,
+matching the real field workflow: fly to one corner of the area, then
+start the sweep from there, rather than needing an interactive
+map-drawing UI. A new `grid_search_update` message (mirroring
+`detections_update`/`tracking_update`'s "send every frame regardless of
+state" pattern) keeps the map view and this card's progress display live.
+
 All of the above confirmed via a real `gradle assembleDebug`; none yet
 heard or seen on a physical device this round.
 
@@ -563,6 +604,11 @@ app/src/main/java/com/aivisiondrone/groundstation/
                 trail for the currently-tracked target),
                 PerimeterZoneEditOverlay.kt / PerimeterZoneOverlay.kt
                 (drag-to-define perimeter/intrusion zone + its rendering),
+                FlightMapView.kt / FlightPathTrail.kt (fully offline
+                vector-drawn map: home, position, flight path, grid-search
+                route),
+                GridSearchControls.kt (lawnmower area-sweep start form /
+                live progress),
                 TrackingOverlay.kt (tracked box + rotating orbit ring),
                 TargetActionSheet.kt (Track/Follow/Orbit/Cancel quick menu),
                 GuidanceWarningBanner.kt (shows why guidance stopped, e.g.

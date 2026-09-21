@@ -151,6 +151,31 @@ def test_searching_still_blocked_by_rc_override():
     )
     assert decision.state == SupervisorState.SAFE
     assert decision.guidance_allowed is False
+
+
+def test_grid_search_is_allowed_regardless_of_tracking_state():
+    """GRID_SEARCH (grid_search.py's lawnmower area sweep) never tracks a
+    visual target at all - unlike FOLLOWING/ORBITING/APPROACHING/
+    SMART_SHOT, a stale/nonexistent tracking_state (even TARGET_LOST, the
+    default when nothing is or has ever been tracked) must not block it."""
+    supervisor = SafetySupervisor(fresh_watchdog())
+    decision = supervisor.evaluate(
+        base_inputs(tracking_state=TrackingState.TARGET_LOST, requested_state=SupervisorState.GRID_SEARCH)
+    )
+    assert decision.state == SupervisorState.GRID_SEARCH
+    assert decision.guidance_allowed is True
+    assert decision.reason is None
+
+
+def test_grid_search_still_blocked_by_rc_override():
+    """GRID_SEARCH gets no special exemption from the other gates - it's a
+    guidance path like any other."""
+    supervisor = SafetySupervisor(fresh_watchdog())
+    decision = supervisor.evaluate(
+        base_inputs(requested_state=SupervisorState.GRID_SEARCH, rc_override_active=True)
+    )
+    assert decision.state == SupervisorState.SAFE
+    assert decision.guidance_allowed is False
     assert decision.reason == "rc_override"
 
 

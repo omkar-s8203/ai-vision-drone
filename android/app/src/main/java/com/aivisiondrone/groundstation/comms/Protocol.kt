@@ -15,6 +15,7 @@ object MessageType {
     const val LAND_CONFIRMATION_RESPONSE = "land_confirmation_response"
     const val TRACKING_UPDATE = "tracking_update"
     const val DETECTIONS_UPDATE = "detections_update"
+    const val GRID_SEARCH_UPDATE = "grid_search_update"
     const val TELEMETRY = "telemetry"
     const val HEALTH = "health"
     const val ACK = "ack"

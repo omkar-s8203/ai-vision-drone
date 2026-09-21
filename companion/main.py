@@ -25,6 +25,7 @@ from companion.guidance.approach_test import ApproachInputs, ApproachTestControl
 from companion.guidance.distance import CameraIntrinsics, DistanceEstimator
 from companion.guidance.follow import FollowController
 from companion.guidance.geo import bearing_deg, haversine_distance_m
+from companion.guidance.grid_search import GridSearchController, GridSearchPhase
 from companion.guidance.orbit import OrbitController
 from companion.guidance.smart_shot import ShotType, SmartShotController, SmartShotState
 from companion.guidance.target_recovery import RecoveryPhase, TargetRecoveryController
@@ -62,6 +63,7 @@ MODE_COMMAND_MAP = {
     "approach": SupervisorState.APPROACHING,
     "dronie": SupervisorState.SMART_SHOT,
     "parabola": SupervisorState.SMART_SHOT,
+    "grid_search": SupervisorState.GRID_SEARCH,
 }
 
 SHOT_TYPE_MAP = {
@@ -94,6 +96,7 @@ class CompanionOrchestrator:
         smart_shot_controller: Optional[SmartShotController] = None,
         appearance_memory: Optional[AppearanceMemory] = None,
         recovery_controller: Optional[TargetRecoveryController] = None,
+        grid_search_controller: Optional[GridSearchController] = None,
         reacquire_timeout_s: float = 2.0,
         min_obstacle_distance_m: float = 2.0,
     ) -> None:
@@ -107,6 +110,7 @@ class CompanionOrchestrator:
         self.smart_shot = smart_shot_controller or SmartShotController(load_yaml("smart_shot_limits.yaml"))
         self.appearance = appearance_memory or AppearanceMemory(**load_yaml("reidentification.yaml"))
         self.recovery = recovery_controller or TargetRecoveryController(load_yaml("target_recovery.yaml"))
+        self.grid_search = grid_search_controller or GridSearchController(load_yaml("grid_search_limits.yaml"))
         self.min_obstacle_distance_m = min_obstacle_distance_m
         self.mavlink = mavlink
         self.rc_monitor = rc_monitor
@@ -178,6 +182,29 @@ class CompanionOrchestrator:
             self.follow.reset()
         if mode == SupervisorState.ORBITING and self.requested_mode != SupervisorState.ORBITING:
             self.orbit.reset()
+        if mode == SupervisorState.GRID_SEARCH and self.requested_mode != SupervisorState.GRID_SEARCH:
+            # Freshly entering the mode (not just the app resending the
+            # same mode_command, e.g. after some unrelated param change) -
+            # plan the sweep from wherever the aircraft actually is right
+            # now, per the app's own flow: fly to one corner of the area to
+            # search, then engage this mode from there.
+            lat = self.mavlink.telemetry.lat
+            lon = self.mavlink.telemetry.lon
+            width_m = payload.get("grid_search_width_m")
+            height_m = payload.get("grid_search_height_m")
+            heading_deg = payload.get("grid_search_heading_deg")
+            if heading_deg is None:
+                heading_deg = self.mavlink.telemetry.heading_deg or 0.0
+            if lat is not None and lon is not None and width_m is not None and height_m is not None:
+                self.grid_search.start(lat, lon, float(width_m), float(height_m), float(heading_deg))
+            else:
+                log.error(
+                    "Cannot start grid search - missing GPS fix (lat=%s, lon=%s) or area "
+                    "dimensions (width_m=%s, height_m=%s)", lat, lon, width_m, height_m,
+                )
+                mode = SupervisorState.IDLE
+        elif mode != SupervisorState.GRID_SEARCH and self.grid_search.is_active:
+            self.grid_search.reset()
         self.requested_mode = mode
         if mode == SupervisorState.APPROACHING:
             self.approach.start()
@@ -216,12 +243,15 @@ class CompanionOrchestrator:
             orbit_altitude_m=orbit_altitude,
             follow_max_speed_mps=follow_max_speed,
             orbit_max_speed_mps=orbit_max_speed,
+            grid_search_width_m=payload.get("grid_search_width_m"),
+            grid_search_height_m=payload.get("grid_search_height_m"),
         )
 
     def _on_abort(self, payload: dict) -> None:
         self.requested_mode = SupervisorState.IDLE
         self.approach.stop()
         self.smart_shot.stop()
+        self.grid_search.reset()
         self.state_machine.stop()
         self.appearance.forget()
         self.recovery.cancel()
@@ -572,6 +602,21 @@ class CompanionOrchestrator:
                 # actually being sent.
                 self.requested_mode = SupervisorState.IDLE
                 self.recorder.record("smart_shot_finished")
+        elif decision.state == SupervisorState.GRID_SEARCH:
+            command = self.grid_search.compute(
+                self.mavlink.telemetry.lat,
+                self.mavlink.telemetry.lon,
+                self.mavlink.telemetry.heading_deg,
+                self.mavlink.telemetry.alt_m,
+                dt,
+            )
+            if self.grid_search.phase == GridSearchPhase.FINISHED:
+                # Same reasoning as a finished smart shot above: no residual
+                # safety significance once every waypoint is visited, so
+                # drop straight back to IDLE rather than reporting
+                # GRID_SEARCH forever with no command actually being sent.
+                self.requested_mode = SupervisorState.IDLE
+                self.recorder.record("grid_search_finished")
 
         sent = False
         if command is not None and decision.guidance_allowed:
@@ -626,6 +671,15 @@ class CompanionOrchestrator:
                     }
                     for d in detections
                 ],
+            }
+        )
+        grid_search_status = self.grid_search.status()
+        await self.link.send_grid_search_update(
+            {
+                "active": self.grid_search.is_active,
+                "phase": grid_search_status.phase.name,
+                "waypoints": [[lat, lon] for lat, lon in grid_search_status.waypoints],
+                "current_index": grid_search_status.current_index,
             }
         )
         await self.link.send_telemetry(self._build_telemetry_payload())

@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aivisiondrone.groundstation.MainViewModel
+import com.aivisiondrone.groundstation.control.FlightMapView
 import com.aivisiondrone.groundstation.ui.theme.DroneColors
 import kotlin.math.cos
 import kotlin.math.sin
@@ -59,6 +60,8 @@ fun StatusTab(
 ) {
     val telemetry by viewModel.telemetry.collectAsState()
     val health by viewModel.health.collectAsState()
+    val flightPath by viewModel.flightPathSnapshot.collectAsState()
+    val gridSearchState by viewModel.gridSearchState.collectAsState()
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -162,6 +165,38 @@ fun StatusTab(
                     "Yellow = nose heading   ·   Red = direction to home",
                     color = DroneColors.TextSecondary,
                     style = MaterialTheme.typography.labelSmall,
+                )
+            }
+        }
+
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = DroneColors.Surface),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    "FLIGHT MAP",
+                    color = DroneColors.TextSecondary,
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(bottom = 12.dp),
+                )
+                FlightMapView(
+                    droneLat = telemetry.lat,
+                    droneLon = telemetry.lon,
+                    headingDeg = telemetry.headingDeg,
+                    homeLat = telemetry.homeLat,
+                    homeLon = telemetry.homeLon,
+                    flightPath = flightPath,
+                    gridSearchWaypoints = gridSearchState.waypoints,
+                    gridSearchCurrentIndex = gridSearchState.currentIndex,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    "Green = home   ·   Blue trail = flight path   ·   Orange dashed = grid search route",
+                    color = DroneColors.TextSecondary,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(top = 8.dp),
                 )
             }
         }

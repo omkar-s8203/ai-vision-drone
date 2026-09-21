@@ -21,11 +21,18 @@ camera:
   imx500_model_path: /usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk
   # Minimum on-sensor detection confidence to accept a box at all
   # (IMX500Detector.parse() drops anything below this before it ever
-  # reaches tracking/selection). 0.5 is a reasonable starting point, but
-  # real-world conditions - motion blur, an awkward camera angle during a
-  # bench test, distance, partial occlusion - can genuinely push a correct
-  # detection's confidence below it, which looks exactly like "the AI
-  # isn't detecting anything" even though the subsystem itself is healthy.
-  # Lower this (e.g. 0.3) to trade some false positives for fewer missed
-  # detections if that's happening in practice; no code change needed.
-  score_threshold: 0.5
+  # reaches tracking/selection). Lowered from the original 0.5 default to
+  # 0.35 based on real evidence, not just the theoretical concern this
+  # comment used to describe: tools/detection_regression.py's first real
+  # capture on the actual hardware (2026-09-21) showed only a 36%
+  # detection rate with a 59-frame (~2.2s) total dropout, while the
+  # console log repeatedly showed real candidates at 0.44 and 0.32 -
+  # genuine detections of whatever was in frame, filtered out purely for
+  # being just under the old 0.5 cutoff, not because the subsystem wasn't
+  # seeing anything. When detection did cross the old threshold, confidence
+  # was solid (0.76 mean, 0.06 stdev) - this isn't a noisy model, it's a
+  # threshold that was cutting off real detections. Re-run
+  # `tools/detection_regression.py capture` + `analyze` after this change
+  # to confirm the detection rate and longest gap actually improve; raise
+  # back toward 0.5 if 0.35 trades in too many false positives in practice.
+  score_threshold: 0.35

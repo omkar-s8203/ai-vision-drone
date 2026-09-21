@@ -1,6 +1,7 @@
 package com.aivisiondrone.groundstation.control
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,6 +41,7 @@ import com.aivisiondrone.groundstation.ui.theme.DroneColors
 @Composable
 fun GridSearchControls(
     gridSearchState: GridSearchState,
+    hasGpsFix: Boolean,
     onStart: (widthM: Float, heightM: Float) -> Unit,
     onStop: () -> Unit,
     modifier: Modifier = Modifier,
@@ -68,7 +70,7 @@ fun GridSearchControls(
                     color = DroneColors.TextPrimary,
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                androidx.compose.foundation.layout.Spacer(modifier = Modifier.padding(top = 12.dp))
+                Spacer(modifier = Modifier.padding(top = 12.dp))
                 Button(
                     onClick = onStop,
                     colors = ButtonDefaults.buttonColors(containerColor = DroneColors.Danger, contentColor = Color.White),
@@ -84,7 +86,7 @@ fun GridSearchControls(
                     onValueChange = { widthM = it },
                     valueRange = 20f..200f,
                 )
-                androidx.compose.foundation.layout.Spacer(modifier = Modifier.padding(top = 12.dp))
+                Spacer(modifier = Modifier.padding(top = 12.dp))
                 LabeledSlider(
                     label = "Area height",
                     valueText = "${heightM.toInt()} m",
@@ -92,15 +94,30 @@ fun GridSearchControls(
                     onValueChange = { heightM = it },
                     valueRange = 20f..200f,
                 )
-                androidx.compose.foundation.layout.Spacer(modifier = Modifier.padding(top = 8.dp))
+                Spacer(modifier = Modifier.padding(top = 8.dp))
                 Text(
                     "Starts from the aircraft's current position as one corner of the area.",
                     color = DroneColors.TextSecondary,
                     style = MaterialTheme.typography.bodySmall,
                 )
-                androidx.compose.foundation.layout.Spacer(modifier = Modifier.padding(top = 12.dp))
+                // Preventive, not just reactive: without a GPS fix the Pi
+                // silently refuses to start (falls back to idle - see
+                // companion/main.py's _on_mode_command) with nothing on
+                // this screen to explain why the button appeared to do
+                // nothing. Disabling it up front and saying why is a
+                // clearer signal than a mysterious no-op.
+                if (!hasGpsFix) {
+                    Spacer(modifier = Modifier.padding(top = 8.dp))
+                    Text(
+                        "GPS fix required to start a grid search.",
+                        color = DroneColors.Warning,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Spacer(modifier = Modifier.padding(top = 12.dp))
                 Button(
                     onClick = { onStart(widthM, heightM) },
+                    enabled = hasGpsFix,
                     colors = ButtonDefaults.buttonColors(containerColor = DroneColors.Accent, contentColor = Color.Black),
                     modifier = Modifier.fillMaxWidth(),
                 ) {

@@ -1,15 +1,20 @@
 package com.aivisiondrone.groundstation.control
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.unit.dp
 import com.aivisiondrone.groundstation.telemetry.LatLon
 import com.aivisiondrone.groundstation.ui.theme.DroneColors
 import kotlin.math.abs
@@ -62,9 +67,25 @@ fun FlightMapView(
         else -> null
     }
 
-    Canvas(modifier = modifier.fillMaxWidth().aspectRatio(1f)) {
-        if (reference == null) return@Canvas
+    // A real polish gap: with no GPS fix yet, this used to just render a
+    // blank square with zero explanation - indistinguishable from the map
+    // being broken to an operator who hasn't inferred "no reference point
+    // means no GPS."
+    if (reference == null) {
+        Box(
+            modifier = modifier.fillMaxWidth().aspectRatio(1f),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                "Waiting for GPS fix…",
+                color = DroneColors.TextSecondary,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        return
+    }
 
+    Canvas(modifier = modifier.fillMaxWidth().aspectRatio(1f)) {
         val home = if (homeLat != null && homeLon != null) toLocal(LatLon(homeLat, homeLon), reference) else null
         val drone = if (droneLat != null && droneLon != null) toLocal(LatLon(droneLat, droneLon), reference) else null
         val path = flightPath.map { toLocal(it, reference) }

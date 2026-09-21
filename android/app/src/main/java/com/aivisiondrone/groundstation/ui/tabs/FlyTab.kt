@@ -21,11 +21,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -156,6 +158,18 @@ fun FlyTab(
             },
         )
 
+        // A real polish gap: with no video track yet, the operator saw a
+        // plain black rectangle with zero explanation - indistinguishable
+        // from "the app is broken" to someone who hasn't memorized what a
+        // blank SurfaceViewRenderer looks like. Distinguishes "not
+        // connected at all" (nothing to wait for) from "connected, video
+        // negotiation still in progress" (a spinner - it should arrive
+        // shortly) - the plan's own M6 acceptance criteria calls out that
+        // "no video" must read differently from other failure states.
+        if (remoteVideoTrack == null) {
+            NoVideoPlaceholder(linkState = linkState, modifier = Modifier.fillMaxSize())
+        }
+
         if (showHeatmap) {
             DetectionHeatmapOverlay(snapshot = heatmapSnapshot, modifier = Modifier.fillMaxSize())
         }
@@ -257,7 +271,20 @@ fun FlyTab(
                         Spacer(modifier = Modifier.width(12.dp))
                         HealthPanel(health = health)
                     }
-                    // Link status now integrated more cleanly
+                    // Link status - a real polish bug fixed here:
+                    // CONNECTING (actively auto-reconnecting after a drop -
+                    // see MainViewModel's reconnect loop) used to render
+                    // identically to DISCONNECTED (dead, no attempt in
+                    // progress), leaving the operator unable to tell "it's
+                    // trying" from "it's given up" on the one screen they
+                    // actually watch during flight. All three LinkState
+                    // values now get their own color/label, matching
+                    // LinkStatusChip's own (correct) handling on Settings.
+                    val (linkDotColor, linkLabel, linkTextColor) = when (linkState) {
+                        LinkState.CONNECTED -> Triple(DroneColors.Safe, "LINK: CONNECTED", DroneColors.TextPrimary)
+                        LinkState.CONNECTING -> Triple(DroneColors.Warning, "LINK: RECONNECTING…", DroneColors.Warning)
+                        LinkState.DISCONNECTED -> Triple(DroneColors.Danger, "LINK: DISCONNECTED", DroneColors.Danger)
+                    }
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
@@ -267,15 +294,12 @@ fun FlyTab(
                         Box(
                             modifier = Modifier
                                 .size(7.dp)
-                                .background(
-                                    if (linkState == LinkState.CONNECTED) DroneColors.Safe else DroneColors.Danger,
-                                    androidx.compose.foundation.shape.CircleShape
-                                )
+                                .background(linkDotColor, androidx.compose.foundation.shape.CircleShape)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = if (linkState == LinkState.CONNECTED) "LINK: CONNECTED" else "LINK: DISCONNECTED",
-                            color = if (linkState == LinkState.CONNECTED) DroneColors.TextPrimary else DroneColors.Danger,
+                            text = linkLabel,
+                            color = linkTextColor,
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Black,
                             letterSpacing = 0.5.sp
@@ -437,6 +461,46 @@ fun FlyTab(
                     .padding(bottom = 32.dp)
                     .fillMaxWidth(0.6f),
             )
+        }
+    }
+}
+
+/** Shown in place of live video whenever there's no remote track yet -
+ * distinguishes "not connected, nothing to wait for" from "connected,
+ * video negotiation still in progress" (a spinner - it should arrive
+ * shortly) rather than a bare black rectangle either way. */
+@Composable
+private fun NoVideoPlaceholder(linkState: LinkState, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier.background(Color.Black),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            if (linkState == LinkState.CONNECTED) {
+                CircularProgressIndicator(
+                    color = DroneColors.Accent,
+                    modifier = Modifier.size(36.dp),
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    "Waiting for video…",
+                    color = DroneColors.TextSecondary,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            } else {
+                Text(
+                    "No video",
+                    color = DroneColors.TextSecondary,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "Not connected to the aircraft",
+                    color = DroneColors.TextSecondary,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
         }
     }
 }

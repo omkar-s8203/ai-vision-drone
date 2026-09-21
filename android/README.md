@@ -437,6 +437,42 @@ state" pattern) keeps the map view and this card's progress display live.
 All of the above confirmed via a real `gradle assembleDebug`; none yet
 heard or seen on a physical device this round.
 
+**Polish/UX pass** (a direct request to "enhance" the app, scoped to
+finishing rather than adding), all in the same "distinguish a real failure
+state from a blank screen" spirit as the plan's own M6 requirement:
+- **Fixed a real bug found while doing this**: the Fly tab's own link-status
+  HUD (the one screen the operator actually watches during flight) treated
+  `LinkState.CONNECTING` identically to `DISCONNECTED`, both rendering
+  "LINK: DISCONNECTED" in red - an operator watching an active,
+  automatic reconnect attempt (see `MainViewModel`'s reconnect loop) had
+  no way to tell it apart from a link that had simply given up. All three
+  states now get their own color/label, matching `LinkStatusChip.kt`'s
+  already-correct handling on the Settings tab (that widget existed and
+  was right the whole time; the Fly tab just never reused it).
+- **"No video" placeholder** (`NoVideoPlaceholder` in `FlyTab.kt`):
+  previously a missing remote track rendered as a bare black rectangle,
+  indistinguishable from the app being broken. Now shows "No video / Not
+  connected to the aircraft" when there's no link at all, or a spinner +
+  "Waiting for video…" when connected but WebRTC negotiation hasn't
+  produced a track yet - two different situations that read as the exact
+  same blank screen before.
+- **"Waiting for GPS fix" placeholder** in `FlightMapView.kt`: with no
+  home or current position yet, the map used to render a blank square
+  with nothing explaining why.
+- **Empty-state message** in the AI Modes tab's detection list ("Nothing
+  detected right now…") instead of just an empty area under the
+  "DETECTIONS" header.
+- **Preventive GPS check on Grid Search's Start button**
+  (`GridSearchControls.kt`): starting the mode without a GPS fix already
+  failed safely on the Pi side (falls back to idle - see M8), but nothing
+  on screen explained why the button appeared to do nothing. The button
+  is now disabled with an explicit "GPS fix required" message instead of
+  a silent, confusing no-op.
+
+Confirmed via a real `gradle assembleDebug` (caught and fixed one real
+compile error - a missing `Modifier.height` import - before this
+shipped); none of the above seen on a physical device yet.
+
 **New: `GuidanceCommandPanel.kt`** - shows the active guidance controller's
 computed velocity setpoint (vx/vy/vz/yaw rate) and whether it actually
 reached the FC, live on the Fly tab next to `TelemetryPanel`. Previously

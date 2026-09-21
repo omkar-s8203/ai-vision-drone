@@ -56,6 +56,7 @@ fun AiModesTab(
     val tracking by viewModel.tracking.collectAsState()
     val detections by viewModel.detections.collectAsState()
     val gridSearchState by viewModel.gridSearchState.collectAsState()
+    val telemetry by viewModel.telemetry.collectAsState()
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
@@ -95,6 +96,7 @@ fun AiModesTab(
         item {
             GridSearchControls(
                 gridSearchState = gridSearchState,
+                hasGpsFix = (telemetry.gpsFixType ?: 0) >= 3,
                 onStart = { widthM, heightM -> viewModel.startGridSearch(widthM, heightM) },
                 onStop = { viewModel.stopGridSearch() },
                 modifier = Modifier.fillMaxWidth(),
@@ -129,6 +131,17 @@ fun AiModesTab(
             )
         }
 
+        if (detections.detections.isEmpty()) {
+            item {
+                Text(
+                    "Nothing detected right now - point the camera at a person, vehicle, or other object.",
+                    color = DroneColors.TextSecondary,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+                )
+            }
+        }
+
         items(detections.detections) { detection ->
             DetectionRow(detection = detection, onSelect = {
                 viewModel.selectTargetAtPoint(
@@ -137,7 +150,7 @@ fun AiModesTab(
                 )
             })
         }
-        
+
         item {
             Spacer(modifier = Modifier.height(20.dp))
         }

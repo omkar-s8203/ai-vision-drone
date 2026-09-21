@@ -21,6 +21,8 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -28,8 +30,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.aivisiondrone.groundstation.telemetry.HealthState
-import com.aivisiondrone.groundstation.telemetry.TelemetryState
+import com.aivisiondrone.groundstation.MainViewModel
 import com.aivisiondrone.groundstation.ui.theme.DroneColors
 import kotlin.math.cos
 import kotlin.math.sin
@@ -42,15 +43,22 @@ import kotlin.math.sin
  * card with no backing MAVLink source (mission upload, ADS-B) is left out
  * entirely rather than shown permanently empty, since this app has neither
  * feature.
+ *
+ * Collects `telemetry`/`health` itself rather than receiving them as
+ * parameters - see FlyTab.kt's docstring for the whole-screen-recomposition
+ * bug this avoids. `alertsMuted` stays a parameter since
+ * `GroundStationScreen` already needs to collect it itself for the buzzer/
+ * voice alert player, so there's no duplicate-collection cost either way.
  */
 @Composable
 fun StatusTab(
-    telemetry: TelemetryState,
-    health: HealthState,
+    viewModel: MainViewModel,
     alertsMuted: Boolean,
     onSetAlertsMuted: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val telemetry by viewModel.telemetry.collectAsState()
+    val health by viewModel.health.collectAsState()
     Column(
         modifier = modifier
             .fillMaxSize()

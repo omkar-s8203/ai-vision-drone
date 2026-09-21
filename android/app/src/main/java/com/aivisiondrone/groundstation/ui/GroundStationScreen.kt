@@ -89,21 +89,16 @@ private val WIDE_SCREEN_BREAKPOINT = 600.dp
  */
 @Composable
 fun GroundStationScreen(viewModel: MainViewModel, eglBase: EglBase, context: Context) {
-    val linkState by viewModel.linkState.collectAsState()
-    val telemetry by viewModel.telemetry.collectAsState()
-    val health by viewModel.health.collectAsState()
-    val tracking by viewModel.tracking.collectAsState()
-    val detections by viewModel.detections.collectAsState()
-    val mode by viewModel.mode.collectAsState()
-    val followSeparation by viewModel.followSeparationM.collectAsState()
-    val followAltitude by viewModel.followAltitudeM.collectAsState()
-    val orbitRadius by viewModel.orbitRadiusM.collectAsState()
-    val orbitAltitude by viewModel.orbitAltitudeM.collectAsState()
-    val followMaxSpeed by viewModel.followMaxSpeedMps.collectAsState()
-    val orbitMaxSpeed by viewModel.orbitMaxSpeedMps.collectAsState()
-    val remoteVideoTrack by viewModel.remoteVideoTrack.collectAsState()
-    val recording by viewModel.recording.collectAsState()
-    val showTargetActionSheet by viewModel.showTargetActionSheet.collectAsState()
+    // Only state this composable's own body actually reads directly.
+    // telemetry/health/tracking/detections/recording/remoteVideoTrack/mode/
+    // etc. update on essentially every processed frame on the Pi and used
+    // to be collected here, then threaded down as parameters - since
+    // recomposition scope is the composable that reads the changed state,
+    // that meant *this entire screen* (nav bar, abort button, tab switcher
+    // included) recomposed 20-30 times a second no matter which tab was
+    // open. Each tab now collects what it needs directly from `viewModel`
+    // instead (see FlyTab.kt's docstring), confining that recomposition to
+    // just the tab that's actually supposed to update that often.
     val landConfirmationRequest by viewModel.landConfirmationRequest.collectAsState()
     val alertsMuted by viewModel.alertsMuted.collectAsState()
 
@@ -155,36 +150,15 @@ fun GroundStationScreen(viewModel: MainViewModel, eglBase: EglBase, context: Con
                         viewModel = viewModel,
                         eglBase = eglBase,
                         context = context,
-                        linkState = linkState,
-                        telemetry = telemetry,
-                        health = health,
-                        tracking = tracking,
-                        detections = detections,
-                        mode = mode,
-                        remoteVideoTrack = remoteVideoTrack,
-                        showTargetActionSheet = showTargetActionSheet,
-                        recording = recording,
-                        onToggleRecording = { viewModel.toggleRecording() },
                     )
                     AppTab.CONTROL -> ControlTab(
                         viewModel = viewModel,
-                        telemetry = telemetry,
                     )
                     AppTab.AI -> AiModesTab(
                         viewModel = viewModel,
-                        mode = mode,
-                        followSeparationM = followSeparation,
-                        followAltitudeM = followAltitude,
-                        orbitRadiusM = orbitRadius,
-                        orbitAltitudeM = orbitAltitude,
-                        followMaxSpeedMps = followMaxSpeed,
-                        orbitMaxSpeedMps = orbitMaxSpeed,
-                        tracking = tracking,
-                        detections = detections,
                     )
                     AppTab.STATUS -> StatusTab(
-                        telemetry = telemetry,
-                        health = health,
+                        viewModel = viewModel,
                         alertsMuted = alertsMuted,
                         onSetAlertsMuted = { viewModel.setAlertsMuted(it) },
                     )
@@ -192,7 +166,6 @@ fun GroundStationScreen(viewModel: MainViewModel, eglBase: EglBase, context: Con
                         viewModel = viewModel,
                         eglBase = eglBase,
                         context = context,
-                        linkState = linkState,
                     )
                 }
             }

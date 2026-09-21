@@ -13,6 +13,7 @@ import androidx.compose.animation.slideOutVertically
 import android.content.Context
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +30,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,6 +51,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.aivisiondrone.groundstation.MainViewModel
 import com.aivisiondrone.groundstation.R
 import com.aivisiondrone.groundstation.comms.LinkState
+import com.aivisiondrone.groundstation.control.DetectionHeatmapOverlay
 import com.aivisiondrone.groundstation.control.DetectionsOverlay
 import com.aivisiondrone.groundstation.control.DroneMode
 import com.aivisiondrone.groundstation.control.GuidanceCommandPanel
@@ -57,18 +60,12 @@ import com.aivisiondrone.groundstation.control.RecordButton
 import com.aivisiondrone.groundstation.control.TargetActionSheet
 import com.aivisiondrone.groundstation.control.TargetSelectionOverlay
 import com.aivisiondrone.groundstation.control.TrackingOverlay
-import com.aivisiondrone.groundstation.telemetry.DetectionsState
 import com.aivisiondrone.groundstation.telemetry.HealthPanel
-import com.aivisiondrone.groundstation.telemetry.HealthState
-import com.aivisiondrone.groundstation.telemetry.RecordingState
 import com.aivisiondrone.groundstation.telemetry.TelemetryPanel
-import com.aivisiondrone.groundstation.telemetry.TelemetryState
-import com.aivisiondrone.groundstation.telemetry.TrackingState
 import com.aivisiondrone.groundstation.ui.LinkStatusChip
 import com.aivisiondrone.groundstation.ui.theme.DroneColors
 import org.webrtc.EglBase
 import org.webrtc.SurfaceViewRenderer
-import org.webrtc.VideoTrack
 
 private const val ASSUMED_VIDEO_WIDTH = 1280.0
 private const val ASSUMED_VIDEO_HEIGHT = 720.0
@@ -78,24 +75,40 @@ private const val ASSUMED_VIDEO_HEIGHT = 720.0
  * (with an orbit ring when Orbit mode is active), tap/drag selection, and
  * the quick health/telemetry chips - the DJI-Fly-style default screen the
  * operator spends most of their time on.
+ *
+ * Collects its own state directly from `viewModel` (telemetry/health/
+ * tracking/detections/recording/remoteVideoTrack/mode/linkState/
+ * showTargetActionSheet) rather than receiving it all as parameters from
+ * `GroundStationScreen` - a real smoothness bug found and fixed: these
+ * flows update on essentially every processed frame on the Pi (up to the
+ * camera's target FPS), and `GroundStationScreen` used to `collectAsState()`
+ * all of them itself before threading them down as parameters. Since
+ * recomposition scope is the composable that actually reads the changed
+ * state, that meant *the entire screen* - nav bar, abort button, tab
+ * switcher and all - was recomposing 20-30 times a second regardless of
+ * which tab was even open, not just this one. Collecting here instead
+ * confines that recomposition to just this tab, which is the one screen
+ * that's actually supposed to update that often.
  */
 @Composable
 fun FlyTab(
     viewModel: MainViewModel,
     eglBase: EglBase,
     context: Context,
-    linkState: LinkState,
-    telemetry: TelemetryState,
-    health: HealthState,
-    tracking: TrackingState,
-    detections: DetectionsState,
-    mode: DroneMode,
-    remoteVideoTrack: VideoTrack?,
-    showTargetActionSheet: Boolean,
-    recording: RecordingState,
-    onToggleRecording: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val linkState by viewModel.linkState.collectAsState()
+    val telemetry by viewModel.telemetry.collectAsState()
+    val health by viewModel.health.collectAsState()
+    val tracking by viewModel.tracking.collectAsState()
+    val detections by viewModel.detections.collectAsState()
+    val mode by viewModel.mode.collectAsState()
+    val remoteVideoTrack by viewModel.remoteVideoTrack.collectAsState()
+    val showTargetActionSheet by viewModel.showTargetActionSheet.collectAsState()
+    val recording by viewModel.recording.collectAsState()
+    val heatmapSnapshot by viewModel.heatmapSnapshot.collectAsState()
+    val showHeatmap by viewModel.showHeatmap.collectAsState()
+
     var rendererRef by remember { mutableStateOf<SurfaceViewRenderer?>(null) }
     var overlaySizePx by remember { mutableStateOf(Size.Zero) }
 
@@ -130,6 +143,10 @@ fun FlyTab(
                 }
             },
         )
+
+        if (showHeatmap) {
+            DetectionHeatmapOverlay(snapshot = heatmapSnapshot, modifier = Modifier.fillMaxSize())
+        }
 
         // HUD Crosshair
         HUDCrosshair(Modifier.align(Alignment.Center))
@@ -218,8 +235,30 @@ fun FlyTab(
                             letterSpacing = 0.5.sp
                         )
                     }
+
+                    // Detection-density heatmap toggle - off by default so
+                    // it doesn't clutter the live view unasked (a field
+                    // request: "can we add a heatmap-like feature").
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .background(
+                                if (showHeatmap) DroneColors.Accent.copy(alpha = 0.25f) else DroneColors.Overlay,
+                                RoundedCornerShape(8.dp),
+                            )
+                            .clickable { viewModel.setShowHeatmap(!showHeatmap) }
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = if (showHeatmap) "HEATMAP: ON" else "HEATMAP: OFF",
+                            color = if (showHeatmap) DroneColors.Accent else DroneColors.TextSecondary,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 0.5.sp
+                        )
+                    }
                 }
-                
+
                 Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     val hasFix = (telemetry.gpsFixType ?: 0) >= 3
                     HUDTelemetryItem(label = "GPS", value = if (hasFix) "FIX" else "NO FIX", color = if (hasFix) DroneColors.Safe else DroneColors.Danger)
@@ -279,7 +318,7 @@ fun FlyTab(
             RecordButton(
                 recording = recording.recording,
                 durationS = recording.durationS,
-                onClick = onToggleRecording
+                onClick = { viewModel.toggleRecording() }
             )
         }
 

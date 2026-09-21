@@ -18,6 +18,8 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -26,29 +28,32 @@ import androidx.compose.ui.unit.dp
 import com.aivisiondrone.groundstation.MainViewModel
 import com.aivisiondrone.groundstation.control.DroneMode
 import com.aivisiondrone.groundstation.control.ModeControls
-import com.aivisiondrone.groundstation.telemetry.DetectionsState
 import com.aivisiondrone.groundstation.telemetry.RawDetection
-import com.aivisiondrone.groundstation.telemetry.TrackingState
 import com.aivisiondrone.groundstation.ui.theme.DroneColors
 
 /** AI guidance modes (Track/Follow/Orbit/Approach) plus a live list of
  * everything the AI currently sees - lets the operator pick a target from
  * a list instead of needing to tap it on the video, and tune Follow/Orbit
- * parameters without the video feed in the way. */
+ * parameters without the video feed in the way.
+ *
+ * Collects `tracking`/`detections` (both update on essentially every
+ * processed frame on the Pi) itself rather than receiving them as
+ * parameters - see FlyTab.kt's docstring for the whole-screen-recomposition
+ * bug this avoids. */
 @Composable
 fun AiModesTab(
     viewModel: MainViewModel,
-    mode: DroneMode,
-    followSeparationM: Float,
-    followAltitudeM: Float,
-    orbitRadiusM: Float,
-    orbitAltitudeM: Float,
-    followMaxSpeedMps: Float,
-    orbitMaxSpeedMps: Float,
-    tracking: TrackingState,
-    detections: DetectionsState,
     modifier: Modifier = Modifier,
 ) {
+    val mode by viewModel.mode.collectAsState()
+    val followSeparationM by viewModel.followSeparationM.collectAsState()
+    val followAltitudeM by viewModel.followAltitudeM.collectAsState()
+    val orbitRadiusM by viewModel.orbitRadiusM.collectAsState()
+    val orbitAltitudeM by viewModel.orbitAltitudeM.collectAsState()
+    val followMaxSpeedMps by viewModel.followMaxSpeedMps.collectAsState()
+    val orbitMaxSpeedMps by viewModel.orbitMaxSpeedMps.collectAsState()
+    val tracking by viewModel.tracking.collectAsState()
+    val detections by viewModel.detections.collectAsState()
     LazyColumn(
         modifier = modifier
             .fillMaxSize()

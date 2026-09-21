@@ -58,9 +58,9 @@ fun SettingsTab(
     viewModel: MainViewModel,
     eglBase: EglBase,
     context: Context,
-    linkState: LinkState,
     modifier: Modifier = Modifier,
 ) {
+    val linkState by viewModel.linkState.collectAsState()
     val prefs = remember { context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
     var host by remember { mutableStateOf(prefs.getString(PREF_HOST, DEFAULT_HOST) ?: DEFAULT_HOST) }
     var port by remember { mutableStateOf(prefs.getInt(PREF_PORT, DEFAULT_PORT).toString()) }

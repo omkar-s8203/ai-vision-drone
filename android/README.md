@@ -276,6 +276,49 @@ device** - the actual test is killing/restarting the Pi's
 `ai-vision-drone` service while the phone stays on the same WiFi, and
 confirming video reappears within a few seconds without touching the app.
 
+**Fixed a real field-reported smoothness bug ("make the app smooth"):
+`GroundStationScreen` used to `collectAsState()` every single piece of
+live state itself** - `telemetry`, `health`, `tracking`, `detections`,
+`recording`, `remoteVideoTrack`, plus the AI-mode slider values - before
+threading them all down to whichever tab needed them as parameters.
+Several of those (`telemetry`, `health`, `tracking`, `detections`) update
+on essentially every processed frame on the Pi, up to the camera's target
+FPS. Since Compose recomposition scope is the composable that actually
+*reads* the changed state, that meant the read happening in
+`GroundStationScreen`'s own body made *the entire screen* - navigation
+bar, abort button, tab switcher, all of it - recompose 20-30 times a
+second, regardless of which tab was even open or whether it needed that
+specific value at all. **Fixed** by having each tab (`FlyTab`, `ControlTab`,
+`AiModesTab`, `StatusTab`, `SettingsTab`) collect exactly the state flows
+it actually uses directly from `MainViewModel`, instead of receiving them
+as parameters from a shared parent. `GroundStationScreen` itself now only
+collects `landConfirmationRequest` and `alertsMuted` (both genuinely used
+in its own body, for the land-confirmation dialog and the alert player's
+mute state) - it no longer recomposes at all in response to telemetry/
+tracking/detection updates, confining that churn to just the tab that's
+actually supposed to redraw that often (`FlyTab`, showing live video).
+Confirmed via a real `gradle assembleDebug` after the full refactor;
+**perceived smoothness on a real device still needs confirming** - this
+fixes a real, identifiable architectural cause of jank, but there was no
+profiler available to measure the before/after here.
+
+**New: a detection-density heatmap overlay** (`control/DetectionHeatmap.kt`,
+`control/DetectionHeatmapOverlay.kt`), from a direct field request ("can we
+add a heatmap-like feature"). `DetectionHeatmap` is a plain-Kotlin 32x18
+grid that `MainViewModel` updates on every `detections_update` message: a
+detection's bbox center bumps up the heat of the cell it falls in, and
+every cell decays by a small factor on every update (roughly a 30-second
+half-life at typical detection-update rates) so the map favors recent
+activity with a fading trail rather than accumulating into one
+permanently-growing total that eventually saturates solid red. Rendered
+as a translucent blue-to-red Canvas overlay on the live video
+(`DetectionHeatmapOverlay`), toggled on/off from a new "HEATMAP" chip in
+the Fly tab's top HUD (off by default, so it doesn't clutter the normal
+view unasked). Purely a visualization - it never feeds back into tracking
+or guidance, which still only ever reason about the current frame's real
+detections. Build-verified only (real `gradle assembleDebug`), not yet
+seen live on a real device.
+
 **New: `GuidanceCommandPanel.kt`** - shows the active guidance controller's
 computed velocity setpoint (vx/vy/vz/yaw rate) and whether it actually
 reached the FC, live on the Fly tab next to `TelemetryPanel`. Previously
@@ -437,6 +480,8 @@ app/src/main/java/com/aivisiondrone/groundstation/
                 saves the video locally on this device)
   control/      TargetSelectionOverlay.kt (tap-to-select + drag-to-select),
                 DetectionsOverlay.kt (all live detections, labeled),
+                DetectionHeatmap.kt / DetectionHeatmapOverlay.kt (opt-in
+                detection-density heatmap over the live video),
                 TrackingOverlay.kt (tracked box + rotating orbit ring),
                 TargetActionSheet.kt (Track/Follow/Orbit/Cancel quick menu),
                 GuidanceWarningBanner.kt (shows why guidance stopped, e.g.

@@ -10,7 +10,9 @@ import com.aivisiondrone.groundstation.comms.MessageType
 import com.aivisiondrone.groundstation.comms.optDoubleOrNull
 import com.aivisiondrone.groundstation.comms.optIntOrNull
 import com.aivisiondrone.groundstation.comms.optStringOrNull
+import com.aivisiondrone.groundstation.control.DetectionHeatmap
 import com.aivisiondrone.groundstation.control.DroneMode
+import com.aivisiondrone.groundstation.control.HeatmapSnapshot
 import com.aivisiondrone.groundstation.telemetry.DetectionsState
 import com.aivisiondrone.groundstation.telemetry.HealthState
 import com.aivisiondrone.groundstation.telemetry.LandConfirmationRequest
@@ -70,6 +72,21 @@ class MainViewModel : ViewModel() {
 
     private val _detections = MutableStateFlow(DetectionsState())
     val detections = _detections.asStateFlow()
+
+    /** "Where has the AI been seeing things" overlay, built from the same
+     * detections_update stream as `detections` above - see
+     * control/DetectionHeatmap.kt. Opt-in via `showHeatmap`, off by
+     * default so it doesn't clutter the live view unasked. */
+    private val detectionHeatmap = DetectionHeatmap()
+    private val _heatmapSnapshot = MutableStateFlow(HeatmapSnapshot.EMPTY)
+    val heatmapSnapshot = _heatmapSnapshot.asStateFlow()
+
+    private val _showHeatmap = MutableStateFlow(false)
+    val showHeatmap = _showHeatmap.asStateFlow()
+
+    fun setShowHeatmap(show: Boolean) {
+        _showHeatmap.value = show
+    }
 
     /** Non-null exactly while a land_confirmation_request is awaiting the
      * operator's answer - see LandConfirmationDialog.kt. */
@@ -440,7 +457,12 @@ class MainViewModel : ViewModel() {
                     _mode.value = DroneMode.IDLE
                 }
             }
-            MessageType.DETECTIONS_UPDATE -> _detections.value = parseDetections(envelope.payload)
+            MessageType.DETECTIONS_UPDATE -> {
+                val parsed = parseDetections(envelope.payload)
+                _detections.value = parsed
+                detectionHeatmap.record(parsed)
+                _heatmapSnapshot.value = detectionHeatmap.snapshot()
+            }
             MessageType.LAND_CONFIRMATION_REQUEST -> {
                 _landConfirmationRequest.value = LandConfirmationRequest(
                     distanceToHomeM = envelope.payload.optDoubleOrNull("distance_to_home_m"),

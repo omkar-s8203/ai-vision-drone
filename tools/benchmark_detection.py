@@ -165,20 +165,10 @@ def main() -> None:
 
     # Real hardware only past this point - Picamera2IMX500Camera raises
     # RuntimeError with a clear message on any machine without picamera2.
-    from companion.vision.camera import Picamera2IMX500Camera
-    from companion.vision.detector import IMX500Detector
+    from companion.vision.camera import open_real_camera_and_detector
 
     hardware_cfg = load_yaml("hardware.yaml")
-    camera = Picamera2IMX500Camera(
-        model_path=hardware_cfg["camera"]["imx500_model_path"],
-        width=hardware_cfg["camera"]["width"],
-        height=hardware_cfg["camera"]["height"],
-        target_fps=hardware_cfg["camera"]["target_fps"],
-    )
-    detector = IMX500Detector(
-        class_names=camera.imx500.network_intrinsics.labels,
-        score_threshold=hardware_cfg["camera"].get("score_threshold", 0.5),
-    )
+    camera, detector = open_real_camera_and_detector(hardware_cfg)
 
     print(
         f"Benchmarking detection for {args.duration:.0f}s against docs plan M2's own "

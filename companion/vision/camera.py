@@ -180,6 +180,51 @@ class Picamera2IMX500Camera(CameraBase):
             self._picam2.stop()
 
 
+def open_real_camera_and_detector(hardware_cfg: dict):
+    """Constructs the real Picamera2IMX500Camera + IMX500Detector from a
+    loaded hardware.yaml - shared by tools/benchmark_detection.py and
+    tools/detection_regression.py so they don't each duplicate this (the
+    same construction companion/main.py's build_hardware_orchestrator()
+    also does, kept separate there rather than refactored to share this,
+    to avoid touching already-deployed, working production wiring for a
+    tooling change).
+
+    A real field report hit exactly this: `Picamera2IMX500Camera(...)`
+    raising a bare `OSError: [Errno 16] Device or resource busy` deep
+    inside picamera2/V4L2, with no indication of *why*. The camera device
+    can only be held open by one process at a time, and the far more
+    likely cause than the raw message suggests is that the
+    `ai-vision-drone` systemd service (companion.main) is already running
+    and holding it - re-raised here as a clear, actionable message instead
+    of a bare traceback.
+    """
+    from companion.vision.detector import IMX500Detector
+
+    try:
+        camera = Picamera2IMX500Camera(
+            model_path=hardware_cfg["camera"]["imx500_model_path"],
+            width=hardware_cfg["camera"]["width"],
+            height=hardware_cfg["camera"]["height"],
+            target_fps=hardware_cfg["camera"]["target_fps"],
+        )
+    except (RuntimeError, OSError) as exc:
+        if "busy" in str(exc).lower():
+            raise RuntimeError(
+                "The camera device is already open by another process - most likely the "
+                "ai-vision-drone systemd service (companion.main) is already running and "
+                "holding it. Stop it first, then retry:\n"
+                "    sudo systemctl stop ai-vision-drone\n"
+                "Restart it afterward once you're done (it normally auto-starts on boot):\n"
+                "    sudo systemctl start ai-vision-drone"
+            ) from exc
+        raise
+    detector = IMX500Detector(
+        class_names=camera.imx500.network_intrinsics.labels,
+        score_threshold=hardware_cfg["camera"].get("score_threshold", 0.5),
+    )
+    return camera, detector
+
+
 class SyntheticCamera(CameraBase):
     """Sim/dev camera backend - no real image data, just a frame clock.
 

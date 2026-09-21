@@ -59,6 +59,17 @@ unit-tested against a synthetic camera/detector
 latency/CPU numbers this milestone needs can only come from running it for
 real on the Pi with the real AI Camera.
 
+**Real field issue found and fixed**: running this (or `detection_regression.py
+capture`) while the `ai-vision-drone` systemd service is already running
+fails with a bare `OSError: [Errno 16] Device or resource busy` from deep
+inside picamera2/V4L2 - the camera can only be held open by one process at
+a time, and the raw error gives no hint why. Both tools now share
+`companion.vision.camera.open_real_camera_and_detector()`, which catches
+this specific failure and re-raises a clear, actionable message instead:
+stop the service first (`sudo systemctl stop ai-vision-drone`), run the
+tool, then restart it (`sudo systemctl start ai-vision-drone`) since it
+normally auto-starts on boot.
+
 ## `detection_regression.py` (implemented, unit-tested)
 
 The practical equivalent of the plan's "recorded-video regression set" for

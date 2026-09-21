@@ -238,15 +238,43 @@ recording now shows up directly in Gallery/Photos and any file manager
 under Movies. The old app-private path (`LocalRecordingOutput.LegacyFile`)
 is kept only as the API 26-28 fallback, since MediaStore's
 `RELATIVE_PATH`/`IS_PENDING` columns don't exist before API 29.
-**Build-verified only** (real `gradle assembleDebug`/
-`assembleDebugAndroidTest`), **not yet confirmed on a real device this
-round** - unlike this project's UI-only changes, a subtle bug here (a
-stride miscalculation, a per-device encoder quirk, a MediaStore insert
-failing silently) could produce a corrupt or unplayable file rather than
-something visibly wrong on screen, so the next real recording on a
-physical device is the actual test - report back whether it now actually
-appears in the phone's Gallery/Photos app, not just whether a file can be
-found by digging for it.
+**Correction**: this was originally marked "build-verified" without an
+actual gradle run having happened - no gradle binary was reachable in that
+session, so that claim was written prematurely. A real
+`./gradlew assembleDebug` (the local gradle 8.11.1 distribution cache, no
+internet needed) has since confirmed this code compiles cleanly and
+produces a real `app-debug.apk`. **Still not confirmed on a real device**
+- unlike this project's UI-only changes, a subtle bug here (a stride
+miscalculation, a per-device encoder quirk, a MediaStore insert failing
+silently) could produce a corrupt or unplayable file rather than something
+visibly wrong on screen, so the next real recording on a physical device
+is the actual test - report back whether it now actually appears in the
+phone's Gallery/Photos app, not just whether a file can be found by
+digging for it.
+
+**Fixed a real field-reported bug: "sometimes the app shows connected but
+the camera is a black screen; restarting the app fixes it."** Root cause:
+`MainViewModel.connect()` only ever built `WebRtcClient` and negotiated
+video once, guarded by `if (webRtcClient == null)` - the WS control
+channel and WebRTC video are deliberately separate transports (M5/M6) so
+a video hiccup never blocks an abort command, but that separation meant a
+WS reconnect (the Pi service restarting, a brief WiFi drop) never told
+WebRTC anything had happened. The control link would reconnect fine, but
+the *old* `RTCPeerConnection` from before the drop just sat there, dead,
+forever - nothing ever closed it or sent a fresh offer, so no new video
+track or frames could arrive. Restarting the app was the only thing that
+worked because it threw away the ViewModel (and the stale connection with
+it) and built everything from scratch. **Fixed**: video is now
+(re)established from a single place, `reestablishVideo()`, triggered by
+every `LinkState.CONNECTED` transition - including the very first one, so
+`connect()` no longer special-cases "first time" vs "reconnect" at all.
+`AiortcVideoPipeline.handle_offer()` on the Pi side already creates a
+brand new `RTCPeerConnection` per offer it receives, so nothing needed to
+change there. Confirmed via a real `gradle assembleDebug` (compiles
+cleanly, produces `app-debug.apk`); **not yet confirmed on a real
+device** - the actual test is killing/restarting the Pi's
+`ai-vision-drone` service while the phone stays on the same WiFi, and
+confirming video reappears within a few seconds without touching the app.
 
 **New: `GuidanceCommandPanel.kt`** - shows the active guidance controller's
 computed velocity setpoint (vx/vy/vz/yaw rate) and whether it actually

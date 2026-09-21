@@ -54,6 +54,7 @@ class MainViewModel : ViewModel() {
     private val client = GroundStationClient()
     private var webRtcClient: WebRtcClient? = null
     private var appContext: Context? = null
+    private var eglBase: EglBase? = null
     private var localVideoRecorder: LocalVideoRecorder? = null
 
     val linkState = client.linkState
@@ -138,11 +139,22 @@ class MainViewModel : ViewModel() {
         }
         viewModelScope.launch {
             client.linkState.collect { state ->
-                if (state == LinkState.DISCONNECTED && client.shouldAutoReconnect) {
-                    delay(RECONNECT_DELAY_MS)
-                    if (client.shouldAutoReconnect) {
-                        client.reconnect()
+                when (state) {
+                    // Every CONNECTED transition re-establishes video, not
+                    // just the very first one - this is also what makes
+                    // the very first connect's video negotiation happen,
+                    // see reestablishVideo()'s own docstring for the real
+                    // field-reported bug this fixes.
+                    LinkState.CONNECTED -> reestablishVideo()
+                    LinkState.DISCONNECTED -> {
+                        if (client.shouldAutoReconnect) {
+                            delay(RECONNECT_DELAY_MS)
+                            if (client.shouldAutoReconnect) {
+                                client.reconnect()
+                            }
+                        }
                     }
+                    LinkState.CONNECTING -> {}
                 }
             }
         }
@@ -150,15 +162,47 @@ class MainViewModel : ViewModel() {
 
     fun connect(context: Context, eglBase: EglBase, host: String, port: Int) {
         appContext = context.applicationContext
+        this.eglBase = eglBase
         client.connect(host, port)
-        if (webRtcClient == null) {
-            webRtcClient = WebRtcClient(
-                context = context,
-                eglBase = eglBase,
-                onLocalOffer = { sdp, type -> client.sendWebRtcOffer(sdp, type) },
-                onRemoteVideoTrack = { track -> _remoteVideoTrack.value = track },
-            ).also { it.startReceiving() }
-        }
+    }
+
+    /** (Re)builds the WebRTC video session from scratch. Called every time
+     * the control link becomes CONNECTED - including after an automatic
+     * WS reconnect (e.g. the Pi service restarting, or a brief WiFi drop),
+     * not just the operator's initial "Connect" tap.
+     *
+     * **Fixes a real field-reported bug**: "the app shows connected but the
+     * camera is a black screen; restarting the app fixes it." The WS
+     * control channel and WebRTC video are deliberately separate
+     * transports (docs plan M5/M6) so a video hiccup never blocks an
+     * abort command - but that separation meant a WS reconnect never told
+     * WebRTC anything happened. `connect()` used to build `webRtcClient`
+     * once, guarded by `if (webRtcClient == null)`, so after the *first*
+     * connection succeeded, every later reconnect left that same, by-then
+     * stale `RTCPeerConnection` in place - its underlying connection had
+     * already died along with whatever caused the drop, but nothing ever
+     * closed it or sent a fresh offer, so no new video track (or frames)
+     * could ever arrive. Restarting the app was the only thing that
+     * happened to work, because it threw away the ViewModel (and the dead
+     * PeerConnection with it) and built everything from scratch. Now every
+     * CONNECTED transition tears down any existing client and starts a
+     * completely fresh negotiation, the exact same way a first connect
+     * already did - `AiortcVideoPipeline.handle_offer()` on the Pi side
+     * already creates a brand new `RTCPeerConnection` per offer it
+     * receives, so it was always ready for this, nothing needed to change
+     * there.
+     */
+    private fun reestablishVideo() {
+        val context = appContext ?: return
+        val eglBase = this.eglBase ?: return
+        webRtcClient?.close()
+        _remoteVideoTrack.value = null
+        webRtcClient = WebRtcClient(
+            context = context,
+            eglBase = eglBase,
+            onLocalOffer = { sdp, type -> client.sendWebRtcOffer(sdp, type) },
+            onRemoteVideoTrack = { track -> _remoteVideoTrack.value = track },
+        ).also { it.startReceiving() }
     }
 
     fun disconnect() {

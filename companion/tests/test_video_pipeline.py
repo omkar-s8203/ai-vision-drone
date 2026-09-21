@@ -3,7 +3,32 @@ import asyncio
 import numpy as np
 import pytest
 
-from companion.comms.video_pipeline import AiortcVideoPipeline
+from companion.comms.video_pipeline import AiortcVideoPipeline, overlay_latency_timestamp
+
+
+def test_overlay_latency_timestamp_does_not_mutate_the_input_frame():
+    frame = np.zeros((100, 200, 3), dtype=np.uint8)
+    stamped = overlay_latency_timestamp(frame)
+    assert np.array_equal(frame, np.zeros((100, 200, 3), dtype=np.uint8))
+    assert stamped.shape == frame.shape
+    assert stamped.any()  # the burned-in text changed some pixels
+
+
+def test_wrap_frame_source_with_latency_overlay_stamps_each_frame():
+    from companion.main import wrap_frame_source_with_latency_overlay
+
+    calls = [np.zeros((100, 200, 3), dtype=np.uint8)]
+    wrapped = wrap_frame_source_with_latency_overlay(lambda: calls[0])
+    stamped = wrapped()
+    assert stamped.any()
+
+
+def test_wrap_frame_source_with_latency_overlay_passes_through_none():
+    from companion.main import wrap_frame_source_with_latency_overlay
+
+    wrapped = wrap_frame_source_with_latency_overlay(lambda: None)
+    assert wrapped() is None
+
 
 aiortc = pytest.importorskip("aiortc")
 from aiortc import RTCPeerConnection, RTCSessionDescription  # noqa: E402

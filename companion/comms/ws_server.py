@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Callable, Optional
 
 from companion.comms.protocol import Envelope, MessageType, SequenceCounter, make_envelope
@@ -60,6 +61,14 @@ class GroundStationLink:
         try:
             envelope = Envelope.from_json(raw)
         except Exception:
+            return
+        if envelope.type == MessageType.PING:
+            # Answered here, not exposed as an app-level handler: this is a
+            # transport-level latency probe (docs plan M5's "WS control
+            # round-trip < 50ms" metric), not guidance logic. Echoes the
+            # client's own payload back untouched so it can carry whatever
+            # client-side timestamp/nonce the caller wants round-tripped.
+            asyncio.create_task(self._send(MessageType.PONG, envelope.payload))
             return
         handler = self._handlers.get(envelope.type)
         if handler is not None:

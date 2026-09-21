@@ -15,7 +15,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from companion.comms.transport import WebSocketTransport
 from companion.comms.video_recorder import VideoRecorder
@@ -783,6 +783,20 @@ def build_sim_orchestrator() -> tuple[CompanionOrchestrator, "object"]:
     return orchestrator, mock_fc
 
 
+def wrap_frame_source_with_latency_overlay(frame_source: Callable) -> Callable:
+    """Wraps a frame_source callable so every frame gets a burned-in
+    wall-clock timestamp (docs plan M5's own suggested glass-to-glass
+    latency test method) - opt-in via the AI_VISION_DRONE_LATENCY_OVERLAY=1
+    env var, never on by default, since it visibly stamps every frame."""
+    from companion.comms.video_pipeline import overlay_latency_timestamp
+
+    def wrapped():
+        frame = frame_source()
+        return None if frame is None else overlay_latency_timestamp(frame)
+
+    return wrapped
+
+
 def build_hardware_orchestrator() -> CompanionOrchestrator:
     from companion.comms.video_pipeline import AiortcVideoPipeline
     from companion.vision.camera import Picamera2IMX500Camera
@@ -828,9 +842,14 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
         fps=hardware_cfg["camera"]["target_fps"],
     )
 
+    frame_source = camera.get_latest_frame
+    if os.environ.get("AI_VISION_DRONE_LATENCY_OVERLAY") == "1":
+        frame_source = wrap_frame_source_with_latency_overlay(frame_source)
+        log.warning("AI_VISION_DRONE_LATENCY_OVERLAY=1: every video frame is stamped with a wall-clock timestamp (M5 latency test)")
+
     try:
         video_pipeline = AiortcVideoPipeline(
-            frame_source=camera.get_latest_frame, fps=hardware_cfg["camera"]["target_fps"]
+            frame_source=frame_source, fps=hardware_cfg["camera"]["target_fps"]
         )
     except RuntimeError:
         log.warning("aiortc not installed - hardware mode running without video")

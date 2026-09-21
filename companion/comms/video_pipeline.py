@@ -1,9 +1,27 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Callable, Optional
 
+import cv2
 import numpy as np
+
+
+def overlay_latency_timestamp(frame: np.ndarray) -> np.ndarray:
+    """Burns the current wall-clock time (ms precision) into a frame's
+    corner - for docs plan M5's own suggested glass-to-glass latency test
+    method: read this timestamp off the Android-rendered frame (e.g. by
+    pausing on a screen recording) and compare it against wall-clock time
+    at the moment of capture, given both devices' clocks are reasonably
+    synced (NTP/chrony). Not wired in by default - see
+    `companion.main.wrap_frame_source_with_latency_overlay`.
+    """
+    out = frame.copy()
+    cv2.putText(
+        out, f"{time.time():.3f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2, cv2.LINE_AA
+    )
+    return out
 
 
 class VideoPipeline:

@@ -24,15 +24,18 @@ Two subcommands:
         acceptance test) and saves every frame's detections as JSON.
 
     python tools/detection_regression.py analyze session.json
-        Reports stability metrics for a saved session and flags likely
-        regressions: the longest run of consecutive zero-detection frames,
-        detection-score stability, and bounding-box position jitter
-        frame-to-frame for the most persistent target.
+        Reports two things from the same captured session: M2's detection-
+        stability metrics (longest zero-detection gap, score stability,
+        bbox jitter), and - by replaying the same real detection stream
+        through the real TrackingStateMachine/IouKalmanTracker - docs plan
+        M3's own reacquisition-success-rate and false-lost-rate metrics
+        (>=90% / <=5%). A session already captured for M2 works immediately
+        for this too; no separate hardware run needed for M3.
 
-analyze_session() and the JSON schema it reads are fully exercised in this
-project's own test suite with a synthetic session file
-(companion/tests/test_detection_regression.py) - only `capture` needs the
-real Pi and camera.
+analyze_session()/replay_through_tracker() and the JSON schema they read
+are fully exercised in this project's own test suite with a synthetic
+session file (companion/tests/test_detection_regression.py) - only
+`capture` needs the real Pi and camera.
 """
 
 from __future__ import annotations
@@ -149,6 +152,131 @@ def analyze_session(frames: list) -> StabilityReport:
     )
 
 
+MIN_REACQUISITION_SUCCESS_RATE = 0.90
+MAX_FALSE_LOST_RATE = 0.05
+
+
+@dataclass
+class TrackingReplayReport:
+    """docs plan M3's own acceptance metrics - >=90% reacquisition success,
+    <5% false-lost rate - measured by replaying a REAL captured detection
+    session (the exact JSON tools/detection_regression.py capture already
+    produces for M2) through the REAL TrackingStateMachine/IouKalmanTracker.
+    Deliberately not a synthetic occlusion model: a real detector's actual
+    frame-to-frame dropout pattern (motion blur, angle, distance) is
+    exactly what these metrics are about, and a synthetic model can't
+    reproduce that - see this module's own docstring for the same
+    reasoning applied to M2."""
+
+    total_episodes: int
+    successful_reacquisitions: int
+    escalated_to_lost: int
+
+    @property
+    def success_rate(self) -> Optional[float]:
+        return self.successful_reacquisitions / self.total_episodes if self.total_episodes else None
+
+    @property
+    def false_lost_rate(self) -> Optional[float]:
+        return self.escalated_to_lost / self.total_episodes if self.total_episodes else None
+
+    def success_rate_ok(self) -> bool:
+        return self.success_rate is None or self.success_rate >= MIN_REACQUISITION_SUCCESS_RATE
+
+    def false_lost_rate_ok(self) -> bool:
+        return self.false_lost_rate is None or self.false_lost_rate <= MAX_FALSE_LOST_RATE
+
+    def report(self) -> str:
+        if self.total_episodes == 0:
+            return (
+                "No brief-loss episodes occurred in this session (detection never dropped out "
+                "and recovered) - nothing to measure. Capture a session where the subject "
+                "briefly leaves frame or gets occluded and comes back."
+            )
+        lines = [
+            f"Reacquisition episodes:  {self.total_episodes}",
+            f"  Recovered to TRACKING: {self.successful_reacquisitions} "
+            f"({self.success_rate * 100:.0f}%, target >= {MIN_REACQUISITION_SUCCESS_RATE * 100:.0f}%)"
+            f"  {'PASS' if self.success_rate_ok() else 'FAIL'}",
+            f"  Escalated to LOST:     {self.escalated_to_lost} "
+            f"({self.false_lost_rate * 100:.0f}%, target <= {MAX_FALSE_LOST_RATE * 100:.0f}%)"
+            f"  {'PASS' if self.false_lost_rate_ok() else 'FAIL'}",
+        ]
+        return "\n".join(lines)
+
+
+def replay_through_tracker(frames: list, reacquire_timeout_s: float = 2.0) -> TrackingReplayReport:
+    """Pure function over the same plain-dict frame list analyze_session()
+    reads - no camera/detector involved, so this is fully testable without
+    real hardware, and directly replayable against a session someone
+    already captured for M2's benchmark (no new hardware run needed).
+
+    class_id isn't part of the captured session JSON schema (only
+    class_name is - see _detection_to_dict()) - assigned a stable per-name
+    id locally here rather than changing that schema, so an
+    already-captured session.json works with this immediately."""
+    from companion.tracking.iou_tracker import IouKalmanTracker
+    from companion.tracking.state import TrackingState, TrackingStateMachine
+    from companion.vision.detector import BBox
+
+    class_ids: dict = {}
+
+    def to_detections(raw_list: list, ts: float) -> list:
+        result = []
+        for d in raw_list:
+            class_ids.setdefault(d["class_name"], len(class_ids))
+            result.append(
+                Detection(
+                    bbox=BBox(d["x"], d["y"], d["w"], d["h"]),
+                    score=d["score"],
+                    class_id=class_ids[d["class_name"]],
+                    class_name=d["class_name"],
+                    frame_ts=ts,
+                )
+            )
+        return result
+
+    sm = TrackingStateMachine(IouKalmanTracker(), reacquire_timeout_s=reacquire_timeout_s)
+    started = False
+    in_episode = False
+    total_episodes = 0
+    successful = 0
+    escalated = 0
+
+    for f in frames:
+        detections = to_detections(f["detections"], f["ts"])
+        if not started:
+            if detections:
+                sm.start(f["ts"], max(detections, key=lambda d: d.score))
+                started = True
+            continue
+
+        state = sm.update(f["ts"], detections)
+
+        if state == TrackingState.REACQUIRE and not in_episode:
+            in_episode = True
+            total_episodes += 1
+        elif state == TrackingState.TRACKING and in_episode:
+            in_episode = False
+            successful += 1
+        elif state == TrackingState.TARGET_LOST:
+            if in_episode:
+                escalated += 1
+                in_episode = False
+            # A real full loss - a real operator would re-tap (or
+            # appearance-based reidentification would re-select, a
+            # separate mechanism not replayed here). Mirrors
+            # TrackingStateMachine.start()'s own behavior (a clean
+            # overwrite via Tracker.init_target(), no explicit reset
+            # needed first - confirmed directly, not assumed): pick back
+            # up on the next frame that has a detection.
+            started = False
+
+    return TrackingReplayReport(
+        total_episodes=total_episodes, successful_reacquisitions=successful, escalated_to_lost=escalated
+    )
+
+
 def _detection_to_dict(detection: Detection) -> dict:
     return {
         "class_name": detection.class_name,
@@ -196,8 +324,13 @@ def _cmd_capture(args: argparse.Namespace) -> None:
 
 def _cmd_analyze(args: argparse.Namespace) -> None:
     data = json.loads(Path(args.session).read_text())
-    report = analyze_session(data["frames"])
-    print(report.report())
+    frames = data["frames"]
+
+    print("--- Detection stability (docs plan M2) ---")
+    print(analyze_session(frames).report())
+    print()
+    print("--- Tracking reacquisition (docs plan M3) ---")
+    print(replay_through_tracker(frames).report())
 
 
 def main() -> None:

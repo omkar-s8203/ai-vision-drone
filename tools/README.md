@@ -30,6 +30,31 @@ version of this note claimed the real run had happened; that was
 mistaken and is corrected here once the discrepancy was actually
 checked.)
 
+## `distance_validation.py` (implemented, unit-tested)
+
+Validates the vision-only pinhole distance estimator (`companion/guidance/
+distance.py`) against docs plan M4's own measured-ground-truth acceptance
+test: place a test subject at known distances (the plan's own example:
+2m/5m/10m/20m) and compare the estimate against reality - **target: <15%
+error within the 3-15m range**.
+
+```
+python tools/distance_validation.py --template > measurements.json
+# fill in each bbox_w_px from the real detector output at that distance
+python tools/distance_validation.py measurements.json
+```
+
+**Blocked on two real-world inputs, not more code**: (1) real camera
+intrinsics from `calibrate_camera.py` above - not yet run, so this would
+currently validate against placeholder `fx`/`fy` values, which is
+meaningless; (2) a real set of measurements - the actual bounding-box
+pixel width the detector reports for a test subject standing at each
+known, physically-measured distance. The validation math itself
+(`validate()`) is fully unit-tested against synthetic intrinsics/
+measurements (`companion/tests/test_distance_validation.py`), including
+the "only average points inside the plan's own 3-15m validated range"
+rule and graceful handling of missing/unknown-class measurements.
+
 ## `imx500_convert.py` (not yet implemented)
 
 Planned: a wrapper around Sony's imx500-converter toolchain for deploying
@@ -90,20 +115,75 @@ python tools/detection_regression.py capture --duration 30 --out session.json
 python tools/detection_regression.py analyze session.json
 ```
 
-`analyze` reports: detection rate, the longest run of consecutive
-zero-detection frames (the key regression signal - a sudden long gap where
-there previously wasn't one), detection-score stability, and bounding-box
-position jitter frame-to-frame. Also doubles as real data for tuning
-`camera.score_threshold` (`hardware.yaml`) against actual score
-distributions instead of leaving it as an untuned guess.
+`analyze` reports two things from the same captured session file:
 
-**Not yet run against real hardware** - `analyze_session()` (the actual
-stability math) is unit-tested against a synthetic session file
+1. **Detection stability (M2)**: detection rate, the longest run of
+   consecutive zero-detection frames (the key regression signal - a sudden
+   long gap where there previously wasn't one), detection-score stability,
+   and bounding-box position jitter frame-to-frame. Also doubles as real
+   data for tuning `camera.score_threshold` (`hardware.yaml`) against
+   actual score distributions instead of leaving it as an untuned guess.
+2. **Tracking reacquisition (M3)**: replays the same captured detections
+   through the real `TrackingStateMachine`/`IouKalmanTracker`
+   (`replay_through_tracker()`) and reports against the plan's own M3
+   acceptance metrics - **reacquisition success rate ≥ 90%, false-lost
+   rate ≤ 5%**. This reuses whatever session `capture` already recorded on
+   real hardware for M2 - no separate M3 capture step needed, since a
+   captured session already contains exactly the per-frame
+   detection-present/absent sequence tracking reacquisition depends on.
+
+**Not yet run against real hardware** - `analyze_session()` and
+`replay_through_tracker()` (the actual stability/reacquisition math) are
+unit-tested against synthetic session data
 (`companion/tests/test_detection_regression.py`); `capture` needs the real
 Pi and camera. Once a first real session is captured, save it (e.g. as
 `tools/reference_sessions/baseline.json`) and re-run `analyze` against a
-fresh capture after any future change to the detection/camera pipeline to
-compare against it by eye - there's no automated pass/fail threshold for
-drift between two sessions yet (jitter/score distributions will
-legitimately vary session to session with lighting/distance/subject), just
-the tool to make that comparison possible.
+fresh capture after any future change to the detection/camera/tracking
+pipeline to compare against it by eye - there's no automated pass/fail
+threshold for drift between two sessions yet (jitter/score distributions
+will legitimately vary session to session with lighting/distance/subject),
+just the tool to make that comparison possible.
+
+## `ws_latency_benchmark.py` (implemented, unit-tested)
+
+Measures the WS control/telemetry channel's round-trip time against docs
+plan M5's own acceptance metric: **WS control round-trip < 50ms**. Adds a
+real `ping`/`pong` message pair (`docs/protocol.md`) answered directly
+inside `GroundStationLink._dispatch` - bypassing every app-level handler -
+so this measures the transport's own latency floor, not anything
+downstream of it (guidance, tracking, etc. were never on this path).
+
+Against the real running companion service, from a laptop on the same
+WiFi as the Pi (the actual M5 scenario):
+
+```
+python tools/ws_latency_benchmark.py --uri ws://<pi-ip>:8765 --count 100
+```
+
+Or a local sanity check with no Pi involved at all (spins up its own
+`GroundStationLink` on localhost and measures against that):
+
+```
+python tools/ws_latency_benchmark.py --self-test
+```
+
+Prints a PASS/FAIL report (mean + p95 round-trip ms). Unit-tested against
+a real local WebSocket server, not a fake transport
+(`companion/tests/test_ws_latency_benchmark.py`), since the entire point
+is measuring real transport latency.
+
+**Not yet run against the real Pi over real WiFi** - `--self-test` confirms
+the ping/pong plumbing itself works (loopback RTT ~0ms, as expected), but
+the real M5 number can only come from running this against the Pi's actual
+WS server from a phone/laptop at realistic field range.
+
+Video glass-to-glass latency (M5's other metric, < 200ms) is not covered
+by this tool - it's a separate manual test. `companion/comms/
+video_pipeline.py`'s `overlay_latency_timestamp()` now supports it: set
+`AI_VISION_DRONE_LATENCY_OVERLAY=1` before starting the companion service
+(hardware mode only) and every video frame gets a wall-clock timestamp
+burned into its corner before WebRTC encodes it. Read that timestamp off
+the Android-rendered frame (e.g. pause a screen recording) and compare it
+to wall-clock time at that instant - the difference is glass-to-glass
+latency, given both devices' clocks are reasonably synced (NTP/chrony).
+Off by default since it visibly stamps every frame.

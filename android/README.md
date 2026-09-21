@@ -343,6 +343,36 @@ protection) - kept apart from the main DISARM button so it's never reached
 for by accident, and never wired to arming at all, so a stray `force` can't
 bypass a pre-arm check. Build-verified.
 
+**Fixed a real field-reported bug: light theme rendered dark-styled cards
+on a light page.** An earlier pass added a real `DroneGroundStationTheme`
+with proper `darkColorScheme`/`lightColorScheme` instances and wired a
+working dark/light toggle (`MainViewModel.isDarkMode` → `SettingsTab.kt`),
+but left `DroneColors` - the object every screen actually uses for its own
+colors (`DroneColors.Surface`, `.TextPrimary`, etc., not
+`MaterialTheme.colorScheme` directly) - hardcoded to permanently-dark
+values, per its own comment: "Explicit dark theme default colors to
+prevent non-composable invocation errors." That workaround is why light
+mode looked broken: the Scaffold background correctly turned light
+(it reads `MaterialTheme.colorScheme.background`), but every `Card`/
+button/text across all ~20 files using `DroneColors` stayed dark, since
+that object never changed. Root cause of the original compile error:
+several `DroneColors`-reading helpers (e.g. `StatusTab.kt`'s
+`batteryColor()`/`gpsFixColor()`) are plain (non-`@Composable`) functions,
+which can't call a `@Composable get()` property - simply making
+`DroneColors`'s properties composable would have broken those call sites
+again. Fixed properly instead: `DroneColors`'s properties are now plain
+(non-composable) getters backed by a `mutableStateOf` palette that
+`DroneGroundStationTheme` swaps on theme change - Compose's snapshot
+system still tracks and recomposes on reads of a `State.value` regardless
+of whether the *reading* function is itself `@Composable`, so every
+existing `DroneColors.X` call site keeps compiling completely unchanged
+while now actually responding to the theme. Also designed a real light
+palette rather than inverting the dark one's hues: the dark theme's brand
+yellow accent (`#FFCC00`) has poor contrast on a white/light-gray surface,
+so light mode uses a darkened amber (`#9C6B00`) for Accent/Warning
+instead. Build-verified (`assembleDebug` + `assembleDebugAndroidTest`);
+not yet confirmed against a physical device in both themes this round.
+
 ## Layout
 
 ```

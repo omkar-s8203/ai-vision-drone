@@ -82,6 +82,34 @@ def _build_orchestrator(tmp_path, video_recorder=None, camera=None):
         yield orchestrator, recorder, conn, mock_mavutil
 
 
+class _FakeMavMessage:
+    def __init__(self, msg_type: str) -> None:
+        self._msg_type = msg_type
+
+    def get_type(self) -> str:
+        return self._msg_type
+
+
+def test_on_mavlink_message_beats_mavlink_for_any_message(tmp_path):
+    with _build_orchestrator(tmp_path) as (orchestrator, recorder, conn, mock_mavutil):
+        orchestrator._on_mavlink_message(_FakeMavMessage("HEARTBEAT"))
+        assert not orchestrator.watchdog.is_stale("mavlink")
+        assert orchestrator.watchdog.is_stale("rc_channels")  # not this specific message type
+        recorder.close()
+
+
+def test_on_mavlink_message_beats_rc_channels_only_for_that_message_type(tmp_path):
+    """A stale RC_CHANNELS stream would otherwise leave the RC-override
+    software backstop stuck (docs/safety-case.md) - this proves the
+    dedicated rc_channels heartbeat only fires for that specific message
+    type, not for any MAVLink traffic in general."""
+    with _build_orchestrator(tmp_path) as (orchestrator, recorder, conn, mock_mavutil):
+        orchestrator._on_mavlink_message(_FakeMavMessage("RC_CHANNELS"))
+        assert not orchestrator.watchdog.is_stale("mavlink")
+        assert not orchestrator.watchdog.is_stale("rc_channels")
+        recorder.close()
+
+
 def test_arm_command_sends_component_arm_disarm(tmp_path):
     with _build_orchestrator(tmp_path) as (orchestrator, recorder, conn, mock_mavutil):
         orchestrator._on_arm_command({"armed": True})

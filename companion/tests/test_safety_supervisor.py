@@ -47,6 +47,25 @@ def test_stale_subsystem_forces_safe():
     assert "tracker" in decision.reason
 
 
+def test_stale_rc_channels_forces_safe():
+    """A stale RC_CHANNELS stream would otherwise leave the RC-override
+    software backstop (RcOverrideMonitor.is_overriding()) stuck returning
+    False forever - a backstop that looks alive but can no longer see
+    anything (docs/safety-case.md). rc_channels is a required subsystem
+    specifically so this fails closed like every other stale subsystem."""
+    wd = HeartbeatWatchdog(timeout_s=5.0)
+    wd.beat("camera")
+    wd.beat("tracker")
+    wd.beat("mavlink")
+    wd.beat("comms")
+    # "rc_channels" never beaten -> stale
+    supervisor = SafetySupervisor(wd)
+    decision = supervisor.evaluate(base_inputs())
+    assert decision.state == SupervisorState.SAFE
+    assert decision.guidance_allowed is False
+    assert "rc_channels" in decision.reason
+
+
 def test_rc_override_forces_safe():
     supervisor = SafetySupervisor(fresh_watchdog())
     decision = supervisor.evaluate(base_inputs(rc_override_active=True))

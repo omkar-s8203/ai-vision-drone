@@ -311,13 +311,23 @@ class CompanionOrchestrator:
             }
         )
 
+    def _on_mavlink_message(self, msg: object) -> None:
+        self.watchdog.beat("mavlink")
+        if msg.get_type() == "RC_CHANNELS":
+            # A stale RC_CHANNELS stream would otherwise leave
+            # RcOverrideMonitor.is_overriding() stuck returning False
+            # forever (docs/safety-case.md) - beating this separately from
+            # the broader "mavlink" heartbeat above means the Supervisor
+            # (rc_channels is in REQUIRED_SUBSYSTEMS) forces SAFE the
+            # moment this specific message stream actually stops, not just
+            # when the whole MAVLink link goes down.
+            self.watchdog.beat("rc_channels")
+
     async def start(self) -> None:
         await self.link.start()
         if not self.mavlink.is_connected:
             self.mavlink.connect()
-        asyncio.create_task(
-            self.mavlink.run(on_message=lambda _msg: self.watchdog.beat("mavlink"))
-        )
+        asyncio.create_task(self.mavlink.run(on_message=self._on_mavlink_message))
         await self._perception_loop()
 
     def _camera_frame(self):
@@ -380,20 +390,23 @@ class CompanionOrchestrator:
                 self.recorder.record("appearance_reacquired", class_name=rematch.class_name)
 
         distance_m = None
+        det_for_distance = None
         if self.state_machine.target is not None:
             t = self.state_machine.target
             det_for_distance = Detection(
                 bbox=t.bbox, score=t.confidence, class_id=t.class_id,
                 class_name=t.class_name, frame_ts=frame.ts,
             )
-            distance_m, _source = self.distance_estimator.estimate(det_for_distance)
+            distance_m, _source = self.distance_estimator.estimate(det_for_distance, trust_rangefinder=True)
 
         rc_override = self.rc_monitor.is_overriding(self.mavlink.telemetry.rc_channels)
         comms_alive = self.link.is_connected
         if comms_alive:
             self.watchdog.beat("comms")
 
-        obstacle_alert = check_proximity(detections, self.distance_estimator, self.min_obstacle_distance_m)
+        obstacle_alert = check_proximity(
+            detections, self.distance_estimator, self.min_obstacle_distance_m, tracked_target=det_for_distance
+        )
         if obstacle_alert is not None:
             self.recorder.record(
                 "obstacle_alert", class_name=obstacle_alert.class_name, distance_m=obstacle_alert.distance_m

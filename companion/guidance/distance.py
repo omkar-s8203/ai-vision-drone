@@ -93,9 +93,19 @@ class DistanceEstimator:
         self.intrinsics = intrinsics
         self.rangefinder = rangefinder or NullDistanceSource()
 
-    def estimate(self, detection: Detection) -> tuple[Optional[float], str]:
-        rf = self.rangefinder.read()
-        if rf is not None:
-            return rf, "rangefinder"
+    def estimate(self, detection: Detection, trust_rangefinder: bool = False) -> tuple[Optional[float], str]:
+        """`trust_rangefinder` must only be set for the detection actually
+        matching the tracker's current target - a forward-facing rangefinder
+        gives one boresight reading per frame, not a per-object one, so
+        applying it to *every* detection in frame (the previous, unreachable-
+        in-practice default) would report the tracked target's own distance
+        for unrelated objects too, silently defeating the obstacle-proximity
+        check for anything not being tracked (see docs/safety-case.md).
+        Defaults to vision-only, the safe choice when the caller doesn't
+        know or care whether this is the tracked target."""
+        if trust_rangefinder:
+            rf = self.rangefinder.read()
+            if rf is not None:
+                return rf, "rangefinder"
         vision = estimate_distance_pinhole_m(detection, self.intrinsics)
         return vision, "vision"

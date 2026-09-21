@@ -54,6 +54,23 @@ def test_prunes_oldest_sessions_beyond_max(tmp_path):
     assert "session_1004.jsonl" in remaining
 
 
+def test_record_offloads_writes_without_losing_order_or_entries(tmp_path):
+    """record() offloads its write+flush to a background thread pool so it
+    never blocks the caller (the async per-frame hot loop, or a plain sync
+    handler callback - see the class docstring) - this proves that
+    offloading doesn't silently drop or reorder entries under a burst of
+    rapid calls, and that close() waits for all of them to actually land
+    before returning."""
+    recorder = SessionRecorder(tmp_path)
+    for i in range(50):
+        recorder.record("tick", i=i)
+    recorder.close()
+
+    lines = recorder._path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 50
+    assert [json.loads(line)["i"] for line in lines] == list(range(50))
+
+
 def test_prune_handles_an_empty_or_fresh_session_dir(tmp_path):
     """Regression guard for the off-by-one in max(0, max_sessions - 1): a
     fresh directory with nothing to prune must not raise or delete the

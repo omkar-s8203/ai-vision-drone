@@ -98,6 +98,7 @@ async def test_smart_shot_sends_a_command_through_process_frame(tmp_path):
     orchestrator.mavlink.connect()
     orchestrator.mavlink.telemetry.fc_mode = "GUIDED"
     orchestrator.watchdog.beat("mavlink")
+    orchestrator.watchdog.beat("rc_channels")
     person = Detection(bbox=BBox(600, 300, 80, 160), score=0.9, class_id=0, class_name="person", frame_ts=0.0)
 
     orchestrator._on_target_selected({"x": 640.0, "y": 380.0, "point": True})
@@ -120,6 +121,7 @@ async def test_smart_shot_finishes_after_its_duration(tmp_path):
     orchestrator.mavlink.connect()
     orchestrator.mavlink.telemetry.fc_mode = "GUIDED"
     orchestrator.watchdog.beat("mavlink")
+    orchestrator.watchdog.beat("rc_channels")
     orchestrator._on_mode_command({"mode": "dronie"})
     duration = orchestrator.smart_shot.limits["duration_s"]
 

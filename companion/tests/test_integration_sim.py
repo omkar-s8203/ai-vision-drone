@@ -47,9 +47,13 @@ async def test_follow_mode_sends_setpoints_then_rc_override_halts_them(tmp_path)
     mavlink.connect()
     mavlink.prime_udp_peer("127.0.0.1", TEST_FC_PORT)
     watchdog = HeartbeatWatchdog(timeout_s=2.0)
-    mavlink_task = asyncio.create_task(
-        mavlink.run(on_message=lambda _msg: watchdog.beat("mavlink"))
-    )
+
+    def _on_mavlink_message(msg):
+        watchdog.beat("mavlink")
+        if msg.get_type() == "RC_CHANNELS":
+            watchdog.beat("rc_channels")
+
+    mavlink_task = asyncio.create_task(mavlink.run(on_message=_on_mavlink_message))
 
     generator = SyntheticTargetGenerator(image_width=1280, image_height=720, path_amplitude_px=0.0)
     transport = FakeTransport(connected=True)

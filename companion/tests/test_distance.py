@@ -37,15 +37,27 @@ class _FixedDistanceSource(DistanceSource):
         return self.value
 
 
-def test_estimator_prefers_rangefinder_when_available():
+def test_estimator_prefers_rangefinder_when_trusted_and_available():
     estimator = DistanceEstimator(INTRINSICS, rangefinder=_FixedDistanceSource(3.5))
-    distance, source = estimator.estimate(make_det(w=45))
+    distance, source = estimator.estimate(make_det(w=45), trust_rangefinder=True)
     assert distance == 3.5
     assert source == "rangefinder"
 
 
 def test_estimator_falls_back_to_vision_without_rangefinder():
     estimator = DistanceEstimator(INTRINSICS)
+    distance, source = estimator.estimate(make_det(w=45), trust_rangefinder=True)
+    assert distance == 10.0
+    assert source == "vision"
+
+
+def test_estimator_ignores_rangefinder_by_default_even_when_available():
+    """A forward-facing rangefinder gives one boresight reading per frame,
+    not a per-object one - applying it to a detection the caller hasn't
+    vouched for as the tracked target would silently misreport that
+    object's distance as the tracked target's own (docs/safety-case.md).
+    trust_rangefinder must default to False."""
+    estimator = DistanceEstimator(INTRINSICS, rangefinder=_FixedDistanceSource(3.5))
     distance, source = estimator.estimate(make_det(w=45))
     assert distance == 10.0
     assert source == "vision"

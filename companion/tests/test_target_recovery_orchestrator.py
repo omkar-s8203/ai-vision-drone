@@ -82,6 +82,7 @@ async def _engage_follow(orchestrator):
     and subsystems healthy - the minimum needed for guidance_allowed."""
     orchestrator.mavlink.telemetry.fc_mode = "GUIDED"
     orchestrator.watchdog.beat("mavlink")
+    orchestrator.watchdog.beat("rc_channels")
     orchestrator._on_target_selected({"x": 640.0, "y": 380.0, "point": True})
     await orchestrator.process_frame(Frame(ts=0.0, width=1280, height=720, raw_detection_output=[_person(0.0)]))
     orchestrator._on_mode_command({"mode": "follow"})

@@ -1,10 +1,18 @@
 from companion.config.loader import load_yaml
-from companion.guidance.distance import CameraIntrinsics, DistanceEstimator
+from companion.guidance.distance import CameraIntrinsics, DistanceEstimator, DistanceSource
 from companion.safety.proximity_guard import check_proximity
 from companion.vision.detector import BBox, Detection
 
 CALIB = load_yaml("camera_calibration.yaml")
 MIN_SAFE_DISTANCE_M = 2.0
+
+
+class _FixedDistanceSource(DistanceSource):
+    def __init__(self, value):
+        self.value = value
+
+    def read(self):
+        return self.value
 
 
 def make_detection(class_name: str, bbox_w: float) -> Detection:
@@ -60,3 +68,35 @@ def test_unknown_class_with_no_known_width_is_skipped_safely():
     estimator = DistanceEstimator(CameraIntrinsics.from_dict(CALIB))
     mystery_object = make_detection("skateboard", bbox_w=500)  # not in KNOWN_OBJECT_WIDTHS_M
     assert check_proximity([mystery_object], estimator, MIN_SAFE_DISTANCE_M) is None
+
+
+def test_rangefinder_is_only_trusted_for_the_tracked_target():
+    """A forward-facing rangefinder gives one boresight reading per frame -
+    applying it to every detection would report the tracked target's own
+    distance for unrelated objects too (docs/safety-case.md). Here the
+    rangefinder claims 1.0m (would trigger an alert); the untracked car's
+    real vision-estimated distance is a safe 32.4m, so it must NOT alert
+    just because a rangefinder happens to be present this frame."""
+    estimator = DistanceEstimator(CameraIntrinsics.from_dict(CALIB), rangefinder=_FixedDistanceSource(1.0))
+    untracked_far_car = make_detection("car", bbox_w=50)  # (1.8*900)/50 = 32.4m by vision
+    assert check_proximity([untracked_far_car], estimator, MIN_SAFE_DISTANCE_M) is None
+
+
+def test_rangefinder_reading_is_applied_to_the_matching_tracked_target():
+    estimator = DistanceEstimator(CameraIntrinsics.from_dict(CALIB), rangefinder=_FixedDistanceSource(1.0))
+    tracked_person = make_detection("person", bbox_w=100)  # vision would say 4.5m, safely far
+    alert = check_proximity([tracked_person], estimator, MIN_SAFE_DISTANCE_M, tracked_target=tracked_person)
+    assert alert is not None
+    assert alert.distance_m == 1.0  # the rangefinder reading won, not the vision estimate
+
+
+def test_only_the_matching_detection_trusts_the_rangefinder_not_the_rest():
+    estimator = DistanceEstimator(CameraIntrinsics.from_dict(CALIB), rangefinder=_FixedDistanceSource(1.0))
+    tracked_person = make_detection("person", bbox_w=100)  # tracked: rangefinder says 1.0m
+    untracked_far_car = make_detection("car", bbox_w=50)  # untracked: vision says 32.4m, safe
+    alert = check_proximity(
+        [tracked_person, untracked_far_car], estimator, MIN_SAFE_DISTANCE_M, tracked_target=tracked_person
+    )
+    assert alert is not None
+    assert alert.class_name == "person"
+    assert alert.distance_m == 1.0

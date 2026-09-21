@@ -50,18 +50,28 @@ mechanism is never silent to the operator.
   direct FC mode change, not a velocity setpoint, so it was never gated by
   it) - worth remembering if a similar direct-mode-change path is ever
   added elsewhere.
-- **A related known gap, deliberately not fixed here**: the software
-  backstop's fail-safe direction assumes `RC_CHANNELS` keeps arriving. If
-  a real FC only streams the legacy `RC_CHANNELS_RAW` message, or
-  `RC_CHANNELS` stops arriving mid-flight for any reason,
-  `telemetry.rc_channels` stays at its last value (or empty) and
-  `is_overriding()` silently keeps returning `False` forever - a stuck
-  backstop that looks alive. This wasn't fixed because it changes RC-
-  override safety semantics (e.g. what should "no RC telemetry" *do* -
-  fail open, force `SAFE`, or something else) and needs a decision plus
-  real-hardware validation, not just a mechanical patch. Flagged here so
-  it isn't lost - the hardware switch above is what actually makes this
-  gap non-critical in practice.
+- **A related known gap, now fixed**: the software backstop's fail-safe
+  direction used to assume `RC_CHANNELS` keeps arriving. If a real FC only
+  streamed the legacy `RC_CHANNELS_RAW` message, or `RC_CHANNELS` stopped
+  arriving mid-flight for any reason, `telemetry.rc_channels` would stay at
+  its last value (or empty) and `is_overriding()` would silently keep
+  returning `False` forever - a stuck backstop that looks alive. This
+  needed an explicit decision on what "no RC telemetry" should do (fail
+  open, force `SAFE`, or something else) before it could be fixed, not just
+  a mechanical patch - the decision made: fail closed, consistent with
+  every other subsystem this project already treats this way. `rc_channels`
+  is now a required subsystem in `SafetySupervisor.REQUIRED_SUBSYSTEMS`
+  alongside camera/tracker/mavlink/comms, beaten specifically on a real
+  `RC_CHANNELS` message (`CompanionOrchestrator._on_mavlink_message`, not
+  on arbitrary MAVLink traffic) so its staleness is detected independently
+  of the broader MAVLink-link-alive heartbeat - if `RC_CHANNELS`
+  specifically stops arriving, the Supervisor now forces `SAFE`
+  (`stale_subsystems:rc_channels`) even while other MAVLink messages keep
+  flowing. Unit-tested (`test_safety_supervisor.py::
+  test_stale_rc_channels_forces_safe`, `test_admin_commands.py::
+  test_on_mavlink_message_beats_rc_channels_only_for_that_message_type`).
+  The hardware switch above remains the actual non-negotiable guarantee;
+  this only closes the gap in the software-only backstop.
 - **Status**: software backstop implemented and unit/integration tested.
   **The hardware switch itself is not yet configured on the transmitter**
   (`FLTMODE_CH` param) - see root README "What's next" #4. Until that's
@@ -405,31 +415,40 @@ just in-process Python calls.
   load-bearing starting at stage 4** (Follow-mode actually flying) - that
   stage, and everything after it, is correctly gated on both being closed
   first; stages 1-3 are not.
-- **Two known gaps found in a code-review audit, deliberately not fixed
-  yet** (beyond the RC_CHANNELS-staleness one under "RC override" above):
+- **Two known gaps found in a code-review audit, now both fixed**
+  (beyond the RC_CHANNELS-staleness one under "RC override" above):
   - `SessionRecorder.record()` (`companion/logging_/session_recorder.py`)
-    does a synchronous file write + flush on every call, from inside the
-    async per-frame hot loop, with no executor offload. Several calls can
-    fire within a single frame (an obstacle alert, a guidance command,
+    used to do a synchronous file write + flush on every call, from inside
+    the async per-frame hot loop, with no executor offload. Several calls
+    can fire within a single frame (an obstacle alert, a guidance command,
     etc.), and on Pi SD/eMMC storage under contention (e.g. concurrent
     video recording) each flush is a blocking syscall that can stall
-    MAVLink receive and WebRTC delivery for its duration. Not fixed here
-    because a safe fix needs either an async-aware logging path or an
-    explicit durability trade-off (buffered writes vs. crash-safety for a
-    safety-relevant flight log) - not a mechanical patch, and `record()`
-    is called from many synchronous, non-awaitable callback sites.
-  - `DistanceEstimator.estimate()` (`companion/guidance/distance.py`)
-    returns a single rangefinder reading for every detection in the frame
-    it's asked about, not specifically the tracked target's own distance.
-    Currently unreachable in practice - `RangefinderSource.__init__`
-    always raises `NotImplementedError`, since the M4 rangefinder hasn't
-    been purchased yet (see root README) - but once real rangefinder
-    hardware is wired up, this would make `check_proximity()` report the
-    tracked target's distance for every object in frame, including
-    untracked obstacles at a genuinely different distance, silently
-    defeating the obstacle-proximity check for anything not being
-    tracked. Flagged here now so it isn't rediscovered the hard way when
-    the rangefinder decision is finally made - fixing it needs a product
-    decision (e.g. only trust the rangefinder reading for the actively
-    tracked target, fall back to vision-only for everything else), not
-    just a mechanical patch.
+    MAVLink receive and WebRTC delivery for its duration. **Fixed**: the
+    write+flush is now offloaded to a single-worker thread pool owned by
+    the recorder itself - `record()` returns immediately from every call
+    site (both the async hot loop and the several plain-sync handler
+    callbacks that also call it), while the single worker preserves append
+    order. `close()` drains the pool before closing the file, so a normal
+    shutdown never drops a pending write; the only remaining durability
+    trade-off is the (very small) window between a submit and that worker
+    thread actually running it. Unit-tested (`test_session_recorder.py::
+    test_record_offloads_writes_without_losing_order_or_entries`).
+  - `DistanceEstimator.estimate()` (`companion/guidance/distance.py`) used
+    to return a single rangefinder reading for every detection in the
+    frame it's asked about, not specifically the tracked target's own
+    distance - unreachable in practice at the time (`RangefinderSource.
+    __init__` always raises `NotImplementedError`, since the M4
+    rangefinder still hasn't been purchased - see root README), but once
+    real rangefinder hardware is wired up this would have made
+    `check_proximity()` report the tracked target's distance for every
+    object in frame, including untracked obstacles at a genuinely
+    different distance, silently defeating the obstacle-proximity check
+    for anything not being tracked. **Fixed ahead of the hardware
+    decision**, per the product decision flagged here previously (only
+    trust the rangefinder for the actively tracked target, fall back to
+    vision-only for everything else): `estimate()` now takes an explicit
+    `trust_rangefinder` flag, defaulting to `False`; `check_proximity()`
+    matches each candidate detection against the tracker's current target
+    by class + IoU and only sets it `True` for that match. Unit-tested
+    (`test_distance.py::test_estimator_ignores_rangefinder_by_default_even_when_available`,
+    `test_proximity_guard.py::test_only_the_matching_detection_trusts_the_rangefinder_not_the_rest`).

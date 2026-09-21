@@ -61,6 +61,7 @@ async def test_real_fence_breach_telemetry_aborts_an_active_approach(tmp_path):
     # correctly rejecting it).
     orchestrator.mavlink.telemetry.fc_mode = "GUIDED"
     orchestrator.watchdog.beat("mavlink")
+    orchestrator.watchdog.beat("rc_channels")
     person = Detection(bbox=BBox(600, 300, 80, 160), score=0.9, class_id=0, class_name="person", frame_ts=0.0)
 
     orchestrator._on_target_selected({"x": 640.0, "y": 380.0, "point": True})
@@ -81,6 +82,7 @@ async def test_no_fence_breach_leaves_approach_running(tmp_path):
     orchestrator.mavlink.connect()  # unlike the abort path, this one actually sends a real setpoint
     orchestrator.mavlink.telemetry.fc_mode = "GUIDED"
     orchestrator.watchdog.beat("mavlink")
+    orchestrator.watchdog.beat("rc_channels")
     person = Detection(bbox=BBox(600, 300, 80, 160), score=0.9, class_id=0, class_name="person", frame_ts=0.0)
 
     orchestrator._on_target_selected({"x": 640.0, "y": 380.0, "point": True})

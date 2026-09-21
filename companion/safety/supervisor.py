@@ -8,7 +8,7 @@ from companion.safety.proximity_guard import ObstacleAlert
 from companion.safety.watchdog import HeartbeatWatchdog
 from companion.tracking.state import TrackingState
 
-REQUIRED_SUBSYSTEMS = ["camera", "tracker", "mavlink", "comms"]
+REQUIRED_SUBSYSTEMS = ["camera", "tracker", "mavlink", "comms", "rc_channels"]
 
 
 class SupervisorState(Enum):
@@ -52,6 +52,15 @@ class SafetySupervisor:
     Note SEARCHING is deliberately excluded from the target_lost check
     below: it exists precisely because the target is lost, so target_lost
     is its trigger condition, not something that should force it to SAFE.
+
+    `rc_channels` is a required subsystem alongside camera/tracker/mavlink/
+    comms so the RC-override software backstop (RcOverrideMonitor) fails
+    closed: without this, a real FC that stopped streaming RC_CHANNELS (or
+    only ever sent the legacy RC_CHANNELS_RAW) would leave
+    `is_overriding()` stuck returning False forever - a backstop that looks
+    alive but can no longer see anything - see docs/safety-case.md. The
+    hardware FLTMODE_CH switch remains the actual non-negotiable
+    guarantee; this only closes the gap in its software-only backstop.
     """
 
     def __init__(self, watchdog: HeartbeatWatchdog) -> None:

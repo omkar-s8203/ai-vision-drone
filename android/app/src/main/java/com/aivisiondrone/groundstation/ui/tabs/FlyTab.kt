@@ -54,6 +54,8 @@ import com.aivisiondrone.groundstation.comms.LinkState
 import com.aivisiondrone.groundstation.control.DetectionHeatmapOverlay
 import com.aivisiondrone.groundstation.control.DetectionsOverlay
 import com.aivisiondrone.groundstation.control.DroneMode
+import com.aivisiondrone.groundstation.control.PerimeterZoneEditOverlay
+import com.aivisiondrone.groundstation.control.PerimeterZoneOverlay
 import com.aivisiondrone.groundstation.control.TargetTrailOverlay
 import com.aivisiondrone.groundstation.control.GuidanceCommandPanel
 import com.aivisiondrone.groundstation.control.GuidanceWarningBanner
@@ -61,6 +63,7 @@ import com.aivisiondrone.groundstation.control.RecordButton
 import com.aivisiondrone.groundstation.control.TargetActionSheet
 import com.aivisiondrone.groundstation.control.TargetSelectionOverlay
 import com.aivisiondrone.groundstation.control.TrackingOverlay
+import com.aivisiondrone.groundstation.telemetry.TargetBBox
 import com.aivisiondrone.groundstation.telemetry.HealthPanel
 import com.aivisiondrone.groundstation.telemetry.TelemetryPanel
 import com.aivisiondrone.groundstation.ui.LinkStatusChip
@@ -110,9 +113,16 @@ fun FlyTab(
     val heatmapSnapshot by viewModel.heatmapSnapshot.collectAsState()
     val showHeatmap by viewModel.showHeatmap.collectAsState()
     val trailSnapshot by viewModel.trailSnapshot.collectAsState()
+    val perimeterZone by viewModel.perimeterZone.collectAsState()
+    val perimeterBreached by viewModel.perimeterBreached.collectAsState()
 
     var rendererRef by remember { mutableStateOf<SurfaceViewRenderer?>(null) }
     var overlaySizePx by remember { mutableStateOf(Size.Zero) }
+    // Local, transient UI mode - not ViewModel state, since it's purely
+    // "which drag gesture is active right now," never needed outside this
+    // composable. Drag-to-define exits automatically once a zone is drawn
+    // (see the PerimeterZoneEditOverlay callback below).
+    var perimeterEditMode by remember { mutableStateOf(false) }
 
     val videoWidth = tracking.imageWidth?.toDouble() ?: ASSUMED_VIDEO_WIDTH
     val videoHeight = tracking.imageHeight?.toDouble() ?: ASSUMED_VIDEO_HEIGHT
@@ -155,28 +165,60 @@ fun FlyTab(
 
         DetectionsOverlay(detections = detections, modifier = Modifier.fillMaxSize())
 
-        TargetSelectionOverlay(
+        PerimeterZoneOverlay(
+            zone = perimeterZone,
+            breached = perimeterBreached,
+            imageWidth = videoWidth.toInt(),
+            imageHeight = videoHeight.toInt(),
             modifier = Modifier.fillMaxSize(),
-            onTapSelect = { point ->
-                if (overlaySizePx.width > 0f && overlaySizePx.height > 0f) {
-                    val scaleX = videoWidth / overlaySizePx.width
-                    val scaleY = videoHeight / overlaySizePx.height
-                    viewModel.selectTargetAtPoint(x = point.x * scaleX, y = point.y * scaleY)
-                }
-            },
-            onSelectionComplete = { rect: Rect ->
-                if (overlaySizePx.width > 0f && overlaySizePx.height > 0f) {
-                    val scaleX = videoWidth / overlaySizePx.width
-                    val scaleY = videoHeight / overlaySizePx.height
-                    viewModel.selectTarget(
-                        x = rect.left * scaleX,
-                        y = rect.top * scaleY,
-                        w = rect.width * scaleX,
-                        h = rect.height * scaleY,
-                    )
-                }
-            },
         )
+
+        // Mutually exclusive with target selection below - the operator is
+        // either drawing the perimeter zone or selecting a target, never
+        // both at once, so the two drag gestures can't conflict.
+        if (perimeterEditMode) {
+            PerimeterZoneEditOverlay(
+                modifier = Modifier.fillMaxSize(),
+                onZoneDefined = { rect: Rect ->
+                    if (overlaySizePx.width > 0f && overlaySizePx.height > 0f) {
+                        val scaleX = videoWidth / overlaySizePx.width
+                        val scaleY = videoHeight / overlaySizePx.height
+                        viewModel.setPerimeterZone(
+                            TargetBBox(
+                                x = rect.left * scaleX,
+                                y = rect.top * scaleY,
+                                w = rect.width * scaleX,
+                                h = rect.height * scaleY,
+                            )
+                        )
+                    }
+                    perimeterEditMode = false
+                },
+            )
+        } else {
+            TargetSelectionOverlay(
+                modifier = Modifier.fillMaxSize(),
+                onTapSelect = { point ->
+                    if (overlaySizePx.width > 0f && overlaySizePx.height > 0f) {
+                        val scaleX = videoWidth / overlaySizePx.width
+                        val scaleY = videoHeight / overlaySizePx.height
+                        viewModel.selectTargetAtPoint(x = point.x * scaleX, y = point.y * scaleY)
+                    }
+                },
+                onSelectionComplete = { rect: Rect ->
+                    if (overlaySizePx.width > 0f && overlaySizePx.height > 0f) {
+                        val scaleX = videoWidth / overlaySizePx.width
+                        val scaleY = videoHeight / overlaySizePx.height
+                        viewModel.selectTarget(
+                            x = rect.left * scaleX,
+                            y = rect.top * scaleY,
+                            w = rect.width * scaleX,
+                            h = rect.height * scaleY,
+                        )
+                    }
+                },
+            )
+        }
 
         TargetTrailOverlay(snapshot = trailSnapshot, modifier = Modifier.fillMaxSize())
 
@@ -256,6 +298,51 @@ fun FlyTab(
                         Text(
                             text = if (showHeatmap) "HEATMAP: ON" else "HEATMAP: OFF",
                             color = if (showHeatmap) DroneColors.Accent else DroneColors.TextSecondary,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 0.5.sp
+                        )
+                    }
+
+                    // Perimeter/intrusion zone toggle - a defence-relevant
+                    // field request ("perimeter / intrusion alert"). Tap
+                    // cycle: no zone -> drag to draw one -> zone set (tap
+                    // again clears it). Red while a live detection is
+                    // actually inside the zone, matching the buzzer firing.
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .background(
+                                when {
+                                    perimeterBreached -> DroneColors.Danger.copy(alpha = 0.35f)
+                                    perimeterEditMode -> DroneColors.Warning.copy(alpha = 0.25f)
+                                    perimeterZone != null -> DroneColors.Accent.copy(alpha = 0.25f)
+                                    else -> DroneColors.Overlay
+                                },
+                                RoundedCornerShape(8.dp),
+                            )
+                            .clickable {
+                                when {
+                                    perimeterEditMode -> perimeterEditMode = false // cancel drawing
+                                    perimeterZone != null -> viewModel.clearPerimeterZone()
+                                    else -> perimeterEditMode = true // start drawing
+                                }
+                            }
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = when {
+                                perimeterBreached -> "PERIMETER: BREACH"
+                                perimeterEditMode -> "PERIMETER: DRAW ZONE"
+                                perimeterZone != null -> "PERIMETER: SET"
+                                else -> "PERIMETER: OFF"
+                            },
+                            color = when {
+                                perimeterBreached -> DroneColors.Danger
+                                perimeterEditMode -> DroneColors.Warning
+                                perimeterZone != null -> DroneColors.Accent
+                                else -> DroneColors.TextSecondary
+                            },
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Black,
                             letterSpacing = 0.5.sp

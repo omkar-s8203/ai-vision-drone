@@ -15,4 +15,15 @@ enum class AlertEvent(val spokenLine: String) {
     LAND_CONFIRMATION_NEEDED("Landing confirmation needed"),
     GUIDANCE_STOPPED("Guidance stopped. Pilot in control"),
     FENCE_BREACHED("Geofence breached"),
+
+    /** A perimeter/intrusion zone the operator drew on the live video was
+     * entered/cleared by a detection - a field request for a defence-
+     * relevant feature: "perimeter / intrusion alert." See
+     * MainViewModel.checkPerimeterIntrusion() and control/PerimeterZone.kt.
+     * Edge-triggered on "any detection inside the zone" as a whole, not
+     * per-object identity - general detections (unlike the one actively
+     * tracked target) have no persistent ID to track individually across
+     * frames. */
+    PERIMETER_BREACHED("Perimeter breach detected"),
+    PERIMETER_CLEARED("Perimeter clear"),
 }

@@ -66,6 +66,8 @@ class AlertSoundPlayer(context: Context) {
         AlertEvent.LAND_CONFIRMATION_NEEDED -> ToneGenerator.TONE_CDMA_ABBR_ALERT
         AlertEvent.GUIDANCE_STOPPED -> ToneGenerator.TONE_SUP_ERROR
         AlertEvent.FENCE_BREACHED -> ToneGenerator.TONE_SUP_ERROR
+        AlertEvent.PERIMETER_BREACHED -> ToneGenerator.TONE_CDMA_ABBR_ALERT
+        AlertEvent.PERIMETER_CLEARED -> ToneGenerator.TONE_PROP_ACK
     }
 
     companion object {

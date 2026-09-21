@@ -370,6 +370,29 @@ converting `AlertEvent` from a plain enum to a sealed class
 form) once the feature itself was removed, since nothing else needed the
 dynamic-case capability. Not present in the current build.
 
+**New: a perimeter/intrusion alert** (`control/PerimeterZoneEditOverlay.kt`,
+`control/PerimeterZoneOverlay.kt`), from a direct request for "something
+important in defence" - clarified with the user as a perimeter/intrusion
+feature specifically (not weapons or autonomous targeting, which was never
+on the table). The operator taps the new "PERIMETER" HUD chip to enter
+draw mode, then drags a rectangle on the live video to define a zone -
+mutually exclusive with the existing tap/drag target-selection gesture
+(`PerimeterZoneEditOverlay` replaces `TargetSelectionOverlay` only while
+drawing, so the two drags can never conflict). `MainViewModel.
+checkPerimeterIntrusion()` checks every live `detections_update` against
+the zone and fires `AlertEvent.PERIMETER_BREACHED`/`PERIMETER_CLEARED` on
+the rising/falling edge of "any detection's center is inside the zone" -
+edge-triggered on the zone as a whole rather than per-object identity,
+since general detections (unlike the one actively-tracked target) have no
+persistent ID to follow individually frame to frame. `PerimeterZoneOverlay`
+renders the zone at all times once set: a dashed orange outline normally,
+a solid pulsing red rectangle while actually breached, matching the buzzer
+firing. The HUD chip itself cycles through OFF -> DRAW ZONE -> SET (tap
+again to clear) and shows BREACH in red when live. Independent of
+tracking/guidance - runs continuously regardless of AI mode, since a
+perimeter watch is a standalone situational-awareness function, not tied
+to whether a target happens to be locked.
+
 All of the above confirmed via a real `gradle assembleDebug`; none yet
 heard or seen on a physical device this round.
 
@@ -538,6 +561,8 @@ app/src/main/java/com/aivisiondrone/groundstation/
                 detection-density heatmap over the live video),
                 TargetTrail.kt / TargetTrailOverlay.kt (fading movement
                 trail for the currently-tracked target),
+                PerimeterZoneEditOverlay.kt / PerimeterZoneOverlay.kt
+                (drag-to-define perimeter/intrusion zone + its rendering),
                 TrackingOverlay.kt (tracked box + rotating orbit ring),
                 TargetActionSheet.kt (Track/Follow/Orbit/Cancel quick menu),
                 GuidanceWarningBanner.kt (shows why guidance stopped, e.g.

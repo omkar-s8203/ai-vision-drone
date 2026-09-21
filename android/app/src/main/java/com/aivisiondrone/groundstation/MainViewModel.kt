@@ -101,6 +101,52 @@ class MainViewModel : ViewModel() {
     private val _trailSnapshot = MutableStateFlow(TrailSnapshot(emptyList(), null, null))
     val trailSnapshot = _trailSnapshot.asStateFlow()
 
+    /** Perimeter/intrusion zone - a defence-relevant field request:
+     * "perimeter / intrusion alert." The operator drags out a rectangle on
+     * the live video (FlyTab's "PERIMETER" HUD chip); any live detection
+     * whose center falls inside it fires PERIMETER_BREACHED (and
+     * PERIMETER_CLEARED once nothing remains inside) - see
+     * checkPerimeterIntrusion() below. In the Pi's own reported video
+     * coordinate space, the same as tracking/detections bboxes, not screen
+     * pixels - PerimeterZoneOverlay rescales the same way TrackingOverlay
+     * already does. */
+    private val _perimeterZone = MutableStateFlow<TargetBBox?>(null)
+    val perimeterZone = _perimeterZone.asStateFlow()
+
+    private val _perimeterBreached = MutableStateFlow(false)
+    val perimeterBreached = _perimeterBreached.asStateFlow()
+
+    fun setPerimeterZone(zone: TargetBBox) {
+        _perimeterZone.value = zone
+        _perimeterBreached.value = false
+    }
+
+    fun clearPerimeterZone() {
+        _perimeterZone.value = null
+        _perimeterBreached.value = false
+    }
+
+    /** Edge-triggered on "any detection inside the zone" as a whole, not
+     * per-object identity - unlike the one actively tracked target,
+     * general detections in `detections_update` have no persistent ID to
+     * follow individually frame to frame, so this fires once when the zone
+     * goes from empty to occupied (and once when it empties again) rather
+     * than trying to count distinct intrusions. */
+    private fun checkPerimeterIntrusion(detections: DetectionsState) {
+        val zone = _perimeterZone.value ?: return
+        val occupiedNow = detections.detections.any { detection ->
+            val cx = detection.bbox.x + detection.bbox.w / 2.0
+            val cy = detection.bbox.y + detection.bbox.h / 2.0
+            cx >= zone.x && cx <= zone.x + zone.w && cy >= zone.y && cy <= zone.y + zone.h
+        }
+        if (occupiedNow && !_perimeterBreached.value) {
+            _alertEvents.tryEmit(AlertEvent.PERIMETER_BREACHED)
+        } else if (!occupiedNow && _perimeterBreached.value) {
+            _alertEvents.tryEmit(AlertEvent.PERIMETER_CLEARED)
+        }
+        _perimeterBreached.value = occupiedNow
+    }
+
     /** Non-null exactly while a land_confirmation_request is awaiting the
      * operator's answer - see LandConfirmationDialog.kt. */
     private val _landConfirmationRequest = MutableStateFlow<LandConfirmationRequest?>(null)
@@ -499,6 +545,7 @@ class MainViewModel : ViewModel() {
                 _detections.value = parsed
                 detectionHeatmap.record(parsed)
                 _heatmapSnapshot.value = detectionHeatmap.snapshot()
+                checkPerimeterIntrusion(parsed)
             }
             MessageType.LAND_CONFIRMATION_REQUEST -> {
                 _landConfirmationRequest.value = LandConfirmationRequest(

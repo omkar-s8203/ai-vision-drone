@@ -54,6 +54,7 @@ import com.aivisiondrone.groundstation.comms.LinkState
 import com.aivisiondrone.groundstation.control.DetectionHeatmapOverlay
 import com.aivisiondrone.groundstation.control.DetectionsOverlay
 import com.aivisiondrone.groundstation.control.DroneMode
+import com.aivisiondrone.groundstation.control.TargetTrailOverlay
 import com.aivisiondrone.groundstation.control.GuidanceCommandPanel
 import com.aivisiondrone.groundstation.control.GuidanceWarningBanner
 import com.aivisiondrone.groundstation.control.RecordButton
@@ -108,6 +109,7 @@ fun FlyTab(
     val recording by viewModel.recording.collectAsState()
     val heatmapSnapshot by viewModel.heatmapSnapshot.collectAsState()
     val showHeatmap by viewModel.showHeatmap.collectAsState()
+    val trailSnapshot by viewModel.trailSnapshot.collectAsState()
 
     var rendererRef by remember { mutableStateOf<SurfaceViewRenderer?>(null) }
     var overlaySizePx by remember { mutableStateOf(Size.Zero) }
@@ -175,6 +177,8 @@ fun FlyTab(
                 }
             },
         )
+
+        TargetTrailOverlay(snapshot = trailSnapshot, modifier = Modifier.fillMaxSize())
 
         TrackingOverlay(
             tracking = tracking,

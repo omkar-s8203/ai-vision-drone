@@ -13,6 +13,8 @@ import com.aivisiondrone.groundstation.comms.optStringOrNull
 import com.aivisiondrone.groundstation.control.DetectionHeatmap
 import com.aivisiondrone.groundstation.control.DroneMode
 import com.aivisiondrone.groundstation.control.HeatmapSnapshot
+import com.aivisiondrone.groundstation.control.TargetTrail
+import com.aivisiondrone.groundstation.control.TrailSnapshot
 import com.aivisiondrone.groundstation.telemetry.DetectionsState
 import com.aivisiondrone.groundstation.telemetry.HealthState
 import com.aivisiondrone.groundstation.telemetry.LandConfirmationRequest
@@ -36,6 +38,13 @@ import org.webrtc.EglBase
 import org.webrtc.VideoTrack
 
 private const val RECONNECT_DELAY_MS = 3000L
+
+// Detection-announcement buzzer ("Car detected", "Person detected", ...) -
+// see emitDetectionAnnouncements(). 0.5 matches the field request
+// verbatim ("percentage of object goes around 50%"); the cooldown keeps a
+// continuously-detected object from re-announcing every single frame.
+private const val OBJECT_DETECTION_ANNOUNCE_THRESHOLD = 0.5
+private const val OBJECT_DETECTION_ANNOUNCE_COOLDOWN_MS = 6000L
 
 // Mirrors the relevant subset of companion/safety/supervisor.py's
 // SupervisorState names - see the TRACKING_UPDATE handling below.
@@ -88,6 +97,17 @@ class MainViewModel : ViewModel() {
         _showHeatmap.value = show
     }
 
+    /** The currently-tracked target's recent movement path - see
+     * control/TargetTrail.kt. A field request: "add visual patterns /
+     * spatial patterns feature," clarified as a target movement trail.
+     * Shown whenever a target is actively tracked (not a separate toggle
+     * like the heatmap - it's directly tied to what's already on screen,
+     * the tracked target's own box, rather than a general-purpose overlay
+     * that could clutter an otherwise-empty view). */
+    private val targetTrail = TargetTrail()
+    private val _trailSnapshot = MutableStateFlow(TrailSnapshot(emptyList(), null, null))
+    val trailSnapshot = _trailSnapshot.asStateFlow()
+
     /** Non-null exactly while a land_confirmation_request is awaiting the
      * operator's answer - see LandConfirmationDialog.kt. */
     private val _landConfirmationRequest = MutableStateFlow<LandConfirmationRequest?>(null)
@@ -135,6 +155,16 @@ class MainViewModel : ViewModel() {
      * lost + search started) both reach the collector. */
     private val _alertEvents = MutableSharedFlow<AlertEvent>(extraBufferCapacity = 8)
     val alertEvents = _alertEvents.asSharedFlow()
+
+    /** Tells the alert player (owned at the Compose layer, not here - see
+     * GroundStationScreen) to immediately silence itself, clearing any
+     * queued/in-progress speech - a real field-reported bug: hitting Abort
+     * used to leave a backlog of already-queued TTS lines (e.g. "Target
+     * lost" -> "Searching" -> "Returning home", queued up in the seconds
+     * before the operator reacted) still talking for several seconds after
+     * the abort itself had already taken effect. */
+    private val _stopAlerts = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val stopAlerts = _stopAlerts.asSharedFlow()
 
     private val _alertsMuted = MutableStateFlow(false)
     val alertsMuted = _alertsMuted.asStateFlow()
@@ -336,6 +366,18 @@ class MainViewModel : ViewModel() {
     fun abort() {
         _mode.value = DroneMode.IDLE
         _showTargetActionSheet.value = false
+        _stopAlerts.tryEmit(Unit)
+        // Forget the selected target immediately on this side too, rather
+        // than waiting for the Pi's own next tracking_update round-trip
+        // (which will report the same thing, but a frame or more later) -
+        // a real field request: "when I abort the mission, the selected
+        // target should be forgotten too." The Pi side has a matching fix:
+        // _on_abort() now also clears any pending target selection that
+        // arrived just before the abort (see companion/main.py), so a
+        // selection that was mid-flight can't silently re-lock a target
+        // the operator just told it to forget.
+        _tracking.value = TrackingState()
+        _trailSnapshot.value = TrailSnapshot(emptyList(), null, null)
         client.sendAbort("operator")
     }
 
@@ -444,6 +486,8 @@ class MainViewModel : ViewModel() {
                 val parsed = parseTracking(envelope.payload)
                 emitTrackingAlerts(previous, parsed)
                 _tracking.value = parsed
+                targetTrail.record(parsed)
+                _trailSnapshot.value = targetTrail.snapshot(parsed.imageWidth, parsed.imageHeight)
                 // A Dronie/Parabola smart shot stops itself on the Pi side
                 // once its fixed duration elapses (companion/main.py resets
                 // requested_mode to IDLE when it finishes) - mirror that
@@ -462,6 +506,7 @@ class MainViewModel : ViewModel() {
                 _detections.value = parsed
                 detectionHeatmap.record(parsed)
                 _heatmapSnapshot.value = detectionHeatmap.snapshot()
+                emitDetectionAnnouncements(parsed)
             }
             MessageType.LAND_CONFIRMATION_REQUEST -> {
                 _landConfirmationRequest.value = LandConfirmationRequest(
@@ -550,6 +595,30 @@ class MainViewModel : ViewModel() {
                     _alertEvents.tryEmit(AlertEvent.GUIDANCE_STOPPED)
                 }
             }
+        }
+    }
+
+    /** Announces any live detection at or above
+     * `OBJECT_DETECTION_ANNOUNCE_THRESHOLD` confidence ("Car detected",
+     * "Person detected", ...) - a real field request: "if anything detect
+     * by AI it should buzzer like Car detected, person detected, this will
+     * only tell when percentage of object goes around 50%." Debounced per
+     * class via `lastAnnouncedAtMs` so an object sitting continuously in
+     * frame (detections arrive up to the camera's target FPS) doesn't
+     * re-announce every single frame - once per class per cooldown window
+     * instead. This is independent of `tracking`/`emitTrackingAlerts`
+     * above: it fires for *every* detected class in frame, not just the
+     * one actively tracked. */
+    private val lastAnnouncedAtMs = mutableMapOf<String, Long>()
+
+    private fun emitDetectionAnnouncements(detections: DetectionsState) {
+        val now = System.currentTimeMillis()
+        for (detection in detections.detections) {
+            if (detection.score < OBJECT_DETECTION_ANNOUNCE_THRESHOLD) continue
+            val lastAnnounced = lastAnnouncedAtMs[detection.className]
+            if (lastAnnounced != null && now - lastAnnounced < OBJECT_DETECTION_ANNOUNCE_COOLDOWN_MS) continue
+            lastAnnouncedAtMs[detection.className] = now
+            _alertEvents.tryEmit(AlertEvent.ObjectDetected(detection.className))
         }
     }
 

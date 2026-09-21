@@ -120,6 +120,12 @@ fun GroundStationScreen(viewModel: MainViewModel, eglBase: EglBase, context: Con
     LaunchedEffect(Unit) {
         viewModel.alertEvents.collect { event -> alertSoundPlayer.play(event) }
     }
+    LaunchedEffect(Unit) {
+        // Abort must silence the buzzer immediately, including anything
+        // already queued from a fast-moving failsafe cascade right before
+        // the operator reacted - see MainViewModel.abort()'s docstring.
+        viewModel.stopAlerts.collect { alertSoundPlayer.stopAll() }
+    }
 
     // Rendered here (not inside a tab) so it's reachable no matter which
     // tab is open when target-loss recovery decides to ask, same

@@ -33,8 +33,21 @@ class AlertSoundPlayer(context: Context) {
         toneGenerator?.startTone(toneFor(event), TONE_DURATION_MS)
         if (ttsReady) {
             tts.language = Locale.US
-            tts.speak(event.spokenLine, TextToSpeech.QUEUE_ADD, null, event.name)
+            tts.speak(event.spokenLine, TextToSpeech.QUEUE_ADD, null, event.spokenLine)
         }
+    }
+
+    /** Immediately silences any speech in progress and discards everything
+     * queued behind it - a real field-reported bug: hitting Abort mid a
+     * failsafe cascade (e.g. "Target lost" -> "Searching" -> "Returning
+     * home" queued up in the seconds before the operator reacted) used to
+     * keep talking for several more seconds after the abort itself had
+     * already taken effect, since nothing ever told the TTS queue to
+     * clear. `TextToSpeech.stop()` does exactly that: stops the current
+     * utterance and drops the queue, without needing a full
+     * stop()+shutdown()+recreate cycle. */
+    fun stopAll() {
+        tts.stop()
     }
 
     fun release() {
@@ -53,6 +66,7 @@ class AlertSoundPlayer(context: Context) {
         AlertEvent.LAND_CONFIRMATION_NEEDED -> ToneGenerator.TONE_CDMA_ABBR_ALERT
         AlertEvent.GUIDANCE_STOPPED -> ToneGenerator.TONE_SUP_ERROR
         AlertEvent.FENCE_BREACHED -> ToneGenerator.TONE_SUP_ERROR
+        is AlertEvent.ObjectDetected -> ToneGenerator.TONE_PROP_BEEP
     }
 
     companion object {

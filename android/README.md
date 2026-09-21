@@ -319,6 +319,73 @@ or guidance, which still only ever reason about the current frame's real
 detections. Build-verified only (real `gradle assembleDebug`), not yet
 seen live on a real device.
 
+**New: a target movement-trail overlay** (`control/TargetTrail.kt`,
+`control/TargetTrailOverlay.kt`), from a direct field request ("add visual
+patterns / spatial patterns feature," clarified as a target movement trail
+rather than the density heatmap above). `TargetTrail` is a bounded ring
+buffer (~60 points, not an ever-growing list) of the currently-tracked
+target's bbox-center history, updated on every `tracking_update` message;
+`TargetTrailOverlay` renders it as a fading line - oldest segment
+near-transparent, newest fully opaque - so the operator can tell at a
+glance whether the subject is moving steadily, pacing back and forth, or
+circling, without having watched the whole session. Cleared whenever
+tracking locks a different target, the target is lost, or the operator
+aborts (see below) - it always reflects only the current tracking
+session's path. Shown automatically whenever a target is tracked, no
+separate toggle, since it's tied to the target box already on screen
+rather than a general-purpose overlay that could clutter an empty view.
+Build-verified only, not yet seen live on a real device.
+
+**Fixed two more real field-reported bugs, both specifically about
+Abort:**
+- **"When I abort the mission, the selected target should be forgotten
+  too."** The Pi side already reset the tracker and forgot its remembered
+  appearance signature on abort, but a real, subtler bug lived on both
+  sides: `_on_abort()` (`companion/main.py`) never cleared
+  `_pending_selection`, so a `TARGET_SELECT` that arrived just before the
+  abort (e.g. the operator finishing a drag-select right as they hit
+  Abort) could survive it and silently re-lock a target one frame later
+  (fixed - see the root README's M10 row). On the Android side,
+  `MainViewModel.abort()` now also clears its own `tracking` and
+  `trailSnapshot` state immediately, rather than waiting for the Pi's next
+  `tracking_update` round-trip to reflect the same thing a frame or more
+  later.
+- **"Buzzer should stop."** Hitting Abort mid a fast-moving alert cascade
+  (a real scenario: "Target lost" -> "Searching" -> "Returning home" all
+  queued within a couple of seconds is often exactly *why* an operator
+  reaches for the abort button) used to keep the TTS voice talking through
+  its entire backlog for several more seconds after the abort itself had
+  already taken effect, since `AlertSoundPlayer.play()` uses
+  `TextToSpeech.QUEUE_ADD` and nothing ever told it to clear. **Fixed**:
+  `AlertSoundPlayer.stopAll()` calls `TextToSpeech.stop()` (which both
+  halts the current utterance and discards everything queued behind it),
+  wired to a new `MainViewModel.stopAlerts` `SharedFlow<Unit>` that
+  `abort()` emits into and `GroundStationScreen` collects.
+
+**New: a per-detection announcement buzzer** ("Car detected", "Person
+detected", ...) - a direct field request: "if anything detect by AI it
+should buzzer like Car detected, person detected, this will only tell
+when percentage of object goes around 50%." `MainViewModel.
+emitDetectionAnnouncements()` checks every live detection in each
+`detections_update` message against `OBJECT_DETECTION_ANNOUNCE_THRESHOLD`
+(0.5, matching the request verbatim), and announces any class crossing it
+- debounced per class name via a 6-second cooldown
+(`OBJECT_DETECTION_ANNOUNCE_COOLDOWN_MS`) so an object sitting
+continuously in frame (detections arrive up to the camera's target FPS)
+doesn't re-announce every single frame. This required converting
+`AlertEvent` from a plain enum to a sealed class - a fixed enum can't
+express "one case per arbitrary detected class name" - with a new
+`ObjectDetected(className)` case that computes its own spoken line
+("${className} detected"). Every existing `AlertEvent.X` call site (the
+original enum-style names, kept as nested `object`s under the sealed
+class) kept compiling completely unchanged. Independent of
+`tracking`/`emitTrackingAlerts` - this fires for *every* detected class in
+frame, not just the one actively tracked, and respects the same
+`alertsMuted` switch as every other alert.
+
+All four of the above confirmed via a real `gradle assembleDebug`; none
+yet heard or seen on a physical device this round.
+
 **New: `GuidanceCommandPanel.kt`** - shows the active guidance controller's
 computed velocity setpoint (vx/vy/vz/yaw rate) and whether it actually
 reached the FC, live on the Fly tab next to `TelemetryPanel`. Previously
@@ -482,6 +549,8 @@ app/src/main/java/com/aivisiondrone/groundstation/
                 DetectionsOverlay.kt (all live detections, labeled),
                 DetectionHeatmap.kt / DetectionHeatmapOverlay.kt (opt-in
                 detection-density heatmap over the live video),
+                TargetTrail.kt / TargetTrailOverlay.kt (fading movement
+                trail for the currently-tracked target),
                 TrackingOverlay.kt (tracked box + rotating orbit ring),
                 TargetActionSheet.kt (Track/Follow/Orbit/Cancel quick menu),
                 GuidanceWarningBanner.kt (shows why guidance stopped, e.g.

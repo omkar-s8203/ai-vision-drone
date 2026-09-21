@@ -185,6 +185,24 @@ def test_abort_suppresses_brake_during_rc_override(tmp_path):
         recorder.close()
 
 
+def test_abort_clears_a_pending_target_selection(tmp_path):
+    """Real field-reported bug: "the selected target should be forgotten
+    too" on abort. A TARGET_SELECT that arrives just before ABORT (e.g. the
+    operator finishing a drag-select right as they hit Abort) used to
+    survive it - state_machine.stop() sets state back to IDLE, and the very
+    next process_frame() would see that IDLE state and silently
+    re-initialize tracking from the stale pending selection, undoing the
+    abort's own effect one frame later."""
+    with _build_orchestrator(tmp_path) as (orchestrator, recorder, conn, mock_mavutil):
+        orchestrator._on_target_selected({"x": 100.0, "y": 100.0, "point": True})
+        assert orchestrator._pending_selection is not None
+
+        orchestrator._on_abort({"reason": "operator"})
+
+        assert orchestrator._pending_selection is None
+        recorder.close()
+
+
 def test_set_flight_mode_command_sends_correct_mode_number(tmp_path):
     with _build_orchestrator(tmp_path) as (orchestrator, recorder, conn, mock_mavutil):
         orchestrator._on_set_flight_mode({"mode": "RTL"})

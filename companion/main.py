@@ -225,6 +225,16 @@ class CompanionOrchestrator:
         self.state_machine.stop()
         self.appearance.forget()
         self.recovery.cancel()
+        # A real field-reported bug: "the selected target should be
+        # forgotten too" on abort. state_machine.stop() above clears the
+        # active target, but a TARGET_SELECT that arrived just before the
+        # abort (e.g. the operator finishing a drag-select right as they
+        # hit Abort) could still be sitting in _pending_selection - left
+        # uncleared, the very next process_frame() would see
+        # state_machine.state == IDLE (which stop() just set) and silently
+        # re-initialize tracking from that stale selection, undoing the
+        # abort's own "forget the target" effect one frame later.
+        self._pending_selection = None
         self.recorder.record("abort", reason=payload.get("reason"))
 
         # Setting requested_mode to IDLE above only stops this Pi from

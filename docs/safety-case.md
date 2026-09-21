@@ -78,6 +78,44 @@ mechanism is never silent to the operator.
   (real MAVLink `RC_CHANNELS` from a mock FC, through the real bridge, to a
   real halted setpoint stream) - all passing.
 
+## Operator abort (the app's STOP/ABORT button)
+
+- **Mechanism**: `CompanionOrchestrator._on_abort()` (`companion/main.py`)
+  does two things, not just one. It always stops every guidance-side
+  concept immediately (`requested_mode = IDLE`, stops Approach-Test/smart
+  shot, stops the tracker, forgets the appearance-reid memory, cancels an
+  in-progress target-loss search) - this alone stops the Pi from sending
+  any further velocity setpoints. On top of that, it now also actively
+  commands `mavlink.set_mode("BRAKE")` - ArduCopter's dedicated "stop now
+  and hold this exact position" mode - rather than relying on ArduPilot's
+  own GUIDED-mode setpoint-timeout to passively notice the setpoint stream
+  went quiet and hold position several seconds later. Abort is a
+  deliberate, explicit operator safety action; it gets an equally
+  immediate, explicit response.
+- **RC-override suppression**: same reasoning as the target-loss RTL
+  suppression above - if the pilot already has RC override active at the
+  moment Abort is pressed, they're already flying manually, so a
+  `set_mode("BRAKE")` here would fight their own control instead of
+  helping. `_on_abort()` checks `RcOverrideMonitor.is_overriding()` against
+  the current `RC_CHANNELS` and skips the mode change (but still does the
+  guidance-side stop) when it's true. Also skipped with no real MAVLink
+  connection at all (e.g. sim/unit tests that never call
+  `MavlinkBridge.connect()`).
+- **How it resumes**: BRAKE holds until the operator deliberately takes
+  further action - either the pilot's own `FLTMODE_CH` hardware switch (as
+  always, entirely independent of the Pi), or, from the app, explicitly
+  setting the FC back to `GUIDED` (`set_flight_mode`) before selecting an
+  AI mode again. The Pi never re-engages `GUIDED` on its own - matches how
+  AI guidance was already never allowed to auto-start from `IDLE`
+  (`SafetySupervisor` gates on `fc_mode == "GUIDED"`, see M7/M10) - so this
+  needed no new gating logic, just the existing precondition already doing
+  its job.
+- **Tests**: `test_abort_commands_brake_to_hold_position`,
+  `test_abort_suppresses_brake_during_rc_override`
+  (`test_admin_commands.py`) - both against a real (mocked-transport)
+  `MavlinkBridge.set_mode_send()` call. Not yet confirmed against a real
+  FC's actual BRAKE-mode behavior.
+
 ## Target-loss handling
 
 - **Mechanism**: `TrackingStateMachine` (`companion/tracking/state.py`)

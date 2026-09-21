@@ -227,6 +227,31 @@ class CompanionOrchestrator:
         self.recovery.cancel()
         self.recorder.record("abort", reason=payload.get("reason"))
 
+        # Setting requested_mode to IDLE above only stops this Pi from
+        # sending further guidance velocity setpoints - ArduPilot's own
+        # GUIDED-mode setpoint-timeout would eventually hold position on
+        # its own once they stop arriving, but that's a passive fallback
+        # several seconds slower than commanding it directly, and Abort is
+        # a deliberate, explicit operator safety action that deserves an
+        # equally immediate, explicit response: actively command BRAKE
+        # (ArduCopter's dedicated "stop now and hold this exact position"
+        # mode) so the aircraft holds station until the operator picks a
+        # new AI mode or flips their own RC switch - never AUTO/a mission,
+        # since this project never puts the FC in a scripted mission mode
+        # to begin with. Suppressed if the pilot already has RC override -
+        # same reasoning as the target-recovery RTL suppression elsewhere
+        # in this file: they're already flying manually, so a mode change
+        # here would fight their own control instead of helping. Also a
+        # no-op with no real MAVLink connection (e.g. unit tests that
+        # never call MavlinkBridge.connect()).
+        if self.mavlink.is_connected:
+            rc_override = self.rc_monitor.is_overriding(self.mavlink.telemetry.rc_channels)
+            if not rc_override:
+                self.mavlink.set_mode("BRAKE")
+                self.recorder.record("abort_hold_commanded")
+            else:
+                self.recorder.record("abort_hold_suppressed_rc_override")
+
     def _on_arm_command(self, payload: dict) -> None:
         """Arm/disarm is an administrative FC command, not a guidance
         setpoint - it goes straight to the FC like a standard GCS would send

@@ -128,6 +128,35 @@ def test_arm_command_ignores_a_stray_force_flag(tmp_path):
         recorder.close()
 
 
+def test_abort_commands_brake_to_hold_position(tmp_path):
+    """Abort is a deliberate, explicit operator safety action - it must
+    actively command an immediate hold (BRAKE), not just stop sending
+    guidance setpoints and passively wait several seconds for ArduPilot's
+    own GUIDED-mode setpoint-timeout to kick in."""
+    with _build_orchestrator(tmp_path) as (orchestrator, recorder, conn, mock_mavutil):
+        orchestrator._on_abort({"reason": "operator"})
+
+        conn.mav.set_mode_send.assert_called_once_with(
+            1, mock_mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, 17  # BRAKE
+        )
+        recorder.close()
+
+
+def test_abort_suppresses_brake_during_rc_override(tmp_path):
+    """Same reasoning as the target-recovery RTL suppression: if the pilot
+    already has RC override, they're already flying manually, so an
+    autonomous mode change here would fight their own control rather than
+    help - abort should still stop AI guidance, just without a disruptive
+    mode change on top of it."""
+    with _build_orchestrator(tmp_path) as (orchestrator, recorder, conn, mock_mavutil):
+        orchestrator.mavlink.telemetry.rc_channels = {1: 1900}  # roll stick well deflected
+
+        orchestrator._on_abort({"reason": "operator"})
+
+        conn.mav.set_mode_send.assert_not_called()
+        recorder.close()
+
+
 def test_set_flight_mode_command_sends_correct_mode_number(tmp_path):
     with _build_orchestrator(tmp_path) as (orchestrator, recorder, conn, mock_mavutil):
         orchestrator._on_set_flight_mode({"mode": "RTL"})

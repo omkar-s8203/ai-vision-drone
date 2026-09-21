@@ -22,6 +22,14 @@ ExecStart=/home/omkar/ai-vision-drone/mavlink-venv/bin/python3 -m companion.main
 # guidance on restart: CompanionOrchestrator always starts in IDLE
 # (docs plan M10 - restart must never come back up already flying a
 # guidance mode with no operator confirmation).
+#
+# Before touching any hardware, companion.main._amain() runs a boot-time
+# health self-check (docs plan M15) confirming every config file it will
+# read actually parses and has the keys it unconditionally indexes into -
+# a bad/misspelled config value exits immediately with a clearly-labeled
+# journal line instead of a bare KeyError several stack frames into camera
+# or MAVLink construction. `journalctl -u ai-vision-drone` is where that
+# shows up on a real restart loop.
 Restart=on-failure
 RestartSec=3
 

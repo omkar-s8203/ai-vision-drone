@@ -997,17 +997,111 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
     )
 
 
+class StartupHealthCheckError(Exception):
+    """Raised by run_startup_health_check() when config the orchestrator
+    will unconditionally index into is missing or unparseable. Deliberately
+    a distinct exception type (not a bare KeyError/ValueError) so _amain()
+    can log it as a clearly-labeled startup failure instead of a raw
+    traceback with no indication of which config file or field was wrong."""
+
+
+def run_startup_health_check(mode: str) -> None:
+    """Boot-time health self-check (docs plan M15) - confirms every config
+    file build_sim_orchestrator()/build_hardware_orchestrator() will read
+    actually parses and has the keys they unconditionally index into,
+    *before* either function ever touches real hardware (camera, MAVLink).
+    Without this, a missing/misspelled YAML key surfaces as a bare
+    KeyError several stack frames into camera/MAVLink construction, which
+    on a real Pi bench session means digging through a traceback instead of
+    reading one clear line in the journal. Raises StartupHealthCheckError
+    listing every problem found at once (not just the first); does nothing
+    if everything required is present.
+
+    Deliberately conservative: only checks that config is well-formed, not
+    that the camera/MAVLink hardware itself is healthy - build_hardware_
+    orchestrator() and orchestrator.start() still do that real work (and
+    can still fail for real hardware reasons this can't predict), this
+    just rules out the config-typo class of failure first, cheaply and
+    with no side effects.
+    """
+    problems: list[str] = []
+
+    def _require(cfg: dict, path: list[str], file_name: str) -> None:
+        node = cfg
+        for key in path:
+            if not isinstance(node, dict) or key not in node:
+                problems.append(f"{file_name}: missing required key {'.'.join(path)!r}")
+                return
+            node = node[key]
+
+    def _load(file_name: str) -> dict:
+        try:
+            return load_yaml(file_name)
+        except Exception as exc:
+            problems.append(f"{file_name}: failed to parse ({exc})")
+            return {}
+
+    hardware_cfg = _load("hardware.yaml")
+    for path in (["camera", "width"], ["camera", "height"], ["camera", "target_fps"]):
+        _require(hardware_cfg, path, "hardware.yaml")
+    if mode != "sim":
+        _require(hardware_cfg, ["camera", "imx500_model_path"], "hardware.yaml")
+        _require(hardware_cfg, ["mavlink", "connection"], "hardware.yaml")
+        _require(hardware_cfg, ["mavlink", "baud"], "hardware.yaml")
+
+    network_cfg = _load("network.yaml")
+    _require(network_cfg, ["ws_host"], "network.yaml")
+    _require(network_cfg, ["ws_port"], "network.yaml")
+
+    approach_cfg = _load("approach_limits.yaml")
+    _require(approach_cfg, ["rc_override_deadband"], "approach_limits.yaml")
+
+    safety_cfg = _load("safety_limits.yaml")
+    _require(safety_cfg, ["min_obstacle_distance_m"], "safety_limits.yaml")
+
+    # These are read in full (unpacked as **kwargs, or indexed piecemeal by
+    # their own controllers) but have no single required top-level key this
+    # check can name usefully - just confirm each one actually parses.
+    for file_name in (
+        "follow_limits.yaml",
+        "orbit_limits.yaml",
+        "camera_calibration.yaml",
+        "smart_shot_limits.yaml",
+        "grid_search_limits.yaml",
+        "reidentification.yaml",
+        "target_recovery.yaml",
+    ):
+        _load(file_name)
+
+    if problems:
+        raise StartupHealthCheckError(
+            f"Startup health check failed - refusing to start ({len(problems)} problem(s)):\n"
+            + "\n".join(f"  - {p}" for p in problems)
+        )
+
+
 async def _amain() -> None:
     mode = os.environ.get("COMPANION_MODE", "sim")
     configure_logging(Path("companion/logs"))
     log.info("Starting companion orchestrator in %s mode", mode)
 
+    try:
+        run_startup_health_check(mode)
+    except StartupHealthCheckError as exc:
+        log.error(str(exc))
+        raise SystemExit(1) from exc
+    log.info("Startup health check passed (config is well-formed) - initializing hardware/orchestrator")
+
     background_tasks: list[asyncio.Task] = []
-    if mode == "sim":
-        orchestrator, mock_fc = build_sim_orchestrator()
-        background_tasks.append(asyncio.create_task(mock_fc.run(rate_hz=10.0)))
-    else:
-        orchestrator = build_hardware_orchestrator()
+    try:
+        if mode == "sim":
+            orchestrator, mock_fc = build_sim_orchestrator()
+            background_tasks.append(asyncio.create_task(mock_fc.run(rate_hz=10.0)))
+        else:
+            orchestrator = build_hardware_orchestrator()
+    except Exception:
+        log.exception("Startup failed while initializing hardware/orchestrator - see the real cause above")
+        raise
 
     watchdog_task = asyncio.create_task(SystemdWatchdog().run())
     background_tasks.append(watchdog_task)

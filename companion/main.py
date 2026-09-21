@@ -836,7 +836,15 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
         score_threshold=hardware_cfg["camera"].get("score_threshold", 0.5),
     )
     tracker = IouKalmanTracker()
-    distance_estimator = DistanceEstimator(CameraIntrinsics.from_dict(calib_cfg))
+    rangefinder = None
+    rangefinder_cfg = hardware_cfg.get("rangefinder", {})
+    if rangefinder_cfg.get("enabled"):
+        from companion.guidance.rangefinder import TFMiniRangefinderSource
+
+        rangefinder = TFMiniRangefinderSource.open(
+            rangefinder_cfg["port"], baud=rangefinder_cfg.get("baud", 115200)
+        )
+    distance_estimator = DistanceEstimator(CameraIntrinsics.from_dict(calib_cfg), rangefinder=rangefinder)
     follow_controller = FollowController(follow_cfg)
     orbit_controller = OrbitController(orbit_cfg)
     approach_controller = ApproachTestController(approach_cfg)

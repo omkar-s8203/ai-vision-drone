@@ -1,11 +1,16 @@
 package com.aivisiondrone.groundstation.video
 
+import android.content.ContentResolver
+import android.content.ContentValues
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.media.MediaMuxer
+import android.net.Uri
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.ParcelFileDescriptor
+import android.provider.MediaStore
 import android.util.Log
 import java.io.File
 import java.nio.ByteBuffer
@@ -44,13 +49,43 @@ private const val DEQUEUE_TIMEOUT_US = 10_000L
  * produce a corrupt or unplayable file rather than something visibly
  * broken on screen, so treat the first real recording it produces as the
  * actual test and report back what you see.
+ *
+ * A real field report ("video is not saving in mobile device") turned out
+ * to be a real bug, not an encoder/stride problem: this used to always
+ * write to `Context.getExternalFilesDir(DIRECTORY_MOVIES)`, which is
+ * *app-private* external storage - MediaMuxer happily wrote a valid file
+ * there, but no Gallery/Photos app or file manager scans that location, so
+ * from the operator's point of view the recording simply never appeared
+ * anywhere. Fixed via `Output.MediaStoreEntry`: on API 29+ (this app's
+ * real-world minimum in practice), the file is written straight into the
+ * public `Movies/AI Vision Drone` collection through MediaStore, with
+ * `IS_PENDING` held during the write so no app sees a half-written file -
+ * no storage permission needed, since creating a new file this app owns is
+ * exactly what scoped storage (API 29+) exists to allow without one.
+ * `Output.LegacyFile` (the old behavior) is kept only as the API 26-28
+ * fallback, where MediaStore's `RELATIVE_PATH`/`IS_PENDING` columns don't
+ * exist yet.
  */
-class LocalVideoRecorder(private val outputFile: File) : VideoSink {
+sealed class LocalRecordingOutput {
+    /** API 29+: writes directly into the public Movies collection via
+     * MediaStore, visible in Gallery/Photos and any file manager. */
+    class MediaStoreEntry(val resolver: ContentResolver, val uri: Uri) : LocalRecordingOutput()
+
+    /** API 26-28 fallback: MediaStore's scoped-storage columns
+     * (RELATIVE_PATH/IS_PENDING) don't exist yet on these versions, so this
+     * writes to app-private external storage instead - not Gallery-visible,
+     * but consistent with this app's pre-scoped-storage behavior and needs
+     * no runtime storage permission either. */
+    class LegacyFile(val file: File) : LocalRecordingOutput()
+}
+
+class LocalVideoRecorder(private val output: LocalRecordingOutput) : VideoSink {
     private val thread = HandlerThread(TAG).apply { start() }
     private val handler = Handler(thread.looper)
 
     private var codec: MediaCodec? = null
     private var muxer: MediaMuxer? = null
+    private var pfd: ParcelFileDescriptor? = null
     private var videoTrackIndex = -1
     private var muxerStarted = false
     private var configuredWidth = 0
@@ -115,7 +150,16 @@ class LocalVideoRecorder(private val outputFile: File) : VideoSink {
             configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             start()
         }
-        muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4).apply {
+        muxer = when (val out = output) {
+            is LocalRecordingOutput.MediaStoreEntry -> {
+                val fd = out.resolver.openFileDescriptor(out.uri, "rw")
+                    ?: throw java.io.IOException("Could not open MediaStore entry ${out.uri} for writing")
+                pfd = fd
+                MediaMuxer(fd.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            }
+            is LocalRecordingOutput.LegacyFile ->
+                MediaMuxer(out.file.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        }.apply {
             // The raw buffer stays in the camera's native (unrotated)
             // orientation - WebRTC's own renderer applies `rotation` at
             // display time rather than baking it into the pixel data (see
@@ -255,6 +299,25 @@ class LocalVideoRecorder(private val outputFile: File) : VideoSink {
             Log.e(TAG, "muxer.release() failed", e)
         }
         muxer = null
+        try {
+            pfd?.close()
+        } catch (e: Exception) {
+            Log.e(TAG, "Closing the MediaStore file descriptor failed", e)
+        }
+        pfd = null
+        val out = output
+        if (out is LocalRecordingOutput.MediaStoreEntry) {
+            // Only now does the recording become visible/complete to other
+            // apps (Gallery, file managers) - IS_PENDING=1 was set at
+            // insert time specifically so nothing sees a half-written file
+            // mid-recording.
+            try {
+                val values = ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }
+                out.resolver.update(out.uri, values, null, null)
+            } catch (e: Exception) {
+                Log.e(TAG, "Clearing IS_PENDING on the MediaStore entry failed", e)
+            }
+        }
         thread.quitSafely()
     }
 }

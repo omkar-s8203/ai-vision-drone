@@ -55,11 +55,31 @@ measurements (`companion/tests/test_distance_validation.py`), including
 the "only average points inside the plan's own 3-15m validated range"
 rule and graceful handling of missing/unknown-class measurements.
 
-## `imx500_convert.py` (not yet implemented)
+## `imx500_convert.py` (implemented, unit-tested)
 
-Planned: a wrapper around Sony's imx500-converter toolchain for deploying
-custom-trained models to the Raspberry Pi AI Camera (M2) - only needed if
-a required object class isn't covered by the stock COCO model.
+Wrapper around Raspberry Pi/Sony's `imx500-converter` toolchain for
+deploying custom-trained models to the Raspberry Pi AI Camera (M2) - only
+needed if a required object class isn't covered by the stock COCO model
+this project ships with.
+
+```
+python tools/imx500_convert.py my_model.onnx --out imx500_converted/
+```
+
+Picks `imxconv-pt` for a `.onnx` model or `imxconv-tf` for a `.h5`/`.pb`/
+`.keras` model or a SavedModel directory, per Raspberry Pi's own
+documented framework split. Validates the tool is installed with a clear
+error otherwise, and that a `.rpk` file actually came out the other end.
+
+**The wrapper's own logic (converter selection, error handling, output
+validation) is unit-tested with the real CLI mocked out**
+(`companion/tests/test_imx500_convert.py`) - **the `-i`/`-o` flags
+themselves are not independently verified against the real `imxconv-tf`/
+`imxconv-pt` tool**, since installing `imx500-converter` needs a specific
+Python 3.9-3.11 x86_64 Linux environment not available on this dev
+machine. Run `imxconv-tf --help` / `imxconv-pt --help` once it's actually
+installed and check `CONVERTER_ARGS` at the top of the file before
+trusting this against a real model.
 
 ## `benchmark_detection.py` (implemented, unit-tested)
 

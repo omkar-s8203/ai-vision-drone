@@ -213,15 +213,40 @@ thread WebRTC delivers frames from, so a slow encode step can't add
 latency to the live view. `MainViewModel.toggleRecording()` now drives
 both recordings from the same Record button (by explicit choice: both at
 once, not either/or) - they're independent, so a failure on one side
-doesn't affect the other. Files land in this app's own external files dir
-under `Movies/flight_<timestamp>.mp4` (no runtime permission needed on any
-supported Android version). **Build-verified only** (real
-`gradle assembleDebug`/`assembleDebugAndroidTest`) - unlike this project's
-UI-only changes, a subtle bug here (a stride miscalculation, a per-device
-encoder quirk) could produce a corrupt or unplayable file rather than
-something visibly wrong on screen, so the first real recording on a
-physical device is the actual test - report back what you see when you
-try to play one back.
+doesn't affect the other.
+
+**Fixed a real field-reported bug: "video is not saving in mobile device"**
+- it actually was saving, just somewhere nobody would ever find it. Files
+used to land in this app's own external files dir
+(`getExternalFilesDir(DIRECTORY_MOVIES)`) - valid MP4s, but *app-private*
+external storage, which no Gallery/Photos app or file manager scans. An
+earlier note in this file said local recording was "confirmed live,
+produces an actually-playable file on a real device" - that was true only
+in the narrow sense of pulling the file via `adb`/a file manager set to
+show app-private folders, which is exactly why this then read as "not
+saving" from a normal operator's perspective. Fixed via a new
+`LocalRecordingOutput` sealed type: on API 29+ (this app's real-world
+minimum in practice), `MainViewModel.buildLocalRecordingOutput()` inserts
+into `MediaStore.Video.Media` with `RELATIVE_PATH = Movies/AI Vision Drone`
+and `IS_PENDING = 1`, and `LocalVideoRecorder` writes straight to the
+resulting `Uri`'s file descriptor (`MediaMuxer`'s `FileDescriptor`
+constructor, not a path) - no storage permission needed, since creating a
+new file this app owns is exactly what scoped storage exists to allow
+without one. `IS_PENDING` is cleared back to 0 only once recording
+actually finishes, so nothing sees a half-written file mid-recording. The
+recording now shows up directly in Gallery/Photos and any file manager
+under Movies. The old app-private path (`LocalRecordingOutput.LegacyFile`)
+is kept only as the API 26-28 fallback, since MediaStore's
+`RELATIVE_PATH`/`IS_PENDING` columns don't exist before API 29.
+**Build-verified only** (real `gradle assembleDebug`/
+`assembleDebugAndroidTest`), **not yet confirmed on a real device this
+round** - unlike this project's UI-only changes, a subtle bug here (a
+stride miscalculation, a per-device encoder quirk, a MediaStore insert
+failing silently) could produce a corrupt or unplayable file rather than
+something visibly wrong on screen, so the next real recording on a
+physical device is the actual test - report back whether it now actually
+appears in the phone's Gallery/Photos app, not just whether a file can be
+found by digging for it.
 
 **New: `GuidanceCommandPanel.kt`** - shows the active guidance controller's
 computed velocity setpoint (vx/vy/vz/yaw rate) and whether it actually

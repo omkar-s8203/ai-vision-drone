@@ -36,3 +36,15 @@ camera:
   # to confirm the detection rate and longest gap actually improve; raise
   # back toward 0.5 if 0.35 trades in too many false positives in practice.
   score_threshold: 0.35
+
+# M4's rangefinder addition (docs plan open item) - a Benewake TFmini-S,
+# picked as the sensor for this project (see companion/guidance/
+# rangefinder.py, root README). `enabled: false` until one is actually
+# bought and wired to a real Pi UART - the vision-only pinhole estimate
+# (companion/guidance/distance.py) works fine without it; this only
+# becomes the authoritative distance source for the tracked target once
+# turned on.
+rangefinder:
+  enabled: false
+  port: /dev/serial1
+  baud: 115200

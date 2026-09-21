@@ -53,24 +53,6 @@ class DistanceSource:
         raise NotImplementedError
 
 
-class RangefinderSource(DistanceSource):
-    """Optional authoritative distance source (e.g. TFmini-S over UART/I2C).
-
-    Guarded: only usable once the rangefinder hardware addition (flagged in
-    the plan, M4) is confirmed and wired. Not required for the vision-only
-    baseline to function.
-    """
-
-    def __init__(self, port: str) -> None:
-        raise NotImplementedError(
-            "RangefinderSource requires the optional rangefinder hardware and its "
-            "driver to be selected first - see docs plan M4 open item."
-        )
-
-    def read(self) -> Optional[float]:
-        raise NotImplementedError
-
-
 class NullDistanceSource(DistanceSource):
     def read(self) -> Optional[float]:
         return None

@@ -95,19 +95,120 @@ class AiortcVideoPipeline(VideoPipeline):
 
 class GstreamerVideoPipeline(VideoPipeline):
     """Production video path: GStreamer webrtcbin + v4l2h264enc hardware
-    encode on the Pi 5, for lower latency than the pure-Python aiortc path.
-    Not implemented yet - planned once AiortcVideoPipeline has proven the
-    signaling/control flow end-to-end (docs plan M5).
+    encode on the Pi 5, for lower latency than the pure-Python aiortc path
+    (docs plan M5) - AiortcVideoPipeline has since proven the signaling/
+    control flow end-to-end on real hardware, so this fills in the
+    previously-deferred hardware-encode path.
+
+    **UNVERIFIED - genuinely, not just "not yet run on real hardware" the
+    way this project usually flags things.** PyGObject + GStreamer (with
+    its webrtc/sdp plugins) aren't installed on this dev machine, so unlike
+    every other module in this project, this code has never even been
+    successfully imported, let alone exercised - there is no test for it,
+    not even one that would only run on a real Pi (contrast
+    AiortcVideoPipeline's own tests, which use `pytest.importorskip
+    ("aiortc")` and so at least run for real wherever aiortc is present).
+    The overall shape (parse-launch a pipeline string, set-remote-
+    description -> create-answer -> set-local-description on webrtcbin,
+    wait for ICE gathering to fully complete before returning the answer's
+    SDP) matches the standard, widely-documented GStreamer webrtcbin
+    pattern, and the non-trickle-ICE assumption (wait for gathering to
+    finish rather than exchanging candidates as a separate message) matches
+    what AiortcVideoPipeline already assumes - this project's protocol
+    (`docs/protocol.md`) has no message type for trickled ICE candidates at
+    all. Treat this as a first draft to validate on the actual Pi, not a
+    finished, trustworthy implementation - if it does not work, that is
+    expected, not a regression.
     """
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        raise NotImplementedError(
-            "GstreamerVideoPipeline is planned after the aiortc pipeline is validated - "
-            "see docs plan M5."
+    def __init__(
+        self,
+        video_device: str = "/dev/video0",
+        width: int = 1280,
+        height: int = 720,
+        fps: int = 30,
+        bitrate_kbps: int = 2000,
+    ) -> None:
+        try:
+            import gi
+
+            gi.require_version("Gst", "1.0")
+            gi.require_version("GstWebRTC", "1.0")
+            gi.require_version("GstSdp", "1.0")
+            from gi.repository import Gst, GstSdp, GstWebRTC  # type: ignore
+        except (ImportError, ValueError) as exc:
+            raise RuntimeError(
+                "PyGObject + GStreamer (with its webrtc/sdp plugins) are not installed - "
+                "this is the Pi's hardware-encode video path (docs plan M5); use "
+                "AiortcVideoPipeline (the confirmed-working software-encode path) instead "
+                "until this one is actually validated on real hardware."
+            ) from exc
+
+        Gst.init(None)
+        self._Gst = Gst
+        self._GstWebRTC = GstWebRTC
+        self._GstSdp = GstSdp
+        self._pipelines: list = []
+
+        bitrate_bps = bitrate_kbps * 1000
+        self._pipeline_str = (
+            f"v4l2src device={video_device} ! "
+            f"video/x-raw,width={width},height={height},framerate={fps}/1 ! "
+            f'v4l2h264enc extra-controls="controls,video_bitrate={bitrate_bps}" ! '
+            "h264parse ! rtph264pay config-interval=1 pt=96 ! "
+            "webrtcbin name=sendrecv bundle-policy=max-bundle"
         )
 
     async def handle_offer(self, sdp: str, sdp_type: str) -> tuple[str, str]:
-        raise NotImplementedError
+        Gst = self._Gst
+        GstWebRTC = self._GstWebRTC
+        GstSdp = self._GstSdp
+
+        pipeline = Gst.parse_launch(self._pipeline_str)
+        webrtc = pipeline.get_by_name("sendrecv")
+        self._pipelines.append(pipeline)
+
+        loop = asyncio.get_event_loop()
+        answer_future: asyncio.Future = loop.create_future()
+
+        ok, sdpmsg = GstSdp.SDPMessage.new()
+        GstSdp.sdp_message_parse_buffer(sdp.encode("utf-8"), sdpmsg)
+        offer_desc = GstWebRTC.WebRTCSessionDescription.new(GstWebRTC.WebRTCSDPType.OFFER, sdpmsg)
+
+        def on_ice_gathering_complete_extract_answer() -> None:
+            # Non-trickle ICE (see class docstring): webrtcbin bakes
+            # candidates into local_description's SDP as they gather, so
+            # waiting for gathering to finish before reading it back gives
+            # a complete, self-contained answer - no separate ICE-candidate
+            # message needed, matching AiortcVideoPipeline's own assumption
+            # and this project's protocol (docs/protocol.md).
+            local_desc = webrtc.props.local_description
+            answer_sdp_text = local_desc.sdp.as_text()
+            loop.call_soon_threadsafe(answer_future.set_result, (answer_sdp_text, "answer"))
+
+        def on_ice_gathering_state_notify(_element, _pspec) -> None:
+            if webrtc.props.ice_gathering_state == GstWebRTC.WebRTCICEGatheringState.COMPLETE:
+                on_ice_gathering_complete_extract_answer()
+
+        def on_answer_created(promise) -> None:
+            promise.wait()
+            reply = promise.get_reply()
+            answer = reply.get_value("answer")
+            webrtc.emit("set-local-description", answer, Gst.Promise.new())
+            webrtc.connect("notify::ice-gathering-state", on_ice_gathering_state_notify)
+
+        def on_remote_description_set(promise) -> None:
+            promise.wait()
+            answer_promise = Gst.Promise.new_with_change_func(lambda p: on_answer_created(p), None)
+            webrtc.emit("create-answer", None, answer_promise)
+
+        set_remote_promise = Gst.Promise.new_with_change_func(lambda p: on_remote_description_set(p), None)
+        webrtc.emit("set-remote-description", offer_desc, set_remote_promise)
+
+        pipeline.set_state(Gst.State.PLAYING)
+        return await answer_future
 
     async def stop(self) -> None:
-        raise NotImplementedError
+        for pipeline in self._pipelines:
+            pipeline.set_state(self._Gst.State.NULL)
+        self._pipelines.clear()

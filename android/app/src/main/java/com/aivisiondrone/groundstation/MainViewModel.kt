@@ -19,6 +19,7 @@ import com.aivisiondrone.groundstation.telemetry.RecordingState
 import com.aivisiondrone.groundstation.telemetry.TargetBBox
 import com.aivisiondrone.groundstation.telemetry.TelemetryState
 import com.aivisiondrone.groundstation.telemetry.TrackingState
+import com.aivisiondrone.groundstation.video.LocalRecordingOutput
 import com.aivisiondrone.groundstation.video.LocalVideoRecorder
 import com.aivisiondrone.groundstation.video.WebRtcClient
 import com.aivisiondrone.groundstation.comms.LinkState
@@ -310,14 +311,40 @@ class MainViewModel : ViewModel() {
         if (startingNow) startLocalRecording() else stopLocalRecording()
     }
 
+    /** Builds the recording's output target - MediaStore (visible in
+     * Gallery/Photos) on API 29+, or the pre-scoped-storage app-private
+     * fallback on API 26-28 where MediaStore's RELATIVE_PATH/IS_PENDING
+     * columns don't exist yet. See LocalVideoRecorder.kt's class docstring
+     * for the real field bug ("video is not saving in mobile device") this
+     * fixes - the old app-private-only path did write a valid file, just
+     * somewhere no Gallery app or file manager would ever show it. */
+    private fun buildLocalRecordingOutput(context: Context, displayName: String): LocalRecordingOutput? {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            val resolver = context.contentResolver
+            val values = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.Video.Media.DISPLAY_NAME, displayName)
+                put(android.provider.MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                put(
+                    android.provider.MediaStore.Video.Media.RELATIVE_PATH,
+                    android.os.Environment.DIRECTORY_MOVIES + "/AI Vision Drone",
+                )
+                put(android.provider.MediaStore.Video.Media.IS_PENDING, 1)
+            }
+            val uri = resolver.insert(android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+                ?: return null
+            return LocalRecordingOutput.MediaStoreEntry(resolver, uri)
+        }
+        val dir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES) ?: context.filesDir
+        dir.mkdirs()
+        return LocalRecordingOutput.LegacyFile(java.io.File(dir, displayName))
+    }
+
     private fun startLocalRecording() {
         val context = appContext ?: return
         val track = _remoteVideoTrack.value ?: return
         if (localVideoRecorder != null) return
-        val dir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES) ?: context.filesDir
-        dir.mkdirs()
-        val file = java.io.File(dir, "flight_${System.currentTimeMillis()}.mp4")
-        val recorder = LocalVideoRecorder(file)
+        val output = buildLocalRecordingOutput(context, "flight_${System.currentTimeMillis()}.mp4") ?: return
+        val recorder = LocalVideoRecorder(output)
         localVideoRecorder = recorder
         track.addSink(recorder)
     }

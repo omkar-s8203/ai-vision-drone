@@ -420,7 +420,20 @@ class CompanionOrchestrator:
                 self.video_recorder.write(frame_bgr)
         detections = self.detector.parse(frame.raw_detection_output, frame.ts)
 
-        if self._pending_selection is not None and self.state_machine.state == TrackingState.IDLE:
+        # A real field-reported bug: this used to only fire while
+        # state_machine.state == IDLE, so once ANY target had ever been
+        # selected, every later TARGET_SELECT (tap-on-video or "Select" in
+        # the AI Modes detection list) was silently swallowed - state never
+        # returns to IDLE on its own (TRACKING -> REACQUIRE -> TARGET_LOST,
+        # then it just stays TARGET_LOST) short of an explicit Abort. An
+        # explicit operator re-selection should always take effect
+        # immediately regardless of current tracking state - start() fully
+        # reinitializes the tracker onto the new detection either way, and
+        # is already safe to call from TRACKING/REACQUIRE/TARGET_LOST (see
+        # TrackingStateMachine.start()); recovery.update()'s own
+        # target_reacquired check (below) cleanly cancels an in-progress
+        # search/RTL the same frame if one was running.
+        if self._pending_selection is not None:
             if self._pending_selection[0] == "point":
                 _, px, py = self._pending_selection
                 det = select_target_at_point(detections, px, py)

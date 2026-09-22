@@ -69,8 +69,21 @@ class AppearanceMemory:
     remember. A no-op wherever no real frame is available (sim mode).
     """
 
-    def __init__(self, min_similarity: float = 0.65) -> None:
+    def __init__(self, min_similarity: float = 0.65, min_margin: float = 0.08) -> None:
         self.min_similarity = min_similarity
+        # A real field-reported bug: with no margin check, find_match()
+        # always picked whichever same-class candidate scored highest, even
+        # when a second candidate scored almost as well - e.g. two people
+        # in similarly-colored clothing. Once the original target left
+        # frame, this could silently relock onto the WRONG person with no
+        # sign anything had gone wrong (same tracking_state, same "target
+        # locked" UI). min_margin requires the best candidate to clearly
+        # beat the second-best (not just clear min_similarity) before
+        # trusting a match - a starting, deliberately conservative value,
+        # not yet tuned against real multi-person footage (same honesty
+        # this project already applies to camera.score_threshold - see
+        # hardware.yaml).
+        self.min_margin = min_margin
         self._signature: Optional[AppearanceSignature] = None
 
     @property
@@ -88,15 +101,18 @@ class AppearanceMemory:
     def find_match(self, frame_bgr: Optional[np.ndarray], detections: list[Detection]) -> Optional[Detection]:
         """Returns the best same-class detection whose appearance most
         closely matches the remembered signature, if any clears
-        min_similarity - else None. Callers should re-`learn()` from the
-        match once tracking resumes, so the remembered signature adapts to
-        the target's current appearance rather than staying frozen from the
+        min_similarity AND clearly beats every other same-class candidate
+        by at least min_margin - else None (refuses to guess rather than
+        pick between two ambiguous candidates, e.g. two people in
+        similarly-colored clothing - see min_margin's own docstring for the
+        real bug this fixes). Callers should re-`learn()` from the match
+        once tracking resumes, so the remembered signature adapts to the
+        target's current appearance rather than staying frozen from the
         moment it was first selected."""
         if self._signature is None or frame_bgr is None:
             return None
 
-        best_detection: Optional[Detection] = None
-        best_score = self.min_similarity
+        scored: list[tuple[float, Detection]] = []
         for detection in detections:
             if detection.class_id != self._signature.class_id:
                 continue
@@ -104,7 +120,13 @@ class AppearanceMemory:
             if candidate is None:
                 continue
             score = similarity(self._signature, candidate)
-            if score > best_score:
-                best_score = score
-                best_detection = detection
+            if score >= self.min_similarity:
+                scored.append((score, detection))
+
+        if not scored:
+            return None
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        best_score, best_detection = scored[0]
+        if len(scored) > 1 and best_score - scored[1][0] < self.min_margin:
+            return None
         return best_detection

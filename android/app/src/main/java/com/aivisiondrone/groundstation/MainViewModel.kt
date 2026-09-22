@@ -612,6 +612,17 @@ class MainViewModel : ViewModel() {
                 // meaning to resume, so reverting the selector for them
                 // would be misleading, not helpful.
                 if (parsed.supervisorState in SAFE_OR_IDLE_STATES && _mode.value in ONE_SHOT_MODES) {
+                    // A field-reported bug ("I can't select Dronie/Parabola"):
+                    // this same revert also fires when the Pi silently
+                    // refused to ever start the shot (no target locked -
+                    // guidance_reason == "target_lost"), not just when one
+                    // finished normally (guidance_reason is null then, see
+                    // main.py's SMART_SHOT-finished handling). Previously
+                    // both looked identical to the operator: the button
+                    // just wouldn't stay selected, with zero explanation.
+                    if (parsed.guidanceReason == "target_lost") {
+                        _alertEvents.tryEmit(AlertEvent.MODE_REJECTED_NO_TARGET)
+                    }
                     _mode.value = DroneMode.IDLE
                 }
             }

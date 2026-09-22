@@ -6,3 +6,13 @@
 # without a re-tap. Only meaningful with a real camera frame source
 # (hardware mode) - a no-op in sim, same as VideoRecorder.
 min_similarity: 0.65
+# A real field-reported bug: with no margin check, a reacquisition match
+# was accepted as soon as it cleared min_similarity, even when a second
+# same-class detection scored almost as well (e.g. two people in
+# similarly-colored clothing) - once the original target left frame, this
+# could silently relock onto the WRONG person with nothing in the UI
+# showing anything had gone wrong. Now the best candidate must also beat
+# the second-best by at least this much, or the match is refused (stays
+# TARGET_LOST rather than guessing). Deliberately conservative starting
+# value, not yet tuned against real multi-person footage.
+min_margin: 0.08

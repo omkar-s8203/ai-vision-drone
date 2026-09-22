@@ -35,4 +35,15 @@ enum class AlertEvent(val spokenLine: String) {
      * had no audio feedback at all despite otherwise following the exact
      * same supervisorState-transition pattern as the others. */
     GRID_SEARCH_STARTED("Grid search engaged"),
+
+    /** A field-reported bug ("I can't select Dronie/Parabola"): starting a
+     * one-shot smart shot with no target actually locked (or one that just
+     * went TARGET_LOST) gets silently refused by the Safety Supervisor -
+     * the Pi's very next tracking_update already reports supervisorState
+     * back at SAFE/IDLE with guidance_reason "target_lost", so
+     * MainViewModel's own ONE_SHOT_MODES handling reverts the mode
+     * selector to Normal RC within about one frame. From the operator's
+     * side that looked exactly like "the button won't stay selected" with
+     * no explanation - see MainViewModel.kt's TRACKING_UPDATE handling. */
+    MODE_REJECTED_NO_TARGET("Can't start. No target locked"),
 }

@@ -129,6 +129,47 @@ async def test_abort_forgets_the_target_so_it_does_not_silently_relock(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_reselecting_a_different_target_while_already_tracking_switches_immediately(tmp_path):
+    """A real field-reported bug ("I can't select a detection object"): the
+    pending-selection handler used to only fire while
+    state_machine.state == IDLE, which it never returns to on its own once
+    ANY target has ever been selected (TRACKING -> REACQUIRE -> TARGET_LOST,
+    then stuck there short of an explicit Abort) - so every TARGET_SELECT
+    after the very first one was silently swallowed. An explicit operator
+    re-selection (tap-on-video or "Select" in the AI Modes detection list)
+    must always take effect immediately, switching the tracked target
+    without needing to Abort first."""
+    orchestrator, recorder = _build_orchestrator(tmp_path)
+    person_a_bbox = BBox(x=20, y=20, w=30, h=60)
+    person_b_bbox = BBox(x=140, y=20, w=30, h=60)
+
+    orchestrator._on_target_selected({"x": 35.0, "y": 50.0, "point": True})
+    await orchestrator.process_frame(
+        Frame(
+            ts=0.0, width=FRAME_W, height=FRAME_H,
+            raw_detection_output=[_person(person_a_bbox, 0.0), _person(person_b_bbox, 0.0)],
+        )
+    )
+    assert orchestrator.state_machine.state == TrackingState.TRACKING
+    first_target_id = orchestrator.state_machine.target.target_id
+
+    # Still TRACKING person A (never lost) - re-selecting person B must
+    # still switch immediately, not be ignored because state isn't IDLE.
+    orchestrator._on_target_selected({"x": 155.0, "y": 50.0, "point": True})
+    result = await orchestrator.process_frame(
+        Frame(
+            ts=0.1, width=FRAME_W, height=FRAME_H,
+            raw_detection_output=[_person(person_a_bbox, 0.1), _person(person_b_bbox, 0.1)],
+        )
+    )
+
+    assert result["tracking_state"] == TrackingState.TRACKING
+    assert orchestrator.state_machine.target.bbox == person_b_bbox
+    assert orchestrator.state_machine.target.target_id != first_target_id
+    recorder.close()
+
+
+@pytest.mark.asyncio
 async def test_no_reacquire_without_a_learned_signature(tmp_path):
     """Sanity check: if nothing was ever selected, a stray same-class
     detection must never spontaneously start tracking on its own."""

@@ -134,3 +134,42 @@ def test_find_match_picks_the_best_of_several_candidates():
 
     match = memory.find_match(mixed, [green_side, red_side])
     assert match is red_side
+
+
+def test_find_match_refuses_to_guess_between_two_equally_good_candidates():
+    """A real field-reported bug: two people in similarly-colored clothing
+    - once the original target left frame, find_match() used to just pick
+    whichever candidate scored (even marginally) higher, silently relocking
+    onto the wrong person with nothing in the UI showing anything had gone
+    wrong. Two candidates this close together must be treated as genuinely
+    ambiguous and rejected, not resolved by a coin-flip-sized score gap."""
+    memory = AppearanceMemory(min_similarity=0.5, min_margin=0.08)
+    red_frame = make_frame((0, 0, 255))
+    memory.learn(red_frame, make_target(0, "person", SOME_BBOX))
+
+    # Two same-class detections, both an equally strong (identical) color
+    # match to the remembered signature - a stand-in for two different
+    # people who happen to look similar enough to both clear min_similarity.
+    candidate_a = make_detection(0, "person", BBox(10, 10, 30, 30))
+    candidate_b = make_detection(0, "person", BBox(120, 10, 30, 30))
+
+    assert memory.find_match(red_frame, [candidate_a, candidate_b]) is None
+
+
+def test_find_match_accepts_a_clear_winner_even_with_a_second_candidate():
+    """The margin check must not make reacquisition impossible whenever a
+    second same-class detection happens to be in frame - only when they're
+    genuinely close, this project's own actual field-tested scenario is
+    still expected to work: one real match, one unrelated-colored bystander."""
+    memory = AppearanceMemory(min_similarity=0.0, min_margin=0.08)
+    red_frame = make_frame((0, 0, 255))
+    memory.learn(red_frame, make_target(0, "person", SOME_BBOX))
+
+    mixed = np.zeros((FRAME_H, FRAME_W, 3), dtype=np.uint8)
+    mixed[:, : FRAME_W // 2] = (0, 255, 0)  # green half - unrelated bystander
+    mixed[:, FRAME_W // 2 :] = (0, 0, 255)  # red half - the real match
+
+    green_side = make_detection(0, "person", BBox(10, 10, 30, 30))
+    red_side = make_detection(0, "person", BBox(FRAME_W // 2 + 10, 10, 30, 30))
+
+    assert memory.find_match(mixed, [green_side, red_side]) is red_side

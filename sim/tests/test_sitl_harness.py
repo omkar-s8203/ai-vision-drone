@@ -140,6 +140,42 @@ def test_stop_escalates_to_sigkill_if_sigterm_does_not_finish_in_time():
     ]
 
 
+def test_stop_does_not_raise_if_the_process_exits_between_poll_and_getpgid():
+    """A deep-audit gap: stop() checked poll() first, then called
+    os.getpgid()/os.killpg() a few lines later with no guard - if the real
+    sim_vehicle.py process exits in that exact window (e.g. it crashes
+    right as stop()/__exit__ runs), getpgid() raises ProcessLookupError,
+    which used to propagate straight out of stop() instead of treating
+    "already gone" as success, exactly what this method is trying to
+    achieve in the first place."""
+    with patch("sim.sitl_harness.subprocess.Popen") as mock_popen:
+        mock_popen.return_value.poll.return_value = None
+        harness = RealSitlHarness()
+
+    with patch("sim.sitl_harness.os") as mock_os:
+        mock_os.getpgid.side_effect = ProcessLookupError()
+        harness.stop()  # must not raise
+
+    mock_os.killpg.assert_not_called()
+
+
+def test_stop_does_not_raise_if_the_process_exits_between_sigterm_and_sigkill():
+    with patch("sim.sitl_harness.subprocess.Popen") as mock_popen:
+        mock_popen.return_value.poll.return_value = None
+        mock_popen.return_value.wait.side_effect = subprocess.TimeoutExpired(cmd="x", timeout=10.0)
+        harness = RealSitlHarness()
+
+    with patch("sim.sitl_harness.os") as mock_os, patch("sim.sitl_harness.signal") as mock_signal:
+        mock_os.getpgid.return_value = 4242
+        mock_os.killpg.side_effect = [None, ProcessLookupError()]
+        harness.stop()  # must not raise
+
+    assert mock_os.killpg.call_args_list == [
+        ((4242, mock_signal.SIGTERM),),
+        ((4242, mock_signal.SIGKILL),),
+    ]
+
+
 def test_context_manager_stops_the_harness_on_exit():
     with patch("sim.sitl_harness.subprocess.Popen"):
         harness = RealSitlHarness()

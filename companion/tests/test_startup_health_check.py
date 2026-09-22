@@ -11,6 +11,16 @@ import pytest
 
 from companion.main import StartupHealthCheckError, _amain, run_startup_health_check
 
+_COMPLETE_GRID_SEARCH_CONFIG = {
+    "leg_spacing_m": 15.0,
+    "search_speed_mps": 2.5,
+    "waypoint_radius_m": 3.0,
+    "max_heading_error_deg_to_advance": 25.0,
+    "max_yaw_rate_rads": 0.5,
+    "max_speed_mps": 2.5,
+    "pid": {"yaw": {"kp": 0.02, "ki": 0.0, "kd": 0.005}, "altitude": {"kp": 0.5, "ki": 0.05, "kd": 0.1}},
+}
+
 
 def test_passes_against_the_real_repo_configs_in_sim_mode():
     """The actual companion/config/*.yaml files checked into this repo must
@@ -32,6 +42,7 @@ def test_sim_mode_does_not_require_mavlink_config():
         "network.yaml": {"ws_host": "0.0.0.0", "ws_port": 8765},
         "approach_limits.yaml": {"rc_override_deadband": 0.15},
         "safety_limits.yaml": {"min_obstacle_distance_m": 2.0},
+        "grid_search_limits.yaml": _COMPLETE_GRID_SEARCH_CONFIG,
     }
     with patch("companion.main.load_yaml", side_effect=lambda name: fake_configs.get(name, {})):
         run_startup_health_check("sim")  # must not raise
@@ -63,6 +74,41 @@ def test_reports_every_missing_key_at_once_not_just_the_first():
     assert "ws_host" in message
     assert "rc_override_deadband" in message
     assert "min_obstacle_distance_m" in message
+    assert "grid_search_limits.yaml" in message
+
+
+def test_flags_a_missing_grid_search_key_instead_of_only_parse_checking_it():
+    """A deep-audit gap: grid_search_limits.yaml used to only be passed
+    through the parse-only loop (confirms it's valid YAML, nothing else),
+    even though GridSearchController.__init__ unconditionally indexes
+    pid.yaw/pid.altitude/max_yaw_rate_rads/max_speed_mps (failing at
+    orchestrator construction, right after this check would have reported
+    "passed") and start()/compute() unconditionally index leg_spacing_m/
+    waypoint_radius_m/max_heading_error_deg_to_advance/search_speed_mps
+    (only ever hit once grid search is actually engaged, possibly
+    mid-flight - an even worse time to discover a config typo)."""
+    fake_configs = {
+        "hardware.yaml": {"camera": {"width": 1280, "height": 720, "target_fps": 30}},
+        "network.yaml": {"ws_host": "0.0.0.0", "ws_port": 8765},
+        "approach_limits.yaml": {"rc_override_deadband": 0.15},
+        "safety_limits.yaml": {"min_obstacle_distance_m": 2.0},
+        # A real-world typo: "waypoint_radius_m" renamed/misspelled, and
+        # the whole "pid" section missing.
+        "grid_search_limits.yaml": {
+            "leg_spacing_m": 15.0,
+            "search_speed_mps": 2.5,
+            "max_heading_error_deg_to_advance": 25.0,
+            "max_yaw_rate_rads": 0.5,
+            "max_speed_mps": 2.5,
+        },
+    }
+    with patch("companion.main.load_yaml", side_effect=lambda name: fake_configs.get(name, {})):
+        with pytest.raises(StartupHealthCheckError) as exc_info:
+            run_startup_health_check("sim")
+    message = str(exc_info.value)
+    assert "grid_search_limits.yaml: missing required key 'waypoint_radius_m'" in message
+    assert "grid_search_limits.yaml: missing required key 'pid.yaw'" in message
+    assert "grid_search_limits.yaml: missing required key 'pid.altitude'" in message
 
 
 def test_reports_a_yaml_parse_failure_clearly():
@@ -88,6 +134,7 @@ def test_passes_with_no_problems_does_not_raise():
         "network.yaml": {"ws_host": "0.0.0.0", "ws_port": 8765},
         "approach_limits.yaml": {"rc_override_deadband": 0.15},
         "safety_limits.yaml": {"min_obstacle_distance_m": 2.0},
+        "grid_search_limits.yaml": _COMPLETE_GRID_SEARCH_CONFIG,
     }
     with patch("companion.main.load_yaml", side_effect=lambda name: fake_configs.get(name, {})):
         run_startup_health_check("hardware")  # must not raise

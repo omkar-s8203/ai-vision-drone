@@ -90,12 +90,22 @@ class RealSitlHarness:
         exists to let this method clean up properly."""
         if self._process.poll() is not None:
             return
-        pgid = os.getpgid(self._process.pid)
-        os.killpg(pgid, signal.SIGTERM)
+        try:
+            pgid = os.getpgid(self._process.pid)
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            # A deep-audit gap: the process can exit in the window between
+            # the poll() check above and getpgid()/killpg() below (e.g. it
+            # crashes right as stop()/__exit__ runs) - already gone is
+            # exactly what this method is trying to achieve, not an error.
+            return
         try:
             self._process.wait(timeout=10.0)
         except subprocess.TimeoutExpired:
-            os.killpg(pgid, signal.SIGKILL)
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except ProcessLookupError:
+                return
             self._process.wait(timeout=10.0)
 
     def __enter__(self) -> "RealSitlHarness":

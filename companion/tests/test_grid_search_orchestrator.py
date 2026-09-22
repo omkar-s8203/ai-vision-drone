@@ -203,3 +203,35 @@ async def test_grid_search_finishing_drops_back_to_idle(tmp_path):
         assert orchestrator.grid_search.is_active is False
         assert orchestrator.requested_mode == SupervisorState.IDLE
         recorder.close()
+
+
+@pytest.mark.asyncio
+async def test_a_finished_grid_search_is_reset_on_the_next_mode_switch(tmp_path):
+    """A deep-audit gap: _on_mode_command()'s reset branch used to check
+    `self.grid_search.is_active` (True only while SEARCHING), so once a
+    sweep finished on its own (phase -> FINISHED, is_active -> False), the
+    very next mode switch away never reset it at all - the stale finished
+    route (waypoints/current_index) kept streaming to the app's flight map
+    indefinitely, across unrelated later modes, until an explicit abort()
+    happened to be called instead."""
+    with _build_orchestrator(tmp_path) as (orchestrator, recorder, conn, transport):
+        orchestrator.mavlink.telemetry.lat = 0.0
+        orchestrator.mavlink.telemetry.lon = 0.0
+        orchestrator.mavlink.telemetry.heading_deg = 0.0
+        orchestrator._on_mode_command(
+            {"mode": "grid_search", "grid_search_width_m": 10.0, "grid_search_height_m": 1.0}
+        )
+        _ready_for_guidance(orchestrator)
+        waypoints = orchestrator.grid_search.status().waypoints
+        for lat, lon in waypoints:
+            orchestrator.mavlink.telemetry.lat = lat
+            orchestrator.mavlink.telemetry.lon = lon
+            _ready_for_guidance(orchestrator)
+            await orchestrator.process_frame(Frame(ts=0.0, width=1280, height=720, raw_detection_output=[]))
+        assert orchestrator.grid_search.phase == GridSearchPhase.FINISHED
+
+        orchestrator._on_mode_command({"mode": "follow"})
+
+        assert orchestrator.grid_search.phase == GridSearchPhase.IDLE
+        assert orchestrator.grid_search.status().waypoints == []
+        recorder.close()

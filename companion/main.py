@@ -204,7 +204,15 @@ class CompanionOrchestrator:
                     "dimensions (width_m=%s, height_m=%s)", lat, lon, width_m, height_m,
                 )
                 mode = SupervisorState.IDLE
-        elif mode != SupervisorState.GRID_SEARCH and self.grid_search.is_active:
+        elif mode != SupervisorState.GRID_SEARCH and self.grid_search.phase != GridSearchPhase.IDLE:
+            # Deliberately checked against `phase != IDLE`, not `is_active`
+            # (True only while SEARCHING) - a deep-audit gap: a sweep that
+            # finishes on its own reaches FINISHED, which is already not
+            # "active", so a later mode switch never reached this reset at
+            # all and the stale finished route (waypoints/current_index)
+            # kept streaming to the app's flight map indefinitely, across
+            # unrelated later modes, until an explicit abort() (which does
+            # call reset()) happened.
             self.grid_search.reset()
         self.requested_mode = mode
         if mode == SupervisorState.APPROACHING:
@@ -1059,6 +1067,27 @@ def run_startup_health_check(mode: str) -> None:
     safety_cfg = _load("safety_limits.yaml")
     _require(safety_cfg, ["min_obstacle_distance_m"], "safety_limits.yaml")
 
+    # A deep-audit gap: this file used to only be parse-checked below like
+    # the others, but GridSearchController's __init__ unconditionally
+    # indexes pid.yaw/pid.altitude/max_yaw_rate_rads/max_speed_mps (so a
+    # missing key here fails at orchestrator construction, right after this
+    # check would have falsely reported "passed"), and its start()/compute()
+    # unconditionally index the rest - only ever hit once grid search is
+    # actually engaged, possibly mid-flight, which is an even worse time to
+    # discover a config typo.
+    grid_search_cfg = _load("grid_search_limits.yaml")
+    for path in (
+        ["pid", "yaw"],
+        ["pid", "altitude"],
+        ["max_yaw_rate_rads"],
+        ["max_speed_mps"],
+        ["leg_spacing_m"],
+        ["waypoint_radius_m"],
+        ["max_heading_error_deg_to_advance"],
+        ["search_speed_mps"],
+    ):
+        _require(grid_search_cfg, path, "grid_search_limits.yaml")
+
     # These are read in full (unpacked as **kwargs, or indexed piecemeal by
     # their own controllers) but have no single required top-level key this
     # check can name usefully - just confirm each one actually parses.
@@ -1067,7 +1096,6 @@ def run_startup_health_check(mode: str) -> None:
         "orbit_limits.yaml",
         "camera_calibration.yaml",
         "smart_shot_limits.yaml",
-        "grid_search_limits.yaml",
         "reidentification.yaml",
         "target_recovery.yaml",
     ):

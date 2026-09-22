@@ -47,7 +47,13 @@ private const val TAG = "MainViewModel"
 // Mirrors the relevant subset of companion/safety/supervisor.py's
 // SupervisorState names - see the TRACKING_UPDATE handling below.
 private val SAFE_OR_IDLE_STATES = setOf("IDLE", "SAFE")
-private val ONE_SHOT_MODES = setOf(DroneMode.DRONIE, DroneMode.PARABOLA)
+// GRID_SEARCH self-terminates exactly like Dronie/Parabola (main.py sets
+// requested_mode = IDLE once GridSearchPhase.FINISHED) - a deep-audit gap:
+// this set previously only had the smart-shot modes, so the selector never
+// reset after a sweep finished on its own and stayed stuck on Grid Search
+// (with no button shown selected, since ModeControls filters it out of its
+// button row) until the operator manually picked something else.
+private val ONE_SHOT_MODES = setOf(DroneMode.DRONIE, DroneMode.PARABOLA, DroneMode.GRID_SEARCH)
 
 // Supervisor states that were actively driving the aircraft - used to tell
 // a real forced-SAFE (guidance was running, now isn't) from just idling.

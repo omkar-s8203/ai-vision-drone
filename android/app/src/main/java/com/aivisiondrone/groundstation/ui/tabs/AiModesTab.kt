@@ -18,6 +18,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -69,6 +70,20 @@ fun AiModesTab(
     // it used to (a real gap: it was rendered unconditionally regardless of
     // which mode was actually selected).
     var gridSearchPanelOpen by remember { mutableStateOf(false) }
+    // A follow-up audit gap in that same fix: `mode` can leave GRID_SEARCH
+    // without ever going through onModeSelected below - stopGridSearch()
+    // (Stop Sweep) and a sweep finishing on its own both just call
+    // setMode(IDLE)/reset it directly, and abort() does too - none of
+    // those cleared gridSearchPanelOpen, so the config panel and the Grid
+    // Search button's highlight stayed stuck on (alongside whatever button
+    // was now actually current) until the operator noticed and tapped
+    // Cancel or another mode by hand. Watching `mode` itself catches every
+    // path, not just the row's own tap handler.
+    LaunchedEffect(mode) {
+        if (mode != DroneMode.GRID_SEARCH) {
+            gridSearchPanelOpen = false
+        }
+    }
     LazyColumn(
         modifier = modifier
             .fillMaxSize()

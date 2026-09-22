@@ -445,7 +445,20 @@ fun FlyTab(
         }
 
         AnimatedVisibility(
-            visible = tracking.guidanceReason != null,
+            // A real error-handling gap: tracking.guidanceReason is a
+            // frozen snapshot from the last tracking_update actually
+            // received - it is never cleared on its own if the link drops
+            // (parseTracking() only runs when a new message arrives).
+            // Without the linkState check, a dropped connection while this
+            // banner was showing left it stuck on screen indefinitely,
+            // "Resume" button and all, even though tapping it could do
+            // nothing (client.sendModeCommand() silently no-ops with no
+            // open socket) - exactly the kind of stuck/confusing state with
+            // no way out that isn't acceptable here. The LINK status chip
+            // below is the one source of truth for connectivity; this
+            // banner defers to it and reappears fresh, from a real
+            // tracking_update, once reconnected.
+            visible = tracking.guidanceReason != null && linkState == LinkState.CONNECTED,
             enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
             exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
             modifier = Modifier

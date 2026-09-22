@@ -41,12 +41,18 @@ enum class DroneMode(val wireValue: String, val label: String) {
     APPROACHING("approach", "Approach Test"),
     DRONIE("dronie", "Dronie"),
     PARABOLA("parabola", "Parabola"),
-    // Deliberately excluded from ModeControls' auto-generated button row
-    // below (unlike every other mode, selecting it needs width/height
-    // parameters first - see GridSearchControls.kt) - a field request
-    // extending the existing single-target search into deliberate area
-    // coverage, the same recon/surveillance use case as the Android app's
-    // perimeter/intrusion alert.
+    // Has a real button in the row below like every other mode, but a tap
+    // never fires onModeSelected -> setMode() straight to the wire the way
+    // every other button does - unlike them, starting this one needs
+    // width/height parameters first (see GridSearchControls.kt), so a bare
+    // {"mode": "grid_search"} with no area dimensions would just bounce
+    // back to idle on the Pi (companion/main.py's _on_mode_command). See
+    // AiModesTab.kt: this button only opens/closes the config panel
+    // locally; the real mode_command is sent once "Start Grid Search" is
+    // tapped inside it. A field request extending the existing
+    // single-target search into deliberate area coverage, the same
+    // recon/surveillance use case as the Android app's perimeter/intrusion
+    // alert.
     GRID_SEARCH("grid_search", "Grid Search"),
 }
 
@@ -74,6 +80,12 @@ fun ModeControls(
     onOrbitAltitudeChanged: (Float) -> Unit,
     onFollowMaxSpeedChanged: (Float) -> Unit,
     onOrbitMaxSpeedChanged: (Float) -> Unit,
+    // True while the Grid Search config panel is open/the sweep is
+    // running - GRID_SEARCH's own button highlights for both, even though
+    // `currentMode` itself only actually becomes GRID_SEARCH once a sweep
+    // is started (see the enum's own docstring for why a tap doesn't just
+    // call onModeSelected the way every other button's does).
+    gridSearchSelected: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     Card(
@@ -92,11 +104,12 @@ fun ModeControls(
                 modifier = Modifier.horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                DroneMode.entries.filter { it != DroneMode.GRID_SEARCH }.forEach { mode ->
+                DroneMode.entries.forEach { mode ->
+                    val selected = mode == currentMode || (mode == DroneMode.GRID_SEARCH && gridSearchSelected)
                     Button(
                         onClick = { onModeSelected(mode) },
                         shape = RoundedCornerShape(12.dp),
-                        colors = if (mode == currentMode) {
+                        colors = if (selected) {
                             ButtonDefaults.buttonColors(containerColor = DroneColors.Accent, contentColor = Color.Black)
                         } else {
                             ButtonDefaults.buttonColors(containerColor = DroneColors.SurfaceElevated, contentColor = DroneColors.TextPrimary)

@@ -20,6 +20,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -57,6 +60,15 @@ fun AiModesTab(
     val detections by viewModel.detections.collectAsState()
     val gridSearchState by viewModel.gridSearchState.collectAsState()
     val telemetry by viewModel.telemetry.collectAsState()
+    // Local-only: whether the Grid Search config panel is open. Unlike
+    // every other mode, tapping its row button must not immediately send a
+    // mode_command (it has no width/height yet) - it only opens this panel;
+    // the real command is sent from inside GridSearchControls once "Start
+    // Grid Search" is tapped. Kept closed by selecting any other mode, so
+    // the panel no longer sits permanently visible under every mode the way
+    // it used to (a real gap: it was rendered unconditionally regardless of
+    // which mode was actually selected).
+    var gridSearchPanelOpen by remember { mutableStateOf(false) }
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
@@ -82,25 +94,38 @@ fun AiModesTab(
                 orbitAltitudeM = orbitAltitudeM,
                 followMaxSpeedMps = followMaxSpeedMps,
                 orbitMaxSpeedMps = orbitMaxSpeedMps,
-                onModeSelected = { viewModel.setMode(it) },
+                onModeSelected = { selected ->
+                    if (selected == DroneMode.GRID_SEARCH) {
+                        gridSearchPanelOpen = !gridSearchPanelOpen
+                    } else {
+                        gridSearchPanelOpen = false
+                        viewModel.setMode(selected)
+                    }
+                },
                 onFollowSeparationChanged = { viewModel.setFollowSeparation(it) },
                 onFollowAltitudeChanged = { viewModel.setFollowAltitude(it) },
                 onOrbitRadiusChanged = { viewModel.setOrbitRadius(it) },
                 onOrbitAltitudeChanged = { viewModel.setOrbitAltitude(it) },
                 onFollowMaxSpeedChanged = { viewModel.setFollowMaxSpeed(it) },
                 onOrbitMaxSpeedChanged = { viewModel.setOrbitMaxSpeed(it) },
+                gridSearchSelected = gridSearchPanelOpen || gridSearchState.active,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
 
-        item {
-            GridSearchControls(
-                gridSearchState = gridSearchState,
-                hasGpsFix = (telemetry.gpsFixType ?: 0) >= 3,
-                onStart = { widthM, heightM -> viewModel.startGridSearch(widthM, heightM) },
-                onStop = { viewModel.stopGridSearch() },
-                modifier = Modifier.fillMaxWidth(),
-            )
+        // Only shown while actually being configured or actually running -
+        // stays out of the way of every other mode's screen otherwise.
+        if (gridSearchPanelOpen || gridSearchState.active) {
+            item {
+                GridSearchControls(
+                    gridSearchState = gridSearchState,
+                    hasGpsFix = (telemetry.gpsFixType ?: 0) >= 3,
+                    onStart = { widthM, heightM -> viewModel.startGridSearch(widthM, heightM) },
+                    onStop = { viewModel.stopGridSearch() },
+                    onCancel = { gridSearchPanelOpen = false },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
 
         if (tracking.targetId != null) {

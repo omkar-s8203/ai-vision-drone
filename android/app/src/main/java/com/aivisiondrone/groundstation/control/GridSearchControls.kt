@@ -11,6 +11,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -44,6 +45,11 @@ fun GridSearchControls(
     hasGpsFix: Boolean,
     onStart: (widthM: Float, heightM: Float) -> Unit,
     onStop: () -> Unit,
+    // Collapses the config panel back to the row's plain "Grid Search"
+    // button without starting anything - only ever shown/relevant while
+    // still configuring (gridSearchState.active == false); null omits it
+    // (e.g. a caller with no notion of a collapsible panel).
+    onCancel: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     var widthM by remember { mutableFloatStateOf(60f) }
@@ -115,6 +121,12 @@ fun GridSearchControls(
                     )
                 }
                 Spacer(modifier = Modifier.padding(top = 12.dp))
+                if (onCancel != null) {
+                    TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
+                        Text("Cancel", color = DroneColors.TextSecondary)
+                    }
+                    Spacer(modifier = Modifier.padding(top = 4.dp))
+                }
                 Button(
                     onClick = { onStart(widthM, heightM) },
                     enabled = hasGpsFix,

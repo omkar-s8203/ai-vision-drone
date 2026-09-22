@@ -70,6 +70,8 @@ class AlertSoundPlayer(context: Context) {
         AlertEvent.PERIMETER_CLEARED -> ToneGenerator.TONE_PROP_ACK
         AlertEvent.GRID_SEARCH_STARTED -> ToneGenerator.TONE_PROP_BEEP2
         AlertEvent.MODE_REJECTED_NO_TARGET -> ToneGenerator.TONE_SUP_ERROR
+        AlertEvent.MODE_REJECTED_FC_NOT_GUIDED -> ToneGenerator.TONE_SUP_ERROR
+        AlertEvent.MODE_REJECTED -> ToneGenerator.TONE_SUP_ERROR
     }
 
     companion object {

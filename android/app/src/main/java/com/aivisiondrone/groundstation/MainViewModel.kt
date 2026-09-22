@@ -614,14 +614,23 @@ class MainViewModel : ViewModel() {
                 if (parsed.supervisorState in SAFE_OR_IDLE_STATES && _mode.value in ONE_SHOT_MODES) {
                     // A field-reported bug ("I can't select Dronie/Parabola"):
                     // this same revert also fires when the Pi silently
-                    // refused to ever start the shot (no target locked -
-                    // guidance_reason == "target_lost"), not just when one
+                    // refused to ever start the shot, not just when one
                     // finished normally (guidance_reason is null then, see
                     // main.py's SMART_SHOT-finished handling). Previously
-                    // both looked identical to the operator: the button
-                    // just wouldn't stay selected, with zero explanation.
-                    if (parsed.guidanceReason == "target_lost") {
-                        _alertEvents.tryEmit(AlertEvent.MODE_REJECTED_NO_TARGET)
+                    // every rejection reason looked identical to the
+                    // operator: the button just wouldn't stay selected,
+                    // with zero explanation. fc_not_in_ai_mode is the
+                    // single most likely real-world cause of all - the
+                    // Supervisor refuses every guidance mode whenever the
+                    // FC isn't actually in GUIDED yet, completely
+                    // independent of target tracking (see
+                    // companion/safety/supervisor.py - this check runs
+                    // before target_lost is ever even considered).
+                    when (parsed.guidanceReason) {
+                        "target_lost" -> _alertEvents.tryEmit(AlertEvent.MODE_REJECTED_NO_TARGET)
+                        "fc_not_in_ai_mode" -> _alertEvents.tryEmit(AlertEvent.MODE_REJECTED_FC_NOT_GUIDED)
+                        null -> {} // a normal finish - nothing to explain
+                        else -> _alertEvents.tryEmit(AlertEvent.MODE_REJECTED)
                     }
                     _mode.value = DroneMode.IDLE
                 }

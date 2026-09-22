@@ -128,6 +128,28 @@ fun AiModesTab(
             )
         }
 
+        // Preventive, not just reactive - same reasoning as Grid Search's
+        // own GPS-fix check below. A real field-reported bug ("I can't
+        // select Dronie/Parabola"): every guidance mode gets silently
+        // refused by the Safety Supervisor whenever the flight controller
+        // isn't actually in GUIDED yet (companion/safety/supervisor.py),
+        // completely independent of which target is tracked - without this
+        // hint, tapping any of these buttons just silently reverted with
+        // no visible explanation (now also covered reactively by
+        // AlertEvent.MODE_REJECTED_FC_NOT_GUIDED in MainViewModel).
+        if (telemetry.flightMode != null && telemetry.flightMode != "GUIDED") {
+            item {
+                Text(
+                    "Flight controller is in ${telemetry.flightMode} - switch to GUIDED " +
+                        "(flight-mode dropdown or transmitter) before Follow/Orbit/Approach/" +
+                        "Dronie/Parabola/Grid Search will engage.",
+                    color = DroneColors.Warning,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(horizontal = 4.dp),
+                )
+            }
+        }
+
         // Only shown while actually being configured or actually running -
         // stays out of the way of every other mode's screen otherwise.
         if (gridSearchPanelOpen || gridSearchState.active) {

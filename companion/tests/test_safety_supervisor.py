@@ -128,7 +128,7 @@ def test_searching_is_allowed_even_though_target_is_lost():
     """SEARCHING (target-loss recovery's yaw-sweep, see
     target_recovery.py) is only ever requested once the target is already
     lost - target_lost must not be treated as a reason to block it, unlike
-    FOLLOWING/ORBITING/APPROACHING/SMART_SHOT."""
+    FOLLOWING/ORBITING/APPROACHING."""
     supervisor = SafetySupervisor(fresh_watchdog())
     decision = supervisor.evaluate(
         base_inputs(tracking_state=TrackingState.TARGET_LOST, requested_state=SupervisorState.SEARCHING)
@@ -155,9 +155,9 @@ def test_searching_still_blocked_by_rc_override():
 
 def test_grid_search_is_allowed_regardless_of_tracking_state():
     """GRID_SEARCH (grid_search.py's lawnmower area sweep) never tracks a
-    visual target at all - unlike FOLLOWING/ORBITING/APPROACHING/
-    SMART_SHOT, a stale/nonexistent tracking_state (even TARGET_LOST, the
-    default when nothing is or has ever been tracked) must not block it."""
+    visual target at all - unlike FOLLOWING/ORBITING/APPROACHING, a stale/
+    nonexistent tracking_state (even TARGET_LOST, the default when nothing
+    is or has ever been tracked) must not block it."""
     supervisor = SafetySupervisor(fresh_watchdog())
     decision = supervisor.evaluate(
         base_inputs(tracking_state=TrackingState.TARGET_LOST, requested_state=SupervisorState.GRID_SEARCH)

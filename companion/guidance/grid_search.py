@@ -106,9 +106,9 @@ class GridSearchController:
         """Returns None (not a zero-velocity command) when there's nothing
         useful to compute - missing GPS/heading telemetry, or the sweep
         already finished - so the caller can tell "no command" apart from
-        "hold still," the same way ApproachTestController/
-        SmartShotController signal completion through their own state
-        rather than a fabricated command."""
+        "hold still," the same way ApproachTestController signals
+        completion through its own state rather than a fabricated
+        command."""
         if self.phase != GridSearchPhase.SEARCHING:
             return None
         if current_lat is None or current_lon is None or current_heading_deg is None:

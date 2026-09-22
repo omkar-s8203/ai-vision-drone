@@ -27,7 +27,6 @@ from companion.guidance.follow import FollowController
 from companion.guidance.geo import bearing_deg, haversine_distance_m
 from companion.guidance.grid_search import GridSearchController, GridSearchPhase
 from companion.guidance.orbit import OrbitController
-from companion.guidance.smart_shot import ShotType, SmartShotController, SmartShotState
 from companion.guidance.target_recovery import RecoveryPhase, TargetRecoveryController
 from companion.logging_.session_recorder import SessionRecorder
 from companion.logging_.setup import configure_logging
@@ -62,14 +61,7 @@ MODE_COMMAND_MAP = {
     "follow": SupervisorState.FOLLOWING,
     "orbit": SupervisorState.ORBITING,
     "approach": SupervisorState.APPROACHING,
-    "dronie": SupervisorState.SMART_SHOT,
-    "parabola": SupervisorState.SMART_SHOT,
     "grid_search": SupervisorState.GRID_SEARCH,
-}
-
-SHOT_TYPE_MAP = {
-    "dronie": ShotType.DRONIE,
-    "parabola": ShotType.PARABOLA,
 }
 
 AI_GUIDANCE_MODE_NAME = "GUIDED"
@@ -94,7 +86,6 @@ class CompanionOrchestrator:
         contact_sensor: Optional[ContactSensor] = None,
         video_pipeline: Optional["VideoPipeline"] = None,
         video_recorder: Optional[VideoRecorder] = None,
-        smart_shot_controller: Optional[SmartShotController] = None,
         appearance_memory: Optional[AppearanceMemory] = None,
         recovery_controller: Optional[TargetRecoveryController] = None,
         grid_search_controller: Optional[GridSearchController] = None,
@@ -108,7 +99,6 @@ class CompanionOrchestrator:
         self.follow = follow_controller
         self.orbit = orbit_controller
         self.approach = approach_controller
-        self.smart_shot = smart_shot_controller or SmartShotController(load_yaml("smart_shot_limits.yaml"))
         self.appearance = appearance_memory or AppearanceMemory(**load_yaml("reidentification.yaml"))
         self.recovery = recovery_controller or TargetRecoveryController(load_yaml("target_recovery.yaml"))
         self.grid_search = grid_search_controller or GridSearchController(load_yaml("grid_search_limits.yaml"))
@@ -219,12 +209,6 @@ class CompanionOrchestrator:
             self.approach.start()
         else:
             self.approach.stop()
-        if mode == SupervisorState.SMART_SHOT:
-            shot_type = SHOT_TYPE_MAP.get(mode_str)
-            if shot_type is not None and not self.smart_shot.is_active:
-                self.smart_shot.start(shot_type)
-        else:
-            self.smart_shot.stop()
         separation = payload.get("follow_separation_m")
         if separation is not None:
             self.follow.limits["target_separation_m"] = float(separation)
@@ -259,7 +243,6 @@ class CompanionOrchestrator:
     def _on_abort(self, payload: dict) -> None:
         self.requested_mode = SupervisorState.IDLE
         self.approach.stop()
-        self.smart_shot.stop()
         self.grid_search.reset()
         self.state_machine.stop()
         self.appearance.forget()
@@ -608,22 +591,6 @@ class CompanionOrchestrator:
             command = result.command
             if result.abort_reason:
                 self.recorder.record("approach_abort", reason=result.abort_reason)
-        elif decision.state == SupervisorState.SMART_SHOT:
-            shot_result = self.smart_shot.update(
-                self.state_machine.target, frame.width, frame.height, dt
-            )
-            command = shot_result.command
-            if shot_result.state == SmartShotState.FINISHED:
-                # Unlike Approach-Test's STOPPED_AT_BOUNDARY (a safety-
-                # relevant state deliberately left "stuck" until the
-                # operator explicitly decides what's next), a finished
-                # smart shot has no residual safety significance - drop
-                # straight back to IDLE so `supervisor_state` (sent to the
-                # app every frame) correctly reflects that guidance is over,
-                # instead of reporting SMART_SHOT forever with no command
-                # actually being sent.
-                self.requested_mode = SupervisorState.IDLE
-                self.recorder.record("smart_shot_finished")
         elif decision.state == SupervisorState.GRID_SEARCH:
             command = self.grid_search.compute(
                 self.mavlink.telemetry.lat,
@@ -633,10 +600,14 @@ class CompanionOrchestrator:
                 dt,
             )
             if self.grid_search.phase == GridSearchPhase.FINISHED:
-                # Same reasoning as a finished smart shot above: no residual
-                # safety significance once every waypoint is visited, so
-                # drop straight back to IDLE rather than reporting
-                # GRID_SEARCH forever with no command actually being sent.
+                # Unlike Approach-Test's STOPPED_AT_BOUNDARY (a safety-
+                # relevant state deliberately left "stuck" until the
+                # operator explicitly decides what's next), a finished sweep
+                # has no residual safety significance once every waypoint is
+                # visited - drop straight back to IDLE so `supervisor_state`
+                # (sent to the app every frame) correctly reflects that
+                # guidance is over, instead of reporting GRID_SEARCH forever
+                # with no command actually being sent.
                 self.requested_mode = SupervisorState.IDLE
                 self.recorder.record("grid_search_finished")
 
@@ -865,7 +836,6 @@ def build_sim_orchestrator() -> tuple[CompanionOrchestrator, "object"]:
     approach_cfg = load_yaml("approach_limits.yaml")
     calib_cfg = load_yaml("camera_calibration.yaml")
     safety_cfg = load_yaml("safety_limits.yaml")
-    smart_shot_cfg = load_yaml("smart_shot_limits.yaml")
 
     generator = SyntheticTargetGenerator(
         image_width=hardware_cfg["camera"]["width"], image_height=hardware_cfg["camera"]["height"]
@@ -882,7 +852,6 @@ def build_sim_orchestrator() -> tuple[CompanionOrchestrator, "object"]:
     follow_controller = FollowController(follow_cfg)
     orbit_controller = OrbitController(orbit_cfg)
     approach_controller = ApproachTestController(approach_cfg)
-    smart_shot_controller = SmartShotController(smart_shot_cfg)
 
     mock_fc = MockFlightController(f"udpin:127.0.0.1:{SIM_FC_UDP_PORT}")
     mock_fc.set_mode("GUIDED")
@@ -920,7 +889,6 @@ def build_sim_orchestrator() -> tuple[CompanionOrchestrator, "object"]:
         approach_controller=approach_controller, mavlink=mavlink, rc_monitor=rc_monitor,
         supervisor=supervisor, watchdog=watchdog, link=link, recorder=recorder,
         video_pipeline=video_pipeline,
-        smart_shot_controller=smart_shot_controller,
         min_obstacle_distance_m=safety_cfg["min_obstacle_distance_m"],
     )
     return orchestrator, mock_fc
@@ -952,7 +920,6 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
     approach_cfg = load_yaml("approach_limits.yaml")
     calib_cfg = load_yaml("camera_calibration.yaml")
     safety_cfg = load_yaml("safety_limits.yaml")
-    smart_shot_cfg = load_yaml("smart_shot_limits.yaml")
 
     camera = Picamera2IMX500Camera(
         model_path=hardware_cfg["camera"]["imx500_model_path"],
@@ -978,7 +945,6 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
     follow_controller = FollowController(follow_cfg)
     orbit_controller = OrbitController(orbit_cfg)
     approach_controller = ApproachTestController(approach_cfg)
-    smart_shot_controller = SmartShotController(smart_shot_cfg)
     mavlink = MavlinkBridge(
         hardware_cfg["mavlink"]["connection"], baud=hardware_cfg["mavlink"]["baud"]
     )
@@ -1013,7 +979,6 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
         approach_controller=approach_controller, mavlink=mavlink, rc_monitor=rc_monitor,
         supervisor=supervisor, watchdog=watchdog, link=link, recorder=recorder,
         video_pipeline=video_pipeline, video_recorder=video_recorder,
-        smart_shot_controller=smart_shot_controller,
         min_obstacle_distance_m=safety_cfg["min_obstacle_distance_m"],
     )
 
@@ -1108,7 +1073,6 @@ def run_startup_health_check(mode: str) -> None:
         "follow_limits.yaml",
         "orbit_limits.yaml",
         "camera_calibration.yaml",
-        "smart_shot_limits.yaml",
         "reidentification.yaml",
         "target_recovery.yaml",
     ):

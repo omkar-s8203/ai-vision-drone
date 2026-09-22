@@ -28,19 +28,13 @@ import com.aivisiondrone.groundstation.ui.theme.DroneColors
 /** AI guidance mode - distinct from the FC's own flight mode (STABILIZE,
  * LOITER, etc. - see FlightControlDock). ORBITING is the DJI "circle"/
  * point-of-interest equivalent: the drone holds a radius around the
- * selected target and sweeps around it instead of holding station. DRONIE
- * and PARABOLA are one-shot cinematic moves (DJI "QuickShot" equivalent) -
- * unlike the other modes they run once for a fixed duration and then stop
- * themselves on the Pi side (companion/guidance/smart_shot.py); tapping
- * the button again just re-triggers a fresh run. */
+ * selected target and sweeps around it instead of holding station. */
 enum class DroneMode(val wireValue: String, val label: String) {
     IDLE("idle", "Normal RC"),
     TRACKING("tracking", "Tracking"),
     FOLLOWING("follow", "Follow"),
     ORBITING("orbit", "Orbit"),
     APPROACHING("approach", "Approach Test"),
-    DRONIE("dronie", "Dronie"),
-    PARABOLA("parabola", "Parabola"),
     // Has a real button in the row below like every other mode, but a tap
     // never fires onModeSelected -> setMode() straight to the wire the way
     // every other button does - unlike them, starting this one needs

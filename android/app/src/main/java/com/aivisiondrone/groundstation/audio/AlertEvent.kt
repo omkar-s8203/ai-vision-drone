@@ -36,28 +36,28 @@ enum class AlertEvent(val spokenLine: String) {
      * same supervisorState-transition pattern as the others. */
     GRID_SEARCH_STARTED("Grid search engaged"),
 
-    /** A field-reported bug ("I can't select Dronie/Parabola"): starting a
-     * one-shot smart shot with no target actually locked (or one that just
-     * went TARGET_LOST) gets silently refused by the Safety Supervisor -
-     * the Pi's very next tracking_update already reports supervisorState
-     * back at SAFE/IDLE with guidance_reason "target_lost", so
-     * MainViewModel's own ONE_SHOT_MODES handling reverts the mode
-     * selector to Normal RC within about one frame. From the operator's
-     * side that looked exactly like "the button won't stay selected" with
-     * no explanation - see MainViewModel.kt's TRACKING_UPDATE handling. */
+    /** A field-reported bug ("I can't select Grid Search"): starting a
+     * one-shot sweep with no target actually locked (or one that just went
+     * TARGET_LOST) gets silently refused by the Safety Supervisor - the
+     * Pi's very next tracking_update already reports supervisorState back
+     * at SAFE/IDLE with guidance_reason "target_lost", so MainViewModel's
+     * own ONE_SHOT_MODES handling reverts the mode selector to Normal RC
+     * within about one frame. From the operator's side that looked exactly
+     * like "the button won't stay selected" with no explanation - see
+     * MainViewModel.kt's TRACKING_UPDATE handling. */
     MODE_REJECTED_NO_TARGET("Can't start. No target locked"),
 
     /** Same silent-rejection gap as MODE_REJECTED_NO_TARGET, but for the
      * single most likely real-world cause of it: the Safety Supervisor
-     * refuses EVERY guidance mode (Follow/Orbit/Approach/Dronie/Parabola/
-     * Grid Search alike) whenever the flight controller isn't actually in
-     * its designated AI-guidance mode (GUIDED - see main.py's
-     * AI_GUIDANCE_MODE_NAME), completely independent of target tracking -
-     * companion/safety/supervisor.py's fc_not_in_ai_mode check runs before
-     * the target_lost check even gets a chance to matter. Until the FC is
-     * actually switched to GUIDED (flight-mode dropdown, or the RC
-     * transmitter), no guidance mode will ever engage, and without this
-     * alert that looked identical to every other silent rejection. */
+     * refuses EVERY guidance mode (Follow/Orbit/Approach/Grid Search alike)
+     * whenever the flight controller isn't actually in its designated
+     * AI-guidance mode (GUIDED - see main.py's AI_GUIDANCE_MODE_NAME),
+     * completely independent of target tracking - companion/safety/
+     * supervisor.py's fc_not_in_ai_mode check runs before the target_lost
+     * check even gets a chance to matter. Until the FC is actually
+     * switched to GUIDED (flight-mode dropdown, or the RC transmitter), no
+     * guidance mode will ever engage, and without this alert that looked
+     * identical to every other silent rejection. */
     MODE_REJECTED_FC_NOT_GUIDED("Can't start. Flight controller not in Guided mode"),
 
     /** Fallback for a guidance-mode rejection this app doesn't have a more

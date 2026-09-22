@@ -79,11 +79,11 @@ data class TrackingState(
     val guidanceAllowed: Boolean = false,
     val guidanceReason: String? = null,
     // Mirrors companion/safety/supervisor.py's SupervisorState name (IDLE,
-    // TRACKING, FOLLOWING, ORBITING, APPROACHING, SMART_SHOT, SAFE) - used
+    // TRACKING, FOLLOWING, ORBITING, APPROACHING, GRID_SEARCH, SAFE) - used
     // to notice when the Pi has dropped out of a guidance mode on its own
-    // (a finished smart shot, an Approach-Test boundary stop, a forced
-    // SAFE) so the mode selector can reflect reality instead of staying
-    // stuck on whatever the operator last tapped.
+    // (a finished sweep, an Approach-Test boundary stop, a forced SAFE) so
+    // the mode selector can reflect reality instead of staying stuck on
+    // whatever the operator last tapped.
     val supervisorState: String? = null,
     // The active guidance controller's computed velocity setpoint this
     // frame (null when none is running) and whether it actually reached

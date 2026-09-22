@@ -47,23 +47,23 @@ private const val TAG = "MainViewModel"
 // Mirrors the relevant subset of companion/safety/supervisor.py's
 // SupervisorState names - see the TRACKING_UPDATE handling below.
 private val SAFE_OR_IDLE_STATES = setOf("IDLE", "SAFE")
-// GRID_SEARCH self-terminates exactly like Dronie/Parabola (main.py sets
-// requested_mode = IDLE once GridSearchPhase.FINISHED) - a deep-audit gap:
-// this set previously only had the smart-shot modes, so the selector never
-// reset after a sweep finished on its own and stayed stuck on Grid Search
-// (with no button shown selected, since ModeControls filters it out of its
-// button row) until the operator manually picked something else.
-private val ONE_SHOT_MODES = setOf(DroneMode.DRONIE, DroneMode.PARABOLA, DroneMode.GRID_SEARCH)
+// Grid Search self-terminates once its sweep finishes on its own (main.py
+// sets requested_mode = IDLE once GridSearchPhase.FINISHED) - a deep-audit
+// gap: this set used to miss that, so the selector never reset and stayed
+// stuck on Grid Search (with no button shown selected, since ModeControls
+// filters it out of its button row) until the operator manually picked
+// something else.
+private val ONE_SHOT_MODES = setOf(DroneMode.GRID_SEARCH)
 
 // Supervisor states that were actively driving the aircraft - used to tell
 // a real forced-SAFE (guidance was running, now isn't) from just idling.
 // GRID_SEARCH was missing here until a code-review audit caught it: an RC
 // override (or any other fault) interrupting a grid search produced no
 // "Guidance stopped" alert, even though the exact same interruption during
-// Follow/Orbit/Search/Approach/SmartShot always did - an inconsistent,
-// safety-relevant gap purely because this set predates that mode.
+// Follow/Orbit/Search/Approach always did - an inconsistent, safety-
+// relevant gap purely because this set predates that mode.
 private val ACTIVE_GUIDANCE_STATES =
-    setOf("FOLLOWING", "ORBITING", "APPROACHING", "SEARCHING", "SMART_SHOT", "GRID_SEARCH")
+    setOf("FOLLOWING", "ORBITING", "APPROACHING", "SEARCHING", "GRID_SEARCH")
 
 /**
  * Ties the WebSocket control/telemetry channel and the WebRTC video channel
@@ -620,21 +620,21 @@ class MainViewModel : ViewModel() {
                 _tracking.value = parsed
                 targetTrail.record(parsed)
                 _trailSnapshot.value = targetTrail.snapshot(parsed.imageWidth, parsed.imageHeight)
-                // A Dronie/Parabola smart shot stops itself on the Pi side
-                // once its fixed duration elapses (companion/main.py resets
+                // A Grid Search sweep stops itself on the Pi side once
+                // every waypoint is visited (companion/main.py resets
                 // requested_mode to IDLE when it finishes) - mirror that
-                // here so the mode selector doesn't keep showing the shot
-                // as active after it's actually done. Deliberately not
-                // done for Follow/Orbit/Approach: those can drop to SAFE
+                // here so the mode selector doesn't keep showing it as
+                // active after it's actually done. Deliberately not done
+                // for Follow/Orbit/Approach: those can drop to SAFE
                 // transiently (e.g. a brief target loss) while still
                 // meaning to resume, so reverting the selector for them
                 // would be misleading, not helpful.
                 if (parsed.supervisorState in SAFE_OR_IDLE_STATES && _mode.value in ONE_SHOT_MODES) {
-                    // A field-reported bug ("I can't select Dronie/Parabola"):
+                    // A field-reported bug ("I can't select Grid Search"):
                     // this same revert also fires when the Pi silently
-                    // refused to ever start the shot, not just when one
+                    // refused to ever start the sweep, not just when one
                     // finished normally (guidance_reason is null then, see
-                    // main.py's SMART_SHOT-finished handling). Previously
+                    // main.py's grid-search-finished handling). Previously
                     // every rejection reason looked identical to the
                     // operator: the button just wouldn't stay selected,
                     // with zero explanation. fc_not_in_ai_mode is the

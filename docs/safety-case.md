@@ -5,7 +5,7 @@ actually implemented and tested today, not the aspirational end state.
 Update this whenever a safety-relevant mechanism changes; treat a stale
 entry here as worse than no entry.
 
-Every guidance controller (Follow, Orbit, Approach-Test, Dronie/Parabola)
+Every guidance controller (Follow, Orbit, Approach-Test, Grid Search)
 only ever *proposes* a velocity setpoint. `SafetySupervisor.evaluate()`
 (`companion/safety/supervisor.py`) is the single point that decides whether
 that setpoint is actually allowed to reach `MavlinkBridge.send_velocity_
@@ -150,11 +150,10 @@ mechanism is never silent to the operator.
 
 ### Follow/Orbit-only: bounded search, then RTL or an operator-confirmed landing
 
-The forced-`SAFE` behavior above is the whole story for Approach-Test and
-Dronie/Parabola - deliberately unchanged, since those modes are already
-stricter about target loss (Approach-Test aborts immediately; a smart
-shot has a fixed duration and finishing early on loss is fine). Follow and
-Orbit get an additional layer on top, since those are the modes meant to
+The forced-`SAFE` behavior above is the whole story for Approach-Test -
+deliberately unchanged, since it's already stricter about target loss
+(it aborts immediately on TARGET_LOST). Follow and Orbit get an additional
+layer on top, since those are the modes meant to
 keep an aircraft near a target for an extended period, where "just stop
 and hold forever" is a worse outcome than trying to recover, then a
 graceful fallback:
@@ -324,8 +323,8 @@ graceful fallback:
   Both are terminal until the operator explicitly restarts or leaves the
   mode - this is intentional: an approach-test boundary event is
   significant enough that it should require a conscious operator decision
-  about what happens next, not silently clear itself (contrast with
-  Dronie/Parabola smart shots below, which *do* self-clear since they have
+  about what happens next, not silently clear itself (contrast with a
+  finished Grid Search sweep below, which *does* self-clear since it has
   no comparable safety significance once finished).
 - **Geofence signal wiring**: `companion/main.py` now reads
   `self.mavlink.telemetry.fence_breached` instead of a hardcoded `False`.
@@ -357,13 +356,14 @@ graceful fallback:
   bench test of the full chain has been run yet (docs plan M9's own
   required next step).
 
-## One-shot smart shots (Dronie/Parabola) - a deliberately different design
+## Grid Search finishing - a deliberately different design from Approach-Test
 
-- Unlike the above, a finished smart shot has no residual safety
-  significance, so `companion/main.py` resets `requested_mode` to `IDLE`
-  the moment `SmartShotController` reports `FINISHED`, and the Android app
+- Unlike the above, a Grid Search sweep that finishes on its own (every
+  waypoint visited) has no residual safety significance, so
+  `companion/main.py` resets `requested_mode` to `IDLE` the moment
+  `GridSearchController.phase` reports `FINISHED`, and the Android app
   mirrors this by reverting its own mode selector - see
-  `test_smart_shot_command.py::test_smart_shot_finishes_after_its_duration`.
+  `test_grid_search_orchestrator.py::test_grid_search_finishing_drops_back_to_idle`.
   This is called out here specifically so it isn't mistaken for an
   inconsistency with Approach-Test's deliberately-sticky behavior above -
   it's a considered difference, not an oversight.

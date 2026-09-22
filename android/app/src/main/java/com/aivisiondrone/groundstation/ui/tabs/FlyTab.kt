@@ -77,10 +77,10 @@ private const val ASSUMED_VIDEO_WIDTH = 1280.0
 private const val ASSUMED_VIDEO_HEIGHT = 720.0
 
 // Continuous guidance modes worth offering a "Resume" tap for after an RC
-// override/FC-not-Guided rejection - Dronie/Parabola/Grid Search already
-// revert their own button to unselected on rejection (see MainViewModel's
-// ONE_SHOT_MODES handling) rather than staying selected waiting to resume,
-// and Idle/Tracking never had guidance running in the first place.
+// override/FC-not-Guided rejection - Grid Search already reverts its own
+// button to unselected on rejection (see MainViewModel's ONE_SHOT_MODES
+// handling) rather than staying selected waiting to resume, and
+// Idle/Tracking never had guidance running in the first place.
 private val RESUMABLE_GUIDANCE_MODES = setOf(DroneMode.FOLLOWING, DroneMode.ORBITING, DroneMode.APPROACHING)
 
 /**
@@ -472,9 +472,9 @@ fun FlyTab(
                     // to take control again in the app." Only offered while
                     // a continuous guidance mode is actually selected -
                     // there's nothing meaningful to resume for Idle/
-                    // Tracking, and a one-shot Dronie/Parabola/Grid Search
-                    // already reverts its own button on rejection rather
-                    // than staying "selected" waiting to be resumed.
+                    // Tracking, and one-shot Grid Search already reverts
+                    // its own button on rejection rather than staying
+                    // "selected" waiting to be resumed.
                     onResume = if (mode in RESUMABLE_GUIDANCE_MODES) {
                         { viewModel.resumeGuidance() }
                     } else {

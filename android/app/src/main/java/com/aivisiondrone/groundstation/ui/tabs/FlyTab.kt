@@ -76,6 +76,13 @@ import org.webrtc.SurfaceViewRenderer
 private const val ASSUMED_VIDEO_WIDTH = 1280.0
 private const val ASSUMED_VIDEO_HEIGHT = 720.0
 
+// Continuous guidance modes worth offering a "Resume" tap for after an RC
+// override/FC-not-Guided rejection - Dronie/Parabola/Grid Search already
+// revert their own button to unselected on rejection (see MainViewModel's
+// ONE_SHOT_MODES handling) rather than staying selected waiting to resume,
+// and Idle/Tracking never had guidance running in the first place.
+private val RESUMABLE_GUIDANCE_MODES = setOf(DroneMode.FOLLOWING, DroneMode.ORBITING, DroneMode.APPROACHING)
+
 /**
  * The main flight view: live video, all detections, the tracked target
  * (with an orbit ring when Orbit mode is active), tap/drag selection, and
@@ -446,7 +453,21 @@ fun FlyTab(
                 .padding(top = 80.dp)
         ) {
             tracking.guidanceReason?.let { reason ->
-                GuidanceWarningBanner(reason = reason)
+                GuidanceWarningBanner(
+                    reason = reason,
+                    // A field request: "when FC override happens, add a way
+                    // to take control again in the app." Only offered while
+                    // a continuous guidance mode is actually selected -
+                    // there's nothing meaningful to resume for Idle/
+                    // Tracking, and a one-shot Dronie/Parabola/Grid Search
+                    // already reverts its own button on rejection rather
+                    // than staying "selected" waiting to be resumed.
+                    onResume = if (mode in RESUMABLE_GUIDANCE_MODES) {
+                        { viewModel.resumeGuidance() }
+                    } else {
+                        null
+                    },
+                )
             }
         }
 

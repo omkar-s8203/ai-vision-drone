@@ -408,6 +408,24 @@ class MainViewModel : ViewModel() {
         )
     }
 
+    /** A field request: "when FC override happens, there should be a
+     * feature to take control again in the app." The Pi's own
+     * requested_mode is never actually cleared by rc_override or
+     * fc_not_in_ai_mode (companion/main.py only ever resets it on an
+     * explicit Abort, a finished one-shot, or a recovery outcome) - the
+     * Safety Supervisor already re-allows the SAME requested guidance mode
+     * completely on its own, the instant the pilot's override genuinely
+     * clears (sticks back in the deadband, or the transmitter switched
+     * back to GUIDED) - this can never bypass that real gate, since the Pi
+     * re-evaluates it fresh every single frame regardless of what the app
+     * sends. This just resends the currently-selected mode/parameters so
+     * the operator has a deliberate, visible action to take instead of
+     * silently waiting and hoping - see GuidanceWarningBanner's "Resume"
+     * button (FlyTab.kt), the only place this is called from. */
+    fun resumeGuidance() {
+        setMode(_mode.value)
+    }
+
     /** Chooses an action from the quick action sheet after a tap-select -
      * thin wrapper over setMode() that also closes the sheet. */
     fun chooseTargetAction(newMode: DroneMode) {

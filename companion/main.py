@@ -22,6 +22,7 @@ from companion.comms.video_recorder import VideoRecorder
 from companion.comms.ws_server import GroundStationLink
 from companion.config.loader import load_yaml
 from companion.guidance.approach_test import ApproachInputs, ApproachTestController
+from companion.guidance.auto_takeoff import AutoTakeoffController
 from companion.guidance.distance import CameraIntrinsics, DistanceEstimator
 from companion.guidance.follow import FollowController
 from companion.guidance.geo import bearing_deg, haversine_distance_m
@@ -104,6 +105,7 @@ class CompanionOrchestrator:
         appearance_memory: Optional[AppearanceMemory] = None,
         recovery_controller: Optional[TargetRecoveryController] = None,
         grid_search_controller: Optional[GridSearchController] = None,
+        auto_takeoff_controller: Optional[AutoTakeoffController] = None,
         reacquire_timeout_s: float = 2.0,
         min_obstacle_distance_m: float = 2.0,
     ) -> None:
@@ -117,6 +119,7 @@ class CompanionOrchestrator:
         self.appearance = appearance_memory or AppearanceMemory(**load_yaml("reidentification.yaml"))
         self.recovery = recovery_controller or TargetRecoveryController(load_yaml("target_recovery.yaml"))
         self.grid_search = grid_search_controller or GridSearchController(load_yaml("grid_search_limits.yaml"))
+        self.auto_takeoff = auto_takeoff_controller or AutoTakeoffController(load_yaml("auto_takeoff_limits.yaml"))
         self.min_obstacle_distance_m = min_obstacle_distance_m
         self.mavlink = mavlink
         self.rc_monitor = rc_monitor
@@ -232,6 +235,23 @@ class CompanionOrchestrator:
             # unrelated later modes, until an explicit abort() (which does
             # call reset()) happened.
             self.grid_search.reset()
+        # A field request: "Arm & Follow should gain height, then start
+        # following" - arming and immediately engaging Follow used to try
+        # to fly horizontally toward the target while still on the ground.
+        # The app opts into this per mode_command via `auto_takeoff: true`
+        # (currently only sent by the "Arm & Follow" quick action);
+        # AutoTakeoffController sequences WHEN it's safe to let the real
+        # guidance controller start computing setpoints - see
+        # process_frame(). Only started on a fresh entry into the mode
+        # (mirrors the Follow/Orbit PID-reset checks above), and reset if
+        # the operator switches to something else mid-sequence, since a
+        # takeoff planned for one mode doesn't carry over to whatever they
+        # picked instead.
+        if mode != self.requested_mode:
+            if bool(payload.get("auto_takeoff")) and mode in MODES_REQUIRING_GUIDED:
+                self.auto_takeoff.start()
+            elif self.auto_takeoff.is_active:
+                self.auto_takeoff.reset()
         self.requested_mode = mode
         if mode in MODES_REQUIRING_GUIDED:
             # A field-reported UX gap found during real FLTMODE_CH testing:
@@ -294,6 +314,7 @@ class CompanionOrchestrator:
         self.requested_mode = SupervisorState.IDLE
         self.approach.stop()
         self.grid_search.reset()
+        self.auto_takeoff.reset()
         self.state_machine.stop()
         self.appearance.forget()
         self.recovery.cancel()
@@ -596,6 +617,13 @@ class CompanionOrchestrator:
             obstacle_class_name=obstacle_alert.class_name if obstacle_alert else None,
         )
 
+        # Moved up from just before the guidance dispatch below - needed
+        # here now too, since the auto-takeoff sequencing check right after
+        # this also needs a real dt, and can affect effective_requested_state
+        # (on a timeout) before the Supervisor ever evaluates it.
+        dt = 0.0 if self._last_frame_ts is None else max(0.0, frame.ts - self._last_frame_ts)
+        self._last_frame_ts = frame.ts
+
         effective_requested_state = self.requested_mode
         if recovery_result.phase == RecoveryPhase.SEARCHING:
             effective_requested_state = SupervisorState.SEARCHING
@@ -639,6 +667,42 @@ class CompanionOrchestrator:
         elif recovery_result.phase == RecoveryPhase.AWAITING_LAND_CONFIRMATION:
             effective_requested_state = SupervisorState.IDLE  # still holding - request already sent, don't resend
 
+        # Auto-takeoff sequencing (see companion/guidance/auto_takeoff.py's
+        # own docstring for the field-reported gap this closes): while
+        # active, real guidance must not compute a setpoint yet regardless
+        # of what the Supervisor would otherwise allow - ArduCopter is
+        # climbing to altitude on its own via MAV_CMD_NAV_TAKEOFF, no
+        # setpoints needed or wanted from this companion during that climb.
+        auto_takeoff_holding = False
+        if self.auto_takeoff.is_active:
+            action = self.auto_takeoff.update(
+                armed=self.mavlink.telemetry.armed,
+                fc_mode=self.mavlink.telemetry.fc_mode,
+                current_alt_m=self.mavlink.telemetry.alt_m,
+                dt=dt,
+            )
+            if action == "send_takeoff":
+                self.mavlink.takeoff(self.auto_takeoff.target_altitude_m)
+                self.recorder.record("auto_takeoff_sent", altitude_m=self.auto_takeoff.target_altitude_m)
+                auto_takeoff_holding = True
+            elif action == "hold":
+                auto_takeoff_holding = True
+            elif action == "timed_out":
+                # Never leave a guidance mode "requested" with no way to
+                # ever actually start - fail toward idle, the same as a
+                # rejected grid-search start, rather than silently holding
+                # forever with nothing observable happening.
+                log.error(
+                    "Auto-takeoff timed out before reaching %.1fm - aborting to idle",
+                    self.auto_takeoff.target_altitude_m,
+                )
+                self.recorder.record("auto_takeoff_timed_out", altitude_m=self.auto_takeoff.target_altitude_m)
+                self.requested_mode = SupervisorState.IDLE
+                effective_requested_state = SupervisorState.IDLE
+            # action == "ready": falls through - real guidance starts this
+            # same frame, decision.state below will already reflect
+            # effective_requested_state unaffected by auto-takeoff.
+
         decision = self.supervisor.evaluate(
             SupervisorInputs(
                 fc_mode=self.mavlink.telemetry.fc_mode,
@@ -651,11 +715,10 @@ class CompanionOrchestrator:
             )
         )
 
-        dt = 0.0 if self._last_frame_ts is None else max(0.0, frame.ts - self._last_frame_ts)
-        self._last_frame_ts = frame.ts
-
         command = None
-        if decision.state == SupervisorState.SEARCHING:
+        if auto_takeoff_holding:
+            pass  # withhold real guidance this frame - see the check above
+        elif decision.state == SupervisorState.SEARCHING:
             command = recovery_result.command
         elif decision.state == SupervisorState.FOLLOWING and self.state_machine.target is not None:
             command = self.follow.compute(
@@ -1173,6 +1236,7 @@ def run_startup_health_check(mode: str) -> None:
         "camera_calibration.yaml",
         "reidentification.yaml",
         "target_recovery.yaml",
+        "auto_takeoff_limits.yaml",
     ):
         _load(file_name)
 

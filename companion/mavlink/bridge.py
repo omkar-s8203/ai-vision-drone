@@ -396,6 +396,29 @@ class MavlinkBridge:
             0, 0, 0, 0, 0, 0, 0,
         )
 
+    def takeoff(self, altitude_m: float) -> None:
+        """Sends MAV_CMD_NAV_TAKEOFF - the standard ArduCopter GUIDED-mode
+        takeoff command, the same one a real GCS's "Takeoff" button sends
+        (confirmed against pymavlink's own bundled command definitions -
+        param7 is altitude relative to home, the rest are unused for a
+        plain vertical takeoff). Once accepted, ArduCopter climbs to
+        `altitude_m` autonomously using its own internal controller - this
+        companion does not send (and must not send) velocity setpoints
+        during that climb; it only needs to send this once and then wait,
+        watching `telemetry.alt_m`, before starting to send its own
+        guidance setpoints (see companion/guidance/auto_takeoff.py).
+        ArduCopter rejects this command outright unless already armed and
+        in GUIDED mode - real, documented behavior, not something this
+        bridge needs to separately guard against."""
+        assert self._conn is not None, "call connect() first"
+        self._conn.mav.command_long_send(
+            self._conn.target_system,
+            self._conn.target_component,
+            mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
+            0,
+            0, 0, 0, 0, 0, 0, altitude_m,
+        )
+
     def set_mode(self, mode_name: str) -> bool:
         """Sends SET_MODE for a named ArduCopter flight mode. Returns False
         (a no-op) for an unrecognized name rather than guessing."""

@@ -402,6 +402,56 @@ graceful fallback:
   bench test of the full chain has been run yet (docs plan M9's own
   required next step).
 
+## Auto-takeoff sequencing (Arm & Follow gain-height-first gap)
+
+- **Field-reported gap**: the "Arm & Follow" quick action used to arm and
+  immediately engage Follow, which computes a horizontal approach-vector
+  setpoint toward the tracked target with the aircraft still sitting on
+  the ground - no vertical safety margin at all.
+- **Mechanism**: `AutoTakeoffController` (`companion/guidance/auto_takeoff.py`)
+  is a one-shot sequencer, not a guidance controller - it never computes a
+  velocity command itself. `_on_mode_command()` starts it only when the app
+  opts in via `auto_takeoff: true` on the mode_command (currently only
+  "Arm & Follow"). While active, it holds `process_frame()`'s real
+  guidance dispatch to a no-op (`command` stays `None` regardless of what
+  `SafetySupervisor.evaluate()` would otherwise allow) until: (1) armed and
+  in GUIDED - then it sends one `MAV_CMD_NAV_TAKEOFF` for
+  `auto_takeoff_limits.yaml`'s `altitude_m`, the same standard
+  ArduCopter GUIDED-mode takeoff a real GCS's "Takeoff" button sends, and
+  ArduCopter itself climbs autonomously from there, no setpoints needed
+  from this companion during the climb; (2) `telemetry.alt_m` reaches that
+  altitude within `altitude_tolerance_m` - only then does the real
+  requested guidance controller (Follow, currently the only mode that
+  requests this) start computing and sending setpoints, same frame.
+- **Fail-safe on a stuck climb**: if altitude is never reached within
+  `timeout_s` (default 30s - e.g. a rejected `NAV_TAKEOFF` the app never
+  saw, or a pre-arm check silently holding it on the ground), the
+  sequence gives up and falls back `requested_mode` to `IDLE` rather than
+  holding a guidance mode that never actually starts guiding, mirroring
+  the rejected-grid-search-start failure mode.
+- **Interaction with existing gates**: unaffected by and orthogonal to
+  RC override, the target-lost/obstacle/comms-lost gates, and the
+  auto-GUIDED-request feature above - those all still apply normally
+  once auto-takeoff hands off to real guidance; a mode switch away or an
+  explicit Abort mid-sequence calls `reset()` so a takeoff planned for one
+  mode never silently carries over to whatever was picked instead.
+- **Android-side correctness note**: `supervisor_state` on `tracking_update`
+  reaches `"FOLLOWING"` immediately (the Supervisor itself has no reason to
+  refuse it), but `guidance_sent` stays `false` for the whole climb - the
+  app's `emitTrackingAlerts()` was fixed to gate the "Following target"
+  voice/tone alert on `guidance_sent` catching up, not on `supervisor_state`
+  alone, so it no longer fires while the aircraft is still climbing
+  vertically with no horizontal guidance active yet.
+- **Tests**: `test_auto_takeoff.py` (the state machine in isolation - every
+  phase transition, the `update()` return-value contract, the timeout path
+  from both `WAITING_TO_ARM` and `CLIMBING`, `reset()`/`start()` behavior)
+  and `test_auto_takeoff_orchestrator.py` (the real wired sequence through
+  `process_frame()`: held with no takeoff sent while unarmed, takeoff sent
+  exactly once on the armed+GUIDED edge, held through the climb, real
+  Follow guidance starting the same frame altitude is reached, the
+  timeout-to-idle path, and reset-on-mode-switch/reset-on-abort) - all
+  passing.
+
 ## Grid Search finishing - a deliberately different design from Approach-Test
 
 - Unlike the above, a Grid Search sweep that finishes on its own (every
@@ -420,7 +470,7 @@ Every mechanism above that has a corresponding `SafetySupervisor` gate is
 covered by at least one test that independently trips *only that
 condition* and asserts guidance is denied - this is what "fault injection"
 means in this codebase's test suite, not a separate framework. As of this
-writing: 207 companion tests passing
+writing: 401 companion tests passing
 (`.venv/Scripts/python -m pytest -q`), including a real end-to-end test
 (`test_integration_websocket.py`) that drives the actual JSON wire
 protocol over a real WebSocket and real MAVLink link, and real-MAVLink

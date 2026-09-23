@@ -394,7 +394,7 @@ class MainViewModel : ViewModel() {
         abort()
     }
 
-    fun setMode(newMode: DroneMode) {
+    fun setMode(newMode: DroneMode, autoTakeoff: Boolean = false) {
         _mode.value = newMode
         val separation = if (newMode == DroneMode.FOLLOWING) _followSeparationM.value.toDouble() else null
         val followAltitude = if (newMode == DroneMode.FOLLOWING) _followAltitudeM.value.toDouble() else null
@@ -404,7 +404,7 @@ class MainViewModel : ViewModel() {
         val orbitMaxSpeed = if (newMode == DroneMode.ORBITING) _orbitMaxSpeedMps.value.toDouble() else null
         client.sendModeCommand(
             newMode.wireValue, separation, followAltitude, orbitRadius, orbitAltitude,
-            followMaxSpeed, orbitMaxSpeed,
+            followMaxSpeed, orbitMaxSpeed, autoTakeoff = autoTakeoff,
         )
     }
 
@@ -441,11 +441,19 @@ class MainViewModel : ViewModel() {
      * flow (FlightControlDock.kt), never skipped just because this is a
      * combined action. setMode(FOLLOWING) still requests GUIDED itself
      * (companion/main.py's _on_mode_command) once armed, so this one tap
-     * now does everything: arm, engage GUIDED, and start following. */
+     * now does everything: arm, engage GUIDED, and start following.
+     *
+     * A follow-up field request: "should gain height than start follows" -
+     * arming and immediately engaging Follow used to try to fly horizontally
+     * toward the target while still sitting on the ground. autoTakeoff=true
+     * tells the Pi's AutoTakeoffController to climb to a safe altitude first
+     * and only let real Follow guidance start once it gets there
+     * (companion/guidance/auto_takeoff.py) - this app has no further part in
+     * that sequencing, it only needs to ask for it once, here. */
     fun armAndFollow() {
         _showTargetActionSheet.value = false
         setArmed(true)
-        setMode(DroneMode.FOLLOWING)
+        setMode(DroneMode.FOLLOWING, autoTakeoff = true)
     }
 
     fun setFollowSeparation(meters: Float) {
@@ -772,7 +780,17 @@ class MainViewModel : ViewModel() {
         val currentSupervisor = current.supervisorState
         if (currentSupervisor != prevSupervisor) {
             when (currentSupervisor) {
-                "FOLLOWING" -> _alertEvents.tryEmit(AlertEvent.FOLLOWING_ENGAGED)
+                // Arm & Follow's auto-takeoff climb (companion/guidance/
+                // auto_takeoff.py) reaches supervisorState == "FOLLOWING"
+                // immediately - the Supervisor allows it - but the Pi
+                // withholds the actual velocity setpoint (guidanceSent ==
+                // false) until the climb completes. Firing "Following
+                // target" while still climbing vertically with no
+                // horizontal guidance yet would be a false alert; the
+                // real one fires below once guidanceSent catches up.
+                "FOLLOWING" -> if (current.guidanceSent) {
+                    _alertEvents.tryEmit(AlertEvent.FOLLOWING_ENGAGED)
+                }
                 "ORBITING" -> _alertEvents.tryEmit(AlertEvent.ORBITING_ENGAGED)
                 "SEARCHING" -> _alertEvents.tryEmit(AlertEvent.SEARCHING_STARTED)
                 "GRID_SEARCH" -> _alertEvents.tryEmit(AlertEvent.GRID_SEARCH_STARTED)
@@ -780,6 +798,12 @@ class MainViewModel : ViewModel() {
                     _alertEvents.tryEmit(AlertEvent.GUIDANCE_STOPPED)
                 }
             }
+        } else if (currentSupervisor == "FOLLOWING" && current.guidanceSent && !previous.guidanceSent) {
+            // The deferred edge from above: supervisorState was already
+            // "FOLLOWING" while auto-takeoff held real guidance back, so
+            // the state-change branch never fired. This is the frame the
+            // climb actually finished and Follow started computing setpoints.
+            _alertEvents.tryEmit(AlertEvent.FOLLOWING_ENGAGED)
         }
     }
 

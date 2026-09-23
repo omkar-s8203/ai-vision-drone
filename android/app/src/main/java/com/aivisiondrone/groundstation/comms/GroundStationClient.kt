@@ -119,6 +119,7 @@ class GroundStationClient(private val client: OkHttpClient = OkHttpClient()) {
         gridSearchWidthM: Double? = null,
         gridSearchHeightM: Double? = null,
         gridSearchHeadingDeg: Double? = null,
+        autoTakeoff: Boolean = false,
     ) {
         val payload = JSONObject().put("mode", mode)
         if (followSeparationM != null) payload.put("follow_separation_m", followSeparationM)
@@ -134,6 +135,12 @@ class GroundStationClient(private val client: OkHttpClient = OkHttpClient()) {
         if (gridSearchWidthM != null) payload.put("grid_search_width_m", gridSearchWidthM)
         if (gridSearchHeightM != null) payload.put("grid_search_height_m", gridSearchHeightM)
         if (gridSearchHeadingDeg != null) payload.put("grid_search_heading_deg", gridSearchHeadingDeg)
+        // "Arm & Follow should gain height, then start following" - tells
+        // the Pi to hold off on real Follow guidance until AutoTakeoffController
+        // finishes climbing to a safe altitude (companion/guidance/auto_takeoff.py).
+        // Only ever true from armAndFollow(); a plain mode switch once
+        // already airborne has no reason to set this.
+        if (autoTakeoff) payload.put("auto_takeoff", true)
         send(MessageType.MODE_COMMAND, payload)
     }
 

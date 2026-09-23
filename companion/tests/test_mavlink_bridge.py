@@ -282,3 +282,18 @@ def test_rapid_arm_then_disarm_before_either_ack_arrives_is_not_misattributed():
         ))
         assert bridge.pending_arm_ack == {"armed_requested": False, "accepted": False}
         assert bridge._pending_arm_intents == []
+
+
+def test_takeoff_sends_nav_takeoff_with_altitude_in_param7():
+    with patch("companion.mavlink.bridge.mavutil") as mock_mavutil:
+        bridge = MavlinkBridge("udpin:127.0.0.1:14550")
+        bridge.connect()
+        conn = mock_mavutil.mavlink_connection.return_value
+        conn.target_system = 1
+        conn.target_component = 1
+
+        bridge.takeoff(10.0)
+
+        conn.mav.command_long_send.assert_called_once_with(
+            1, 1, mock_mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 0, 0, 0, 0, 0, 10.0
+        )

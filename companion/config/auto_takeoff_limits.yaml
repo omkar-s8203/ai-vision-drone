@@ -1,0 +1,24 @@
+# Auto-takeoff sequencing for a mode freshly engaged from the ground (the
+# app's "Arm & Follow" quick action - a field-reported gap: arming and
+# immediately engaging Follow tried to fly horizontally toward the target
+# while still on the ground). MAV_CMD_NAV_TAKEOFF is a one-shot, FC-native
+# command - ArduCopter climbs to altitude_m autonomously once accepted, no
+# continuous setpoints needed from this companion during the climb itself.
+
+# How high to climb before letting Follow/Orbit/Approach start sending
+# real guidance setpoints. A generic "safe cruise height" default, not
+# tied to Follow's own (optional, usually unset) altitude-hold slider -
+# that slider means something different (a fixed altitude-hold target
+# once already following) and is often left null (pixel-framing instead).
+altitude_m: 10.0
+
+# A waypoint/altitude counts as "reached" within this margin - too tight
+# risks never triggering on a barometer that settles slightly under
+# target; too loose starts Follow noticeably below the intended height.
+altitude_tolerance_m: 1.0
+
+# If the aircraft hasn't reached altitude_m (within tolerance) within this
+# many seconds of the takeoff command being sent, give up rather than
+# waiting forever - falls back to idle rather than silently holding a
+# guidance mode that never actually starts guiding.
+timeout_s: 30.0

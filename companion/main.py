@@ -420,6 +420,21 @@ class CompanionOrchestrator:
         for a single frame. Split out from `_perception_loop` so tests can
         drive it deterministically without a real event loop."""
         self.watchdog.beat("camera")
+        if self.mavlink.pending_arm_ack is not None:
+            # A real, previously-documented gap: an arm/disarm request
+            # rejected by the FC's own pre-arm checks used to be completely
+            # invisible to the operator - see MavlinkBridge.arm()'s own
+            # docstring. Relayed here (not sent straight from
+            # _on_mavlink_message, which is synchronous) since process_frame
+            # already runs every frame and is where every other one-shot
+            # event (land_confirmation_request) is sent from.
+            ack = self.mavlink.pending_arm_ack
+            self.mavlink.pending_arm_ack = None
+            await self.link.send_arm_command_result(ack)
+            if not ack["accepted"]:
+                self.recorder.record(
+                    "arm_command_rejected", armed_requested=ack["armed_requested"]
+                )
         self._recent_frame_ts.append(time.monotonic())
         if len(self._recent_frame_ts) > 30:
             self._recent_frame_ts.pop(0)

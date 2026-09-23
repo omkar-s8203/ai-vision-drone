@@ -72,6 +72,8 @@ class AlertSoundPlayer(context: Context) {
         AlertEvent.MODE_REJECTED_NO_TARGET -> ToneGenerator.TONE_SUP_ERROR
         AlertEvent.MODE_REJECTED_FC_NOT_GUIDED -> ToneGenerator.TONE_SUP_ERROR
         AlertEvent.MODE_REJECTED -> ToneGenerator.TONE_SUP_ERROR
+        AlertEvent.ARM_REJECTED -> ToneGenerator.TONE_SUP_ERROR
+        AlertEvent.DISARM_REJECTED -> ToneGenerator.TONE_SUP_ERROR
     }
 
     companion object {

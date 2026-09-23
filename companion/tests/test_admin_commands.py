@@ -1,5 +1,5 @@
 from contextlib import contextmanager
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -153,6 +153,35 @@ def test_arm_command_ignores_a_stray_force_flag(tmp_path):
         conn.mav.command_long_send.assert_called_once_with(
             1, 1, mock_mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0, 1, 0, 0, 0, 0, 0, 0
         )
+        recorder.close()
+
+
+@pytest.mark.asyncio
+async def test_process_frame_relays_a_rejected_arm_result_to_the_app(tmp_path):
+    """A real, previously-documented gap: an arm request rejected by the
+    FC's own pre-arm checks used to be completely invisible - the operator
+    just saw the ARM button do nothing. process_frame() must relay
+    MavlinkBridge's one-shot pending_arm_ack mailbox as a real
+    arm_command_result message, exactly once, and clear it."""
+    with _build_orchestrator(tmp_path) as (orchestrator, recorder, conn, mock_mavutil):
+        orchestrator._on_arm_command({"armed": True})
+        ack = MagicMock()
+        ack.get_type.return_value = "COMMAND_ACK"
+        ack.command = mock_mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM
+        ack.result = mock_mavutil.mavlink.MAV_RESULT_DENIED
+        orchestrator.mavlink._handle_message(ack)
+        transport = orchestrator.link.transport
+
+        await orchestrator.process_frame(Frame(ts=0.0, width=64, height=48, raw_detection_output=[]))
+
+        results = _sent_envelopes_of_type(transport, "arm_command_result")
+        assert len(results) == 1
+        assert results[0].payload == {"armed_requested": True, "accepted": False}
+        assert orchestrator.mavlink.pending_arm_ack is None
+
+        # A second frame with nothing new pending must not resend it.
+        await orchestrator.process_frame(Frame(ts=0.1, width=64, height=48, raw_detection_output=[]))
+        assert len(_sent_envelopes_of_type(transport, "arm_command_result")) == 1
         recorder.close()
 
 

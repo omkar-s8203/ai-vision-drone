@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from companion.mavlink.bridge import MavlinkBridge
 
@@ -87,8 +87,9 @@ def test_force_disarm_sends_component_arm_disarm_with_documented_force_value():
     (param2=0) disarm outright if its own land-detector believes the
     aircraft is flying - a bench test with props spinning can trip a false
     positive there, silently ignoring every normal disarm request (this
-    bridge never listened for COMMAND_ACK, so the rejection was otherwise
-    invisible - reported live as "the app's DISARM button does nothing").
+    bridge used to never listen for COMMAND_ACK, so the rejection was
+    otherwise invisible - reported live as "the app's DISARM button does
+    nothing"; see the COMMAND_ACK tests below for the fix).
     force=True must send MAV_CMD_COMPONENT_ARM_DISARM's own documented
     param2=21196 "force" value (confirmed via pymavlink's bundled command
     definitions, not guessed - see FORCE_ARM_DISARM_MAGIC_NUMBER)."""
@@ -145,3 +146,104 @@ def test_set_mode_returns_false_for_unknown_mode():
         bridge.connect()
 
         assert bridge.set_mode("NOT_A_REAL_MODE") is False
+
+
+def _fake_command_ack(command, result) -> MagicMock:
+    msg = MagicMock()
+    msg.get_type.return_value = "COMMAND_ACK"
+    msg.command = command
+    msg.result = result
+    return msg
+
+
+def test_arm_accepted_sets_pending_arm_ack():
+    """A real, previously-documented gap: this bridge never listened for
+    COMMAND_ACK at all, so arm()/disarm() acceptance or rejection was
+    completely invisible to the app."""
+    with patch("companion.mavlink.bridge.mavutil") as mock_mavutil:
+        bridge = MavlinkBridge("udpin:127.0.0.1:14550")
+        bridge.connect()
+        conn = mock_mavutil.mavlink_connection.return_value
+        conn.target_system = 1
+        conn.target_component = 1
+
+        bridge.arm(True)
+        bridge._handle_message(_fake_command_ack(
+            mock_mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+            mock_mavutil.mavlink.MAV_RESULT_ACCEPTED,
+        ))
+
+        assert bridge.pending_arm_ack == {"armed_requested": True, "accepted": True}
+        assert bridge._pending_arm_intent is None  # consumed, not left stale
+
+
+def test_arm_rejected_sets_pending_arm_ack_not_accepted():
+    with patch("companion.mavlink.bridge.mavutil") as mock_mavutil:
+        bridge = MavlinkBridge("udpin:127.0.0.1:14550")
+        bridge.connect()
+        conn = mock_mavutil.mavlink_connection.return_value
+        conn.target_system = 1
+        conn.target_component = 1
+
+        bridge.arm(True)
+        bridge._handle_message(_fake_command_ack(
+            mock_mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+            mock_mavutil.mavlink.MAV_RESULT_DENIED,
+        ))
+
+        assert bridge.pending_arm_ack == {"armed_requested": True, "accepted": False}
+
+
+def test_disarm_rejected_reports_armed_requested_false():
+    """A real field-reported bug this fixes: ArduCopter refusing an
+    unforced disarm while it thinks it's flying used to be completely
+    silent - "the app's DISARM button does nothing"."""
+    with patch("companion.mavlink.bridge.mavutil") as mock_mavutil:
+        bridge = MavlinkBridge("udpin:127.0.0.1:14550")
+        bridge.connect()
+        conn = mock_mavutil.mavlink_connection.return_value
+        conn.target_system = 1
+        conn.target_component = 1
+
+        bridge.arm(False)
+        bridge._handle_message(_fake_command_ack(
+            mock_mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+            mock_mavutil.mavlink.MAV_RESULT_DENIED,
+        ))
+
+        assert bridge.pending_arm_ack == {"armed_requested": False, "accepted": False}
+
+
+def test_command_ack_for_an_unrelated_command_is_ignored():
+    with patch("companion.mavlink.bridge.mavutil") as mock_mavutil:
+        bridge = MavlinkBridge("udpin:127.0.0.1:14550")
+        bridge.connect()
+        conn = mock_mavutil.mavlink_connection.return_value
+        conn.target_system = 1
+        conn.target_component = 1
+
+        bridge._handle_message(_fake_command_ack(
+            mock_mavutil.mavlink.MAV_CMD_GET_HOME_POSITION,
+            mock_mavutil.mavlink.MAV_RESULT_ACCEPTED,
+        ))
+
+        assert bridge.pending_arm_ack is None
+
+
+def test_command_ack_without_a_pending_arm_request_is_ignored():
+    """A stray/duplicate COMMAND_ACK for arm/disarm arriving with no
+    matching request in flight (already consumed, or never made) must not
+    fabricate a result."""
+    with patch("companion.mavlink.bridge.mavutil") as mock_mavutil:
+        bridge = MavlinkBridge("udpin:127.0.0.1:14550")
+        bridge.connect()
+        conn = mock_mavutil.mavlink_connection.return_value
+        conn.target_system = 1
+        conn.target_component = 1
+
+        bridge._handle_message(_fake_command_ack(
+            mock_mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+            mock_mavutil.mavlink.MAV_RESULT_ACCEPTED,
+        ))
+
+        assert bridge.pending_arm_ack is None

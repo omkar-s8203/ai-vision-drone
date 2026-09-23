@@ -486,9 +486,11 @@ fun FlyTab(
 
         if (showTargetActionSheet) {
             TargetActionSheet(
+                armed = telemetry.armed,
                 onTrack = { viewModel.chooseTargetAction(DroneMode.TRACKING) },
                 onFollow = { viewModel.chooseTargetAction(DroneMode.FOLLOWING) },
                 onOrbit = { viewModel.chooseTargetAction(DroneMode.ORBITING) },
+                onArmAndFollow = { viewModel.armAndFollow() },
                 onCancel = { viewModel.cancelTargetSelection() },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)

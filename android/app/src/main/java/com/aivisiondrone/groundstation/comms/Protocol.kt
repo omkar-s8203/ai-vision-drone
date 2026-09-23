@@ -8,6 +8,7 @@ object MessageType {
     const val MODE_COMMAND = "mode_command"
     const val ABORT = "abort"
     const val ARM_COMMAND = "arm_command"
+    const val ARM_COMMAND_RESULT = "arm_command_result"
     const val SET_FLIGHT_MODE = "set_flight_mode"
     const val RECORD_COMMAND = "record_command"
     const val RECORDING_STATE = "recording_state"

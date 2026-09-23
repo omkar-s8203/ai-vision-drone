@@ -11,6 +11,7 @@ class MessageType:
     MODE_COMMAND = "mode_command"
     ABORT = "abort"
     ARM_COMMAND = "arm_command"
+    ARM_COMMAND_RESULT = "arm_command_result"
     SET_FLIGHT_MODE = "set_flight_mode"
     RECORD_COMMAND = "record_command"
     RECORDING_STATE = "recording_state"

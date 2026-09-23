@@ -113,6 +113,9 @@ class GroundStationLink:
     async def send_land_confirmation_request(self, payload: dict) -> None:
         await self._send(MessageType.LAND_CONFIRMATION_REQUEST, payload)
 
+    async def send_arm_command_result(self, payload: dict) -> None:
+        await self._send(MessageType.ARM_COMMAND_RESULT, payload)
+
     async def _send(self, msg_type: str, payload: dict) -> None:
         envelope = make_envelope(msg_type, payload, self._seq.next())
         await self.transport.broadcast(envelope.to_json())

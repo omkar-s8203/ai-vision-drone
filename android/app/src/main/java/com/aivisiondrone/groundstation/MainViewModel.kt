@@ -433,6 +433,21 @@ class MainViewModel : ViewModel() {
         setMode(newMode)
     }
 
+    /** A field request: a single "Arm & Follow" action from the quick
+     * action sheet, instead of arming separately in the Control tab first.
+     * The confirmation dialog (motors will become live) still happens in
+     * the UI layer before this is ever called - see TargetActionSheet.kt -
+     * same as the existing plain Arm control's own confirm-before-arm
+     * flow (FlightControlDock.kt), never skipped just because this is a
+     * combined action. setMode(FOLLOWING) still requests GUIDED itself
+     * (companion/main.py's _on_mode_command) once armed, so this one tap
+     * now does everything: arm, engage GUIDED, and start following. */
+    fun armAndFollow() {
+        _showTargetActionSheet.value = false
+        setArmed(true)
+        setMode(DroneMode.FOLLOWING)
+    }
+
     fun setFollowSeparation(meters: Float) {
         _followSeparationM.value = meters
         // Live-update the Pi's FollowController while Follow is already
@@ -676,6 +691,20 @@ class MainViewModel : ViewModel() {
                 recording = envelope.payload.optBoolean("recording", false),
                 durationS = envelope.payload.optDoubleOrNull("duration_s") ?: 0.0,
             )
+            MessageType.ARM_COMMAND_RESULT -> {
+                // A real, previously-documented gap: an arm/disarm request
+                // refused by the FC's own pre-arm checks used to be
+                // completely invisible - telemetry.armed simply never
+                // flipped, with no explanation. Only the rejected case
+                // gets an alert - acceptance is already visible via
+                // telemetry.armed changing, the same way every other
+                // successful admin command in this app already works.
+                val accepted = envelope.payload.optBoolean("accepted", true)
+                if (!accepted) {
+                    val armedRequested = envelope.payload.optBoolean("armed_requested", true)
+                    _alertEvents.tryEmit(if (armedRequested) AlertEvent.ARM_REJECTED else AlertEvent.DISARM_REJECTED)
+                }
+            }
             MessageType.WEBRTC_ANSWER -> {
                 envelope.payload.optStringOrNull("sdp")?.let { webRtcClient?.onRemoteAnswer(it) }
             }

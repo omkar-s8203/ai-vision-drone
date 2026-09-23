@@ -67,4 +67,19 @@ enum class AlertEvent(val spokenLine: String) {
      * only so a future new rejection reason is never silently swallowed
      * again the way this whole class of bug originally was. */
     MODE_REJECTED("Guidance rejected"),
+
+    /** A real, previously-documented gap ("this bridge doesn't listen for
+     * COMMAND_ACK"): an arm request refused by the FC's own pre-arm checks
+     * used to be completely invisible - the operator just saw the ARM
+     * button do nothing, with `telemetry.armed` simply never flipping.
+     * See MainViewModel's ARM_COMMAND_RESULT handling and
+     * MavlinkBridge.arm()'s docstring (companion/mavlink/bridge.py). */
+    ARM_REJECTED("Arm rejected by flight controller"),
+
+    /** Same gap, the disarm direction - ArduCopter's own documented
+     * behavior refuses an unforced disarm outright while its land-detector
+     * believes the aircraft is flying (a real field-reported bug: "the
+     * app's DISARM button does nothing"). The app's separate "Force
+     * disarm" control is the documented way past this, not a retry. */
+    DISARM_REJECTED("Disarm rejected by flight controller"),
 }

@@ -107,6 +107,23 @@ class MavlinkBridge:
         # right after the first heartbeat reveals the FC's target_system/
         # target_component (see _handle_message).
         self._requested_data_streams = False
+        # A real, previously-documented gap ("this bridge doesn't listen
+        # for COMMAND_ACK"): an arm/disarm request rejected by the FC's own
+        # pre-arm checks used to be completely invisible - the operator
+        # just saw nothing happen. `arm()` sets this to the intended new
+        # armed state right before sending; _handle_message()'s COMMAND_ACK
+        # handling below consumes it (setting it back to None) once the
+        # matching ack for MAV_CMD_COMPONENT_ARM_DISARM arrives, since a
+        # bare COMMAND_ACK carries no armed/disarmed intent of its own to
+        # correlate against.
+        self._pending_arm_intent: Optional[bool] = None
+        # A one-shot mailbox for main.py's process_frame() to pick up and
+        # relay to the app as a real WS message, then clear - not a
+        # persistent TelemetrySnapshot field, so an identical second
+        # rejection in a row is never silently swallowed by simple
+        # equality-based change detection the way a repeating telemetry
+        # field would be.
+        self.pending_arm_ack: Optional[dict] = None
 
     @property
     def is_connected(self) -> bool:
@@ -263,6 +280,26 @@ class MavlinkBridge:
             # integration in this project - see docs/safety-case.md.
             self.telemetry.home_lat = msg.latitude / 1e7
             self.telemetry.home_lon = msg.longitude / 1e7
+        elif msg_type == "COMMAND_ACK":
+            # A real, previously-documented gap: arm()/disarm() sent
+            # MAV_CMD_COMPONENT_ARM_DISARM and never checked whether the FC
+            # actually accepted it - a pre-arm-check failure (or the
+            # documented "refuses disarm while it thinks it's flying" case)
+            # was completely invisible, the operator just saw nothing
+            # happen. COMMAND_ACK carries no armed/disarmed intent of its
+            # own (just `command` and `result`), so `_pending_arm_intent`
+            # (set by arm() right before sending) is what lets this
+            # message be attributed to "the arm I just asked for" vs "the
+            # disarm I just asked for".
+            if (
+                msg.command == mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM
+                and self._pending_arm_intent is not None
+            ):
+                self.pending_arm_ack = {
+                    "armed_requested": self._pending_arm_intent,
+                    "accepted": msg.result == mavutil.mavlink.MAV_RESULT_ACCEPTED,
+                }
+                self._pending_arm_intent = None
 
     def request_data_streams(self, rate_hz: int = 4) -> None:
         """Sends a real REQUEST_DATA_STREAM(req_stream_id=MAV_DATA_STREAM_ALL)
@@ -306,19 +343,24 @@ class MavlinkBridge:
         right default (a stray/errant disarm mid-flight would drop the
         aircraft), but it also means a bench test with props spinning can
         trip a false "is flying" positive and silently ignore every normal
-        disarm request - this bridge doesn't listen for COMMAND_ACK, so
-        that rejection is otherwise invisible. `force=True` sends
-        MAV_CMD_COMPONENT_ARM_DISARM's documented param2=21196 "force" value,
-        which overrides that refusal - reserved for exactly that known
-        false-positive case (or a genuine emergency stop), never the
-        default path. See FlightControlDock.kt's separate "Force disarm"
-        control and its own stronger confirmation dialog."""
+        disarm request. `force=True` sends MAV_CMD_COMPONENT_ARM_DISARM's
+        documented param2=21196 "force" value, which overrides that
+        refusal - reserved for exactly that known false-positive case (or a
+        genuine emergency stop), never the default path. See
+        FlightControlDock.kt's separate "Force disarm" control and its own
+        stronger confirmation dialog. A rejection (this one or a genuine
+        pre-arm-check failure while arming) is no longer invisible - see
+        this method's `_pending_arm_intent`/`pending_arm_ack` and
+        _handle_message()'s COMMAND_ACK handling below, relayed to the app
+        by main.py's process_frame() as a real `arm_command_result`
+        message."""
         assert self._conn is not None, "call connect() first"
         # force only ever applies to disarming - `armed and force` is
         # deliberately not wired to anything, so a caller passing
         # force=True alongside armed=True can never accidentally bypass a
         # pre-arm check.
         apply_force = force and not armed
+        self._pending_arm_intent = armed
         self._conn.mav.command_long_send(
             self._conn.target_system,
             self._conn.target_component,

@@ -94,6 +94,30 @@ mechanism is never silent to the operator.
   `::test_auto_guided_is_a_no_op_when_already_in_guided`).
   The hardware switch above remains the actual non-negotiable guarantee;
   this only closes the gap in the software-only backstop.
+- **A real, more significant field-reported gap, now fixed - the software
+  backstop actually requests LOITER**: ArduCopter's GUIDED mode does not
+  respond to RC stick input for attitude/velocity control at all - that is
+  the entire point of GUIDED, external control only. This means the
+  software backstop's own action up to this point (stopping this Pi's
+  velocity setpoints the moment `rc_override_active` goes true) did *not*
+  actually hand the pilot back a flyable aircraft while `fc_mode` was still
+  `GUIDED` - the FC just held position via GUIDED's own setpoint-timeout
+  behavior, deaf to the sticks, which could look and feel exactly like a
+  working override without one actually having happened. `process_frame()`
+  now also calls `mavlink.set_mode("LOITER")` (a real manual-ish mode that
+  *does* respond to sticks) the moment it sees stick override while
+  `fc_mode == GUIDED` - edge-triggered (once per transition into that
+  state, not every frame, to avoid spamming a mode-change command) and
+  re-checked against `fc_mode == GUIDED` every time, so if the pilot has
+  already moved `FLTMODE_CH` themselves to some other mode, this never
+  touches their own choice. This does not change the hardware switch's own
+  guarantee in any way - it closes a real functional gap in what the
+  *software* backstop actually accomplished when it fired. Unit-tested
+  (`test_admin_commands.py::test_rc_override_while_guided_requests_loiter`,
+  `::test_rc_override_loiter_request_is_edge_triggered_not_spammed`,
+  `::test_rc_override_while_already_out_of_guided_never_requests_loiter`,
+  `::test_no_rc_override_never_requests_loiter`,
+  `::test_rc_override_loiter_request_re_fires_after_override_clears`).
 - **Status**: software backstop implemented and unit/integration tested.
   **The hardware switch itself is not yet configured on the transmitter**
   (`FLTMODE_CH` param) - see root README "What's next" #4. Until that's

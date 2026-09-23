@@ -70,15 +70,16 @@ AI_GUIDANCE_MODE_NAME = "GUIDED"
 # AI_GUIDANCE_MODE_NAME (see companion/safety/supervisor.py's
 # fc_not_in_ai_mode check, which runs for all of these regardless of
 # tracking state) - the modes worth automatically requesting GUIDED for
-# when the operator selects them. TRACKING is deliberately excluded: it's
-# vision-only (no velocity command, never Supervisor-gated), so it never
-# needs GUIDED at all.
-MODES_REQUIRING_GUIDED = (
-    SupervisorState.FOLLOWING,
-    SupervisorState.ORBITING,
-    SupervisorState.APPROACHING,
-    SupervisorState.GRID_SEARCH,
-)
+# when the operator selects them. Derived from MODE_COMMAND_MAP itself
+# (everything except IDLE/TRACKING, which are vision-only/administrative
+# and never Supervisor-gated) rather than a separately hand-maintained
+# list, so a future guidance mode added to MODE_COMMAND_MAP can't silently
+# forget to also request GUIDED - exactly the class of bug this code
+# exists to prevent in the first place.
+MODES_REQUIRING_GUIDED = set(MODE_COMMAND_MAP.values()) - {
+    SupervisorState.IDLE,
+    SupervisorState.TRACKING,
+}
 
 
 class CompanionOrchestrator:
@@ -133,6 +134,7 @@ class CompanionOrchestrator:
         self._recent_frame_ts: list[float] = []
         self._frame_size: Optional[tuple[int, int]] = None  # (width, height) of the latest frame
         self._was_armed = False  # edge-detects the arm transition to request HOME_POSITION once
+        self._was_rc_override_in_guided = False  # edge-detects entering override-while-GUIDED (see process_frame)
 
         self.link.on_target_selected(self._on_target_selected)
         self.link.on_mode_command(self._on_mode_command)
@@ -208,6 +210,18 @@ class CompanionOrchestrator:
                     "dimensions (width_m=%s, height_m=%s)", lat, lon, width_m, height_m,
                 )
                 mode = SupervisorState.IDLE
+                # A code-review audit caught a real gap here: this branch
+                # falls outside the `elif` below (mutually exclusive with
+                # it), so a failed start attempt - not just a successful
+                # one - must also reset any stale state left over from a
+                # PREVIOUS completed sweep. Without this, a sweep that
+                # finished naturally (phase FINISHED) followed by a
+                # rejected restart attempt (e.g. GPS momentarily
+                # unavailable) left the old sweep's stale waypoints/
+                # current_index streaming to the app indefinitely - the
+                # exact bug the `elif` branch's own comment says was fixed,
+                # just missed for this specific path.
+                self.grid_search.reset()
         elif mode != SupervisorState.GRID_SEARCH and self.grid_search.phase != GridSearchPhase.IDLE:
             # Deliberately checked against `phase != IDLE`, not `is_active`
             # (True only while SEARCHING) - a deep-audit gap: a sweep that
@@ -506,6 +520,39 @@ class CompanionOrchestrator:
             distance_m, _source = self.distance_estimator.estimate(det_for_distance, trust_rangefinder=True)
 
         rc_override = self.rc_monitor.is_overriding(self.mavlink.telemetry.rc_channels)
+        # A real, field-reported gap: RcOverrideMonitor's software backstop
+        # (stick deflection beyond a deadband) only ever stopped this Pi
+        # from sending velocity setpoints - it never changed the FC's
+        # actual flight mode. ArduCopter's GUIDED mode does not respond to
+        # RC stick input for attitude/velocity control at all (that is the
+        # entire point of GUIDED - external control only); merely halting
+        # this Pi's own setpoints just leaves the FC holding position,
+        # deaf to the pilot's sticks, not actually handing back a flyable
+        # aircraft the way the operator would reasonably expect an
+        # "override" to. The hardware FLTMODE_CH switch remains the real,
+        # unconditional guarantee (it changes mode directly through the RC
+        # receiver, never touching the Pi) - this closes the gap in the
+        # *software* backstop specifically: while still in GUIDED with
+        # stick override detected, request LOITER (a real manual-ish mode
+        # that does respond to sticks) so the pilot actually regains a
+        # flyable aircraft instead of an unresponsive hover. Edge-triggered
+        # (fires once per transition into this state, not every frame) and
+        # gated on fc_mode == GUIDED specifically - if the pilot has
+        # already moved FLTMODE_CH themselves to some other mode, fc_mode
+        # is no longer GUIDED and this never touches their own choice.
+        rc_override_in_guided = rc_override and self.mavlink.telemetry.fc_mode == AI_GUIDANCE_MODE_NAME
+        if rc_override_in_guided and not self._was_rc_override_in_guided:
+            # A code-review audit caught a real gap here: unlike the two
+            # other direct-FC-command call sites in this file (_on_abort's
+            # BRAKE, _on_mode_command's auto-GUIDED request), this one was
+            # missing the `is_connected` guard - MavlinkBridge.set_mode()
+            # asserts on an unconnected bridge, and this is one of the few
+            # places in process_frame() that isn't already wrapped by the
+            # perception loop's own try/except at the time it would fire.
+            if self.mavlink.is_connected:
+                self.mavlink.set_mode("LOITER")
+                self.recorder.record("rc_override_loiter_requested")
+        self._was_rc_override_in_guided = rc_override_in_guided
         comms_alive = self.link.is_connected
         if comms_alive:
             self.watchdog.beat("comms")

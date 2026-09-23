@@ -235,3 +235,41 @@ async def test_a_finished_grid_search_is_reset_on_the_next_mode_switch(tmp_path)
         assert orchestrator.grid_search.phase == GridSearchPhase.IDLE
         assert orchestrator.grid_search.status().waypoints == []
         recorder.close()
+
+
+@pytest.mark.asyncio
+async def test_a_finished_grid_search_is_reset_even_if_the_next_start_attempt_fails(tmp_path):
+    """A code-review audit caught a real gap in the fix above: it only
+    covered switching to a *different* mode after a sweep finished. Trying
+    to start a *new* grid search that then fails validation (missing GPS,
+    or missing width_m/height_m - e.g. a momentary GPS dropout) falls into
+    a separate branch that never called reset() either, leaving the
+    previous sweep's stale FINISHED state (with its old waypoints) still
+    streaming to the app indefinitely."""
+    with _build_orchestrator(tmp_path) as (orchestrator, recorder, conn, transport):
+        orchestrator.mavlink.telemetry.lat = 0.0
+        orchestrator.mavlink.telemetry.lon = 0.0
+        orchestrator.mavlink.telemetry.heading_deg = 0.0
+        orchestrator._on_mode_command(
+            {"mode": "grid_search", "grid_search_width_m": 10.0, "grid_search_height_m": 1.0}
+        )
+        _ready_for_guidance(orchestrator)
+        waypoints = orchestrator.grid_search.status().waypoints
+        for lat, lon in waypoints:
+            orchestrator.mavlink.telemetry.lat = lat
+            orchestrator.mavlink.telemetry.lon = lon
+            _ready_for_guidance(orchestrator)
+            await orchestrator.process_frame(Frame(ts=0.0, width=1280, height=720, raw_detection_output=[]))
+        assert orchestrator.grid_search.phase == GridSearchPhase.FINISHED
+
+        # Simulate a momentary GPS dropout on the next start attempt.
+        orchestrator.mavlink.telemetry.lat = None
+        orchestrator.mavlink.telemetry.lon = None
+        orchestrator._on_mode_command(
+            {"mode": "grid_search", "grid_search_width_m": 60.0, "grid_search_height_m": 20.0}
+        )
+
+        assert orchestrator.grid_search.phase == GridSearchPhase.IDLE
+        assert orchestrator.grid_search.status().waypoints == []
+        assert orchestrator.requested_mode == SupervisorState.IDLE
+        recorder.close()

@@ -185,6 +185,87 @@ async def test_process_frame_relays_a_rejected_arm_result_to_the_app(tmp_path):
         recorder.close()
 
 
+@pytest.mark.asyncio
+async def test_rc_override_while_guided_requests_loiter(tmp_path):
+    """A real, field-reported gap: ArduCopter's GUIDED mode does not
+    respond to RC stick input at all (the entire point of GUIDED is
+    external control) - stopping this Pi's own setpoints, the existing
+    software-backstop behavior, just left the FC holding position, deaf to
+    the pilot's sticks, not actually handing back a flyable aircraft.
+    Detecting stick override while still in GUIDED must also request a
+    real mode change to LOITER, which does respond to sticks."""
+    with _build_orchestrator(tmp_path) as (orchestrator, recorder, conn, mock_mavutil):
+        orchestrator.mavlink.telemetry.fc_mode = "GUIDED"
+        orchestrator.mavlink.telemetry.rc_channels = {1: 2000, 2: 1500, 3: 1500, 4: 1500}
+
+        await orchestrator.process_frame(Frame(ts=0.0, width=64, height=48, raw_detection_output=[]))
+
+        conn.mav.set_mode_send.assert_called_once_with(1, 1, 5)  # LOITER = 5
+        recorder.close()
+
+
+@pytest.mark.asyncio
+async def test_rc_override_loiter_request_is_edge_triggered_not_spammed(tmp_path):
+    """Must fire once per transition into override-while-GUIDED, not every
+    single frame for as long as the sticks stay deflected - a real
+    MAVLink-spam risk otherwise."""
+    with _build_orchestrator(tmp_path) as (orchestrator, recorder, conn, mock_mavutil):
+        orchestrator.mavlink.telemetry.fc_mode = "GUIDED"
+        orchestrator.mavlink.telemetry.rc_channels = {1: 2000, 2: 1500, 3: 1500, 4: 1500}
+
+        await orchestrator.process_frame(Frame(ts=0.0, width=64, height=48, raw_detection_output=[]))
+        await orchestrator.process_frame(Frame(ts=0.1, width=64, height=48, raw_detection_output=[]))
+        await orchestrator.process_frame(Frame(ts=0.2, width=64, height=48, raw_detection_output=[]))
+
+        conn.mav.set_mode_send.assert_called_once_with(1, 1, 5)
+        recorder.close()
+
+
+@pytest.mark.asyncio
+async def test_rc_override_while_already_out_of_guided_never_requests_loiter(tmp_path):
+    """If the pilot has already moved FLTMODE_CH themselves to another
+    mode, this must never override their own explicit choice with an
+    unrequested LOITER command."""
+    with _build_orchestrator(tmp_path) as (orchestrator, recorder, conn, mock_mavutil):
+        orchestrator.mavlink.telemetry.fc_mode = "STABILIZE"
+        orchestrator.mavlink.telemetry.rc_channels = {1: 2000, 2: 1500, 3: 1500, 4: 1500}
+
+        await orchestrator.process_frame(Frame(ts=0.0, width=64, height=48, raw_detection_output=[]))
+
+        conn.mav.set_mode_send.assert_not_called()
+        recorder.close()
+
+
+@pytest.mark.asyncio
+async def test_no_rc_override_never_requests_loiter(tmp_path):
+    with _build_orchestrator(tmp_path) as (orchestrator, recorder, conn, mock_mavutil):
+        orchestrator.mavlink.telemetry.fc_mode = "GUIDED"
+        orchestrator.mavlink.telemetry.rc_channels = {1: 1500, 2: 1500, 3: 1500, 4: 1500}
+
+        await orchestrator.process_frame(Frame(ts=0.0, width=64, height=48, raw_detection_output=[]))
+
+        conn.mav.set_mode_send.assert_not_called()
+        recorder.close()
+
+
+@pytest.mark.asyncio
+async def test_rc_override_loiter_request_re_fires_after_override_clears(tmp_path):
+    with _build_orchestrator(tmp_path) as (orchestrator, recorder, conn, mock_mavutil):
+        orchestrator.mavlink.telemetry.fc_mode = "GUIDED"
+
+        orchestrator.mavlink.telemetry.rc_channels = {1: 2000, 2: 1500, 3: 1500, 4: 1500}
+        await orchestrator.process_frame(Frame(ts=0.0, width=64, height=48, raw_detection_output=[]))
+
+        orchestrator.mavlink.telemetry.rc_channels = {1: 1500, 2: 1500, 3: 1500, 4: 1500}
+        await orchestrator.process_frame(Frame(ts=0.1, width=64, height=48, raw_detection_output=[]))
+
+        orchestrator.mavlink.telemetry.rc_channels = {1: 2000, 2: 1500, 3: 1500, 4: 1500}
+        await orchestrator.process_frame(Frame(ts=0.2, width=64, height=48, raw_detection_output=[]))
+
+        assert conn.mav.set_mode_send.call_count == 2
+        recorder.close()
+
+
 def test_abort_commands_brake_to_hold_position(tmp_path):
     """Abort is a deliberate, explicit operator safety action - it must
     actively command an immediate hold (BRAKE), not just stop sending

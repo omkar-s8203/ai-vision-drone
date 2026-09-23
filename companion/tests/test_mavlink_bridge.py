@@ -174,7 +174,7 @@ def test_arm_accepted_sets_pending_arm_ack():
         ))
 
         assert bridge.pending_arm_ack == {"armed_requested": True, "accepted": True}
-        assert bridge._pending_arm_intent is None  # consumed, not left stale
+        assert bridge._pending_arm_intents == []  # consumed, not left stale
 
 
 def test_arm_rejected_sets_pending_arm_ack_not_accepted():
@@ -247,3 +247,38 @@ def test_command_ack_without_a_pending_arm_request_is_ignored():
         ))
 
         assert bridge.pending_arm_ack is None
+
+
+def test_rapid_arm_then_disarm_before_either_ack_arrives_is_not_misattributed():
+    """A real bug a code-review audit caught: a single scalar tracking
+    "the last requested intent" meant a rapid ARM-then-DISARM double-tap
+    (or a slow/lossy link) before the first command's COMMAND_ACK arrived
+    would overwrite the correlation state for the first request - that ACK
+    then got misattributed to the second request, and the real second ACK
+    (if it arrived at all) was silently dropped since the tracking state
+    was already consumed. Both requests are in flight before either ACK
+    arrives; each ACK must resolve to its own request, oldest first,
+    matching the order ArduPilot actually processes and acks them in."""
+    with patch("companion.mavlink.bridge.mavutil") as mock_mavutil:
+        bridge = MavlinkBridge("udpin:127.0.0.1:14550")
+        bridge.connect()
+        conn = mock_mavutil.mavlink_connection.return_value
+        conn.target_system = 1
+        conn.target_component = 1
+
+        bridge.arm(True)  # request 1: arm
+        bridge.arm(False)  # request 2: disarm - sent before request 1's ack arrives
+
+        # The FC acks them in the order it received them (request 1 first).
+        bridge._handle_message(_fake_command_ack(
+            mock_mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+            mock_mavutil.mavlink.MAV_RESULT_ACCEPTED,  # the arm was accepted
+        ))
+        assert bridge.pending_arm_ack == {"armed_requested": True, "accepted": True}
+
+        bridge._handle_message(_fake_command_ack(
+            mock_mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+            mock_mavutil.mavlink.MAV_RESULT_DENIED,  # the disarm was rejected
+        ))
+        assert bridge.pending_arm_ack == {"armed_requested": False, "accepted": False}
+        assert bridge._pending_arm_intents == []

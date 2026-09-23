@@ -110,13 +110,20 @@ class MavlinkBridge:
         # A real, previously-documented gap ("this bridge doesn't listen
         # for COMMAND_ACK"): an arm/disarm request rejected by the FC's own
         # pre-arm checks used to be completely invisible - the operator
-        # just saw nothing happen. `arm()` sets this to the intended new
-        # armed state right before sending; _handle_message()'s COMMAND_ACK
-        # handling below consumes it (setting it back to None) once the
-        # matching ack for MAV_CMD_COMPONENT_ARM_DISARM arrives, since a
-        # bare COMMAND_ACK carries no armed/disarmed intent of its own to
-        # correlate against.
-        self._pending_arm_intent: Optional[bool] = None
+        # just saw nothing happen. `arm()` appends the intended new armed
+        # state right before sending; _handle_message()'s COMMAND_ACK
+        # handling below pops the OLDEST entry once the matching ack for
+        # MAV_CMD_COMPONENT_ARM_DISARM arrives, since a bare COMMAND_ACK
+        # carries no armed/disarmed intent of its own to correlate against.
+        # A FIFO queue, not a single scalar: a code-review audit caught a
+        # real misattribution bug in the single-value version - a rapid
+        # ARM-then-DISARM double-tap (or a slow/lossy link) before the
+        # first ACK arrived would overwrite the pending intent, so that
+        # first ACK got attributed to the second request instead. ArduPilot
+        # processes COMMAND_LONG requests over one link in order and ACKs
+        # each in turn, so FIFO is the correct correlation model here, not
+        # "only the most recent request matters".
+        self._pending_arm_intents: list[bool] = []
         # A one-shot mailbox for main.py's process_frame() to pick up and
         # relay to the app as a real WS message, then clear - not a
         # persistent TelemetrySnapshot field, so an identical second
@@ -287,19 +294,22 @@ class MavlinkBridge:
             # documented "refuses disarm while it thinks it's flying" case)
             # was completely invisible, the operator just saw nothing
             # happen. COMMAND_ACK carries no armed/disarmed intent of its
-            # own (just `command` and `result`), so `_pending_arm_intent`
-            # (set by arm() right before sending) is what lets this
+            # own (just `command` and `result`), so `_pending_arm_intents`
+            # (appended by arm() right before sending) is what lets this
             # message be attributed to "the arm I just asked for" vs "the
-            # disarm I just asked for".
+            # disarm I just asked for" - popped FIFO (oldest first), not by
+            # overwriting a single scalar: a code-review audit caught that
+            # a rapid ARM-then-DISARM double-tap before the first ACK
+            # arrived used to misattribute that ACK to the second request
+            # instead of the first.
             if (
                 msg.command == mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM
-                and self._pending_arm_intent is not None
+                and self._pending_arm_intents
             ):
                 self.pending_arm_ack = {
-                    "armed_requested": self._pending_arm_intent,
+                    "armed_requested": self._pending_arm_intents.pop(0),
                     "accepted": msg.result == mavutil.mavlink.MAV_RESULT_ACCEPTED,
                 }
-                self._pending_arm_intent = None
 
     def request_data_streams(self, rate_hz: int = 4) -> None:
         """Sends a real REQUEST_DATA_STREAM(req_stream_id=MAV_DATA_STREAM_ALL)
@@ -350,7 +360,7 @@ class MavlinkBridge:
         FlightControlDock.kt's separate "Force disarm" control and its own
         stronger confirmation dialog. A rejection (this one or a genuine
         pre-arm-check failure while arming) is no longer invisible - see
-        this method's `_pending_arm_intent`/`pending_arm_ack` and
+        this method's `_pending_arm_intents`/`pending_arm_ack` and
         _handle_message()'s COMMAND_ACK handling below, relayed to the app
         by main.py's process_frame() as a real `arm_command_result`
         message."""
@@ -360,7 +370,7 @@ class MavlinkBridge:
         # force=True alongside armed=True can never accidentally bypass a
         # pre-arm check.
         apply_force = force and not armed
-        self._pending_arm_intent = armed
+        self._pending_arm_intents.append(armed)
         self._conn.mav.command_long_send(
             self._conn.target_system,
             self._conn.target_component,

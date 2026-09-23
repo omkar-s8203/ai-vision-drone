@@ -1,3 +1,6 @@
+from contextlib import contextmanager
+from unittest.mock import patch
+
 import pytest
 
 from companion.comms.ws_server import GroundStationLink
@@ -176,3 +179,113 @@ async def test_point_tap_selects_correct_overlapping_detection(tmp_path):
     assert result["tracking_state"] == TrackingState.TRACKING
     assert orchestrator.state_machine.target.class_name == "person"
     recorder.close()
+
+
+@contextmanager
+def _build_connected_orchestrator(tmp_path):
+    """Unlike _build_minimal_orchestrator above, this one actually connects
+    MavlinkBridge (with mavutil mocked) - needed to exercise the auto-GUIDED
+    request, which calls MavlinkBridge.set_mode() and would hit its own
+    "call connect() first" assert otherwise."""
+    follow_cfg = load_yaml("follow_limits.yaml")
+    orbit_cfg = load_yaml("orbit_limits.yaml")
+    approach_cfg = load_yaml("approach_limits.yaml")
+    calib_cfg = load_yaml("camera_calibration.yaml")
+    watchdog = HeartbeatWatchdog(timeout_s=2.0)
+    link = GroundStationLink(FakeTransport(connected=True))
+    recorder = SessionRecorder(tmp_path)
+    with patch("companion.mavlink.bridge.mavutil") as mock_mavutil:
+        mavlink = MavlinkBridge("udpin:127.0.0.1:14691")
+        mavlink.connect()
+        conn = mock_mavutil.mavlink_connection.return_value
+        conn.target_system = 1
+        conn.target_component = 1
+        mock_mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED = 1
+        orchestrator = CompanionOrchestrator(
+            camera=None,
+            detector=PassthroughDetector(),
+            tracker=IouKalmanTracker(),
+            distance_estimator=DistanceEstimator(CameraIntrinsics.from_dict(calib_cfg)),
+            follow_controller=FollowController(follow_cfg),
+            orbit_controller=OrbitController(orbit_cfg),
+            approach_controller=ApproachTestController(approach_cfg),
+            mavlink=mavlink,
+            rc_monitor=RcOverrideMonitor(deadband=approach_cfg["rc_override_deadband"]),
+            supervisor=SafetySupervisor(watchdog),
+            watchdog=watchdog,
+            link=link,
+            recorder=recorder,
+        )
+        yield orchestrator, recorder, conn
+
+
+def test_selecting_follow_automatically_requests_guided(tmp_path):
+    """A field-reported UX gap found during real FLTMODE_CH testing:
+    selecting a target and choosing a guidance mode used to do nothing
+    observable until the pilot separately switched the FC to GUIDED -
+    selecting Follow should be enough on its own now."""
+    with _build_connected_orchestrator(tmp_path) as (orchestrator, recorder, conn):
+        orchestrator.mavlink.telemetry.fc_mode = "STABILIZE"
+
+        orchestrator._on_mode_command({"mode": "follow"})
+
+        conn.mav.set_mode_send.assert_called_once_with(1, 1, 4)  # GUIDED = 4
+        recorder.close()
+
+
+@pytest.mark.parametrize(
+    "mode_str,payload_extra",
+    [
+        ("follow", {}),
+        ("orbit", {}),
+        ("approach", {}),
+        ("grid_search", {"grid_search_width_m": 60.0, "grid_search_height_m": 20.0}),
+    ],
+)
+def test_every_mode_requiring_guided_requests_it(tmp_path, mode_str, payload_extra):
+    with _build_connected_orchestrator(tmp_path) as (orchestrator, recorder, conn):
+        orchestrator.mavlink.telemetry.fc_mode = "STABILIZE"
+        orchestrator.mavlink.telemetry.lat = 37.7749
+        orchestrator.mavlink.telemetry.lon = -122.4194
+
+        orchestrator._on_mode_command({"mode": mode_str, **payload_extra})
+
+        conn.mav.set_mode_send.assert_called_once_with(1, 1, 4)
+        recorder.close()
+
+
+def test_selecting_idle_or_tracking_never_requests_guided(tmp_path):
+    """TRACKING is vision-only (no velocity command, never Supervisor-gated)
+    - it must never trigger a real FC mode change."""
+    with _build_connected_orchestrator(tmp_path) as (orchestrator, recorder, conn):
+        orchestrator.mavlink.telemetry.fc_mode = "STABILIZE"
+
+        orchestrator._on_mode_command({"mode": "tracking"})
+        orchestrator._on_mode_command({"mode": "idle"})
+
+        conn.mav.set_mode_send.assert_not_called()
+        recorder.close()
+
+
+def test_auto_guided_is_never_requested_while_rc_override_is_active(tmp_path):
+    """The pilot already has manual control - a mode change from the Pi
+    would fight it, the same reasoning already applied to target-recovery's
+    RTL suppression."""
+    with _build_connected_orchestrator(tmp_path) as (orchestrator, recorder, conn):
+        orchestrator.mavlink.telemetry.fc_mode = "STABILIZE"
+        orchestrator.mavlink.telemetry.rc_channels = {1: 2000, 2: 1500, 3: 1500, 4: 1500}  # roll deflected
+
+        orchestrator._on_mode_command({"mode": "follow"})
+
+        conn.mav.set_mode_send.assert_not_called()
+        recorder.close()
+
+
+def test_auto_guided_is_a_no_op_when_already_in_guided(tmp_path):
+    with _build_connected_orchestrator(tmp_path) as (orchestrator, recorder, conn):
+        orchestrator.mavlink.telemetry.fc_mode = "GUIDED"
+
+        orchestrator._on_mode_command({"mode": "follow"})
+
+        conn.mav.set_mode_send.assert_not_called()
+        recorder.close()

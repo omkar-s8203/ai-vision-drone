@@ -70,6 +70,28 @@ mechanism is never silent to the operator.
   flowing. Unit-tested (`test_safety_supervisor.py::
   test_stale_rc_channels_forces_safe`, `test_admin_commands.py::
   test_on_mavlink_message_beats_rc_channels_only_for_that_message_type`).
+- **A field-reported UX gap, now fixed - the Pi automatically requests
+  GUIDED**: found during real `FLTMODE_CH` bench testing - selecting a
+  target and choosing a guidance mode (Follow/Orbit/Approach/Grid Search)
+  used to do nothing observable until the pilot separately switched the FC
+  to GUIDED themselves, since `SafetySupervisor.evaluate()`'s
+  `fc_not_in_ai_mode` check silently refused the mode otherwise.
+  `CompanionOrchestrator._on_mode_command()` (`companion/main.py`) now
+  calls `mavlink.set_mode("GUIDED")` itself when the operator selects one
+  of those modes - but only when `MavlinkBridge.is_connected`, the FC
+  isn't already in GUIDED (idempotent), **and `rc_override_active` is
+  false** - this is the same override-adjacent direct-mode-change path
+  called out above for RTL, gated by the exact same check for the exact
+  same reason: the pilot may already be flying manually at that moment,
+  and a mode change from the Pi would fight their own control rather than
+  help. This does not change what the hardware `FLTMODE_CH` switch itself
+  guarantees in any way - it only ever *requests* GUIDED through the same
+  MAVLink path any GCS would use, and the FC (or the pilot's own switch)
+  remains entirely free to refuse or immediately override it. Unit-tested
+  (`test_mode_command.py::test_selecting_follow_automatically_requests_guided`,
+  `::test_every_mode_requiring_guided_requests_it`,
+  `::test_auto_guided_is_never_requested_while_rc_override_is_active`,
+  `::test_auto_guided_is_a_no_op_when_already_in_guided`).
   The hardware switch above remains the actual non-negotiable guarantee;
   this only closes the gap in the software-only backstop.
 - **Status**: software backstop implemented and unit/integration tested.

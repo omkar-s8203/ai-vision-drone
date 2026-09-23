@@ -58,7 +58,13 @@ help.
 
 - [ ] Power the Pi and run `companion.main` in hardware mode, FC
       connected, as usual.
-- [ ] Get the FC into `GUIDED` via the transmitter switch.
+- [ ] Get the FC into `GUIDED` via the transmitter switch. (The Pi will
+      also now request `GUIDED` on its own the moment a guidance mode is
+      selected in the app - see `docs/safety-case.md`'s "the Pi
+      automatically requests GUIDED" entry - but doing it manually here
+      first is the more conservative way to test this specific override
+      direction: it isolates "does the switch's forward direction work"
+      from "did the app's own request happen to work.")
 - [ ] Select a target and switch to Follow (or Orbit) in the Android app -
       confirm the `GuidanceCommandPanel` shows `GUIDANCE SENT` with real
       vx/vy/vz/yaw numbers ticking (this is the same dashboard from the

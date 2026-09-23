@@ -66,6 +66,20 @@ MODE_COMMAND_MAP = {
 
 AI_GUIDANCE_MODE_NAME = "GUIDED"
 
+# Every mode SafetySupervisor.evaluate() actually gates on fc_mode ==
+# AI_GUIDANCE_MODE_NAME (see companion/safety/supervisor.py's
+# fc_not_in_ai_mode check, which runs for all of these regardless of
+# tracking state) - the modes worth automatically requesting GUIDED for
+# when the operator selects them. TRACKING is deliberately excluded: it's
+# vision-only (no velocity command, never Supervisor-gated), so it never
+# needs GUIDED at all.
+MODES_REQUIRING_GUIDED = (
+    SupervisorState.FOLLOWING,
+    SupervisorState.ORBITING,
+    SupervisorState.APPROACHING,
+    SupervisorState.GRID_SEARCH,
+)
+
 
 class CompanionOrchestrator:
     def __init__(
@@ -205,6 +219,28 @@ class CompanionOrchestrator:
             # call reset()) happened.
             self.grid_search.reset()
         self.requested_mode = mode
+        if mode in MODES_REQUIRING_GUIDED:
+            # A field-reported UX gap found during real FLTMODE_CH testing:
+            # selecting a target and choosing a guidance mode used to do
+            # nothing observable until the pilot separately switched the FC
+            # to GUIDED (RC transmitter or the app's flight-mode dropdown) -
+            # SafetySupervisor.evaluate()'s fc_not_in_ai_mode check silently
+            # refused the mode otherwise. Requesting GUIDED here means
+            # selecting a target and picking a mode is enough on its own.
+            # Never attempted while the pilot already has RC override
+            # active - they're already flying manually, so a mode change
+            # from the Pi would fight their own control, the same
+            # reasoning already applied to target-recovery's RTL
+            # suppression (see process_frame()). Idempotent: a no-op
+            # resend while already GUIDED is harmless, so this only
+            # actually sends when it would change anything.
+            rc_override = self.rc_monitor.is_overriding(self.mavlink.telemetry.rc_channels)
+            if (
+                self.mavlink.is_connected
+                and not rc_override
+                and self.mavlink.telemetry.fc_mode != AI_GUIDANCE_MODE_NAME
+            ):
+                self.mavlink.set_mode(AI_GUIDANCE_MODE_NAME)
         if mode == SupervisorState.APPROACHING:
             self.approach.start()
         else:

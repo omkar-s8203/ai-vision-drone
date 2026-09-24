@@ -562,7 +562,7 @@ class MavlinkBridge:
             0, 0, 0, 0, 0, 0, 0,
         )
 
-    def takeoff(self, altitude_m: float) -> None:
+    def takeoff(self, altitude_m: float) -> bool:
         """Sends MAV_CMD_NAV_TAKEOFF - the standard ArduCopter GUIDED-mode
         takeoff command, the same one a real GCS's "Takeoff" button sends
         (confirmed against pymavlink's own bundled command definitions -
@@ -575,9 +575,10 @@ class MavlinkBridge:
         guidance setpoints (see companion/guidance/auto_takeoff.py).
         ArduCopter rejects this command outright unless already armed and
         in GUIDED mode - real, documented behavior, not something this
-        bridge needs to separately guard against."""
+        bridge needs to separately guard against. Returns False if the
+        command could not be written to the link."""
         assert self._conn is not None, "call connect() first"
-        self._write(
+        return self._write(
             "takeoff",
             self._conn.mav.command_long_send,
             self._conn.target_system,

@@ -421,13 +421,34 @@ async def test_the_app_keeps_seeing_the_last_boxes_on_a_frame_with_no_ai_result(
 
 
 @pytest.mark.asyncio
-async def test_a_tap_on_a_carried_over_box_still_selects_it(tmp_path):
+async def test_a_tap_waits_for_a_fresh_ai_result_instead_of_locking_onto_a_carried_box(tmp_path):
+    """A carried box can be up to detection_carry_max_s old: starting on it
+    would stamp it as seen now and learn the appearance from wherever it was
+    in the current image."""
     with _build(tmp_path) as (orch, _rec, _conn):
         person = _person(BBox(300, 300, 80, 160))
         await orch.process_frame(_frame(0.0, [person]))
         orch._on_target_selected({"x": 340.0, "y": 380.0, "point": True})
         result = await orch.process_frame(_no_result_frame(0.033))
+        assert result["tracking_state"] == TrackingState.IDLE
+        assert orch._pending_selection is not None  # kept, not dropped
+
+        moved = _person(BBox(310, 300, 80, 160), ts=0.066)
+        result = await orch.process_frame(_frame(0.066, [moved]))
         assert result["tracking_state"] == TrackingState.TRACKING
+        assert orch.state_machine.target.bbox == moved.bbox
+        assert orch.state_machine.target.last_seen_ts == 0.066
+
+
+@pytest.mark.asyncio
+async def test_a_failed_setpoint_write_is_not_logged_as_a_sent_command(tmp_path):
+    with _build(tmp_path) as (orch, rec, conn):
+        await _follow_a_far_person(orch, conn)
+        conn.mav.set_position_target_local_ned_send.side_effect = OSError("link down")
+        with patch.object(rec, "record", wraps=rec.record) as record:
+            await orch.process_frame(_frame(0.25, [_person(BBox(300, 300, 80, 160))]))
+        assert "guidance_command" not in [c.args[0] for c in record.call_args_list]
+        assert _last_tracking_update(orch)["guidance_sent"] is False
 
 
 @pytest.mark.asyncio

@@ -49,6 +49,13 @@ class AutoTakeoffController:
         self.phase = AutoTakeoffPhase.WAITING_TO_ARM
         self._elapsed_s = 0.0
 
+    def retry_takeoff(self) -> None:
+        """The takeoff command could not be sent: go back to waiting so the
+        next update() asks for it again. The elapsed time keeps counting, so
+        timeout_s still bounds the whole sequence."""
+        if self.phase == AutoTakeoffPhase.CLIMBING:
+            self.phase = AutoTakeoffPhase.WAITING_TO_ARM
+
     def reset(self) -> None:
         self.phase = AutoTakeoffPhase.IDLE
         self.target_altitude_m = None

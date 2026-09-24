@@ -841,7 +841,11 @@ class CompanionOrchestrator:
         if self._pending_teach is not None:
             self._start_teaching(frame)
 
-        if self._pending_selection is not None:
+        # Only on a frame with a real AI result: a carried-over box can be up to
+        # detection_carry_max_s old, and starting on it would stamp it as seen
+        # now and learn the appearance from wherever it was in the CURRENT
+        # image. The tap waits (a frame or two) for a fresh result instead.
+        if self._pending_selection is not None and detections_fresh:
             if self._pending_selection[0] == "point":
                 _, px, py = self._pending_selection
                 det = select_target_at_point(detections, px, py)
@@ -1107,8 +1111,13 @@ class CompanionOrchestrator:
                     self.requested_mode = SupervisorState.IDLE
                     effective_requested_state = SupervisorState.IDLE
                 else:
-                    self.mavlink.takeoff(self.auto_takeoff.target_altitude_m)
-                    self.recorder.record("auto_takeoff_sent", altitude_m=self.auto_takeoff.target_altitude_m)
+                    if self.mavlink.takeoff(self.auto_takeoff.target_altitude_m):
+                        self.recorder.record("auto_takeoff_sent", altitude_m=self.auto_takeoff.target_altitude_m)
+                    else:
+                        # Never left the Pi (link being reopened): ask again next
+                        # frame rather than wait out the climb timeout for a
+                        # takeoff the FC never received. The timeout still bounds it.
+                        self.auto_takeoff.retry_takeoff()
                     auto_takeoff_holding = True
             elif action == "hold":
                 auto_takeoff_holding = True
@@ -1276,11 +1285,14 @@ class CompanionOrchestrator:
                 command.vx_mps, command.vy_mps, command.vz_mps, command.yaw_rate_rads,
                 guidance_allowed=True,
             )
-            self.recorder.record(
-                "guidance_command",
-                vx=command.vx_mps, vy=command.vy_mps, vz=command.vz_mps,
-                yaw_rate=command.yaw_rate_rads,
-            )
+            # Only what actually reached the FC link: a write that failed (link
+            # being reopened) must not read as a sent setpoint in the session log.
+            if sent:
+                self.recorder.record(
+                    "guidance_command",
+                    vx=command.vx_mps, vy=command.vy_mps, vz=command.vz_mps,
+                    yaw_rate=command.yaw_rate_rads,
+                )
 
         if self._teach_result is not None:
             teach_result, self._teach_result = self._teach_result, None

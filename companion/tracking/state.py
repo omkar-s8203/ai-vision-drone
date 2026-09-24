@@ -50,7 +50,10 @@ class TrackingStateMachine:
 
         if self.state == TrackingState.TRACKING:
             self.state = TrackingState.REACQUIRE
-            self._lost_since_ts = frame_ts
+            # Counted from the last sighting, not from this frame: frames with no
+            # AI result in between (see coast()) are unseen time too, and the
+            # orchestrator's hold is measured from last_seen_ts as well.
+            self._lost_since_ts = self.target.last_seen_ts if self.target is not None else frame_ts
             return self.state
 
         if self.state == TrackingState.REACQUIRE:

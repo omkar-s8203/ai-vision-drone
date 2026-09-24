@@ -86,3 +86,15 @@ def test_coast_still_runs_out_an_active_reacquire_timeout():
 def test_coast_is_a_no_op_when_idle():
     sm = TrackingStateMachine(IouKalmanTracker())
     assert sm.coast(1.0) == TrackingState.IDLE
+
+
+def test_the_reacquire_timeout_counts_from_the_last_sighting_not_the_first_miss():
+    """Frames with no AI result (coast) before the first real miss are unseen
+    time too - the target must not get a longer reacquire window because the
+    AI happened to skip some frames."""
+    sm = TrackingStateMachine(IouKalmanTracker(), reacquire_timeout_s=1.0)
+    sm.start(0.0, make_det(0.0))
+    sm.coast(0.2)
+    sm.coast(0.4)
+    assert sm.update(0.5, []) == TrackingState.REACQUIRE
+    assert sm.update(1.05, []) == TrackingState.TARGET_LOST  # 1.05s since last seen at 0.0

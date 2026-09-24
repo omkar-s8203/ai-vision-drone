@@ -208,3 +208,12 @@ async def test_the_heartbeat_task_survives_write_errors():
         assert not task.done()
         assert bridge._conn.mav.heartbeat_send.call_count > 1
         task.cancel()
+
+
+def test_takeoff_reports_whether_it_was_sent():
+    with patch("companion.mavlink.bridge.mavutil"):
+        bridge = MavlinkBridge("/dev/ttyACM0")
+        bridge.connect()
+        assert bridge.takeoff(10.0) is True
+        bridge._conn.mav.command_long_send.side_effect = OSError("write failed")
+        assert bridge.takeoff(10.0) is False

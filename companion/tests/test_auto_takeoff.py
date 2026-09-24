@@ -164,3 +164,28 @@ def test_restart_after_done_resets_elapsed_timer():
     # If the elapsed timer had leaked across restarts, this would already
     # be past the 30s timeout and immediately time out instead of holding.
     assert c.update(armed=False, fc_mode=None, current_alt_m=0.0, dt=0.1) == "hold"
+
+
+def test_a_takeoff_that_could_not_be_sent_is_asked_for_again():
+    """MavlinkBridge.takeoff() returns False when the link is being reopened;
+    the command must be re-requested rather than waited on until timeout."""
+    c = _controller()
+    c.start()
+    assert c.update(armed=True, fc_mode="GUIDED", current_alt_m=0.0, dt=0.1) == "send_takeoff"
+    c.retry_takeoff()
+    assert c.update(armed=True, fc_mode="GUIDED", current_alt_m=0.0, dt=0.1) == "send_takeoff"
+    assert c.phase == AutoTakeoffPhase.CLIMBING
+
+
+def test_retrying_the_takeoff_does_not_reset_the_timeout():
+    c = _controller()
+    c.start()
+    c.update(armed=True, fc_mode="GUIDED", current_alt_m=0.0, dt=29.0)
+    c.retry_takeoff()
+    assert c.update(armed=True, fc_mode="GUIDED", current_alt_m=0.0, dt=1.5) == "timed_out"
+
+
+def test_retry_is_a_no_op_outside_the_climb():
+    c = _controller()
+    c.retry_takeoff()
+    assert c.phase == AutoTakeoffPhase.IDLE

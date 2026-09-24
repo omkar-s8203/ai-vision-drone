@@ -320,11 +320,22 @@ Two things accumulate under `~/ai-vision-drone-logs/` on the Pi over time:
 
 Teach mode (`docs/teach-and-train.md`) tracks taught objects with an OpenCV tracker. The
 plain `opencv-python-headless` this project depends on only has the MIL tracker; the
-contrib build adds CSRT/KCF, which are used automatically when present:
+contrib build adds CSRT/KCF, which are used automatically when present.
+
+**Install it inside the project's virtual environment, not system-wide** - Raspberry Pi OS
+refuses system-wide `pip install` (`externally-managed-environment`), and
+`--break-system-packages` can break the OS's own Python. Use the same venv as the systemd
+service (see `deploy/ai-vision-drone.service`; step 4 above):
 
 ```
-pip uninstall -y opencv-python-headless
+cd ~/ai-vision-drone
+source mavlink-venv/bin/activate
+which pip        # must be .../ai-vision-drone/mavlink-venv/bin/pip
+pip uninstall -y opencv-python-headless    # both provide `cv2`; keep only one
 pip install opencv-contrib-python-headless
+python -c "import cv2; print(cv2.__version__, hasattr(cv2, 'TrackerCSRT_create') or hasattr(cv2, 'legacy'))"
+sudo systemctl restart ai-vision-drone
 ```
 
-Measure fps with a taught object on the Pi (lab checklist 6D.3) before relying on it.
+The last value should print `True`; if `False`, Teach mode still works with the slower MIL
+tracker. Measure fps with a taught object on the Pi (lab checklist 6D.3) before relying on it.

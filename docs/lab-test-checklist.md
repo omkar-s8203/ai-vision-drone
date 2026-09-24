@@ -67,6 +67,16 @@ tail -f ~/ai-vision-drone/companion/logs/sessions/session_<ts>.jsonl   # live ev
 grep -c guidance_command ~/ai-vision-drone/companion/logs/sessions/session_<ts>.jsonl
 ```
 
+**Watch everything live from your laptop** (cmd/PowerShell, joined to the Pi's WiFi; `hostname -I` on the Pi shows its IP). Use two windows:
+
+```
+ssh omkar@<pi-ip> journalctl -u ai-vision-drone -f       (window 1: the Pi's own log lines - start-up, failsafes, errors)
+pip install websockets                                    (once)
+python tools\live_monitor.py --uri ws://<pi-ip>:8765      (window 2: the live data the Pi sends - telemetry, tracking, guidance, health, events)
+```
+
+`live_monitor.py` is **read-only** (it never sends anything, so it cannot mask a dead phone link). Options: `--only telemetry,tracking_update`, `--rate 0` (every message), `--raw` (full JSON). Guidance changes, flight-mode changes and one-off events always print immediately.
+
 Session-log events referenced below: `mode_command`, `guidance_command` (one per velocity
 setpoint sent), `rc_override_loiter_requested`, `failsafe_rtl`, `failsafe_rtl_suppressed_rc_override`,
 `auto_takeoff_sent` / `auto_takeoff_refused` / `auto_takeoff_timed_out`, `identity_lost`,

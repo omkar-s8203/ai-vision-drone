@@ -1,5 +1,22 @@
 # Tools
 
+## `live_monitor.py` (implemented, unit-tested)
+
+Live terminal view of everything the Pi sends to the app (telemetry, tracking/guidance state and
+commanded velocities, health, detections, one-off events), one readable line each, auto-reconnecting.
+**Read-only** - it never sends a message, because the Pi judges the phone's liveness from the
+messages it receives and a monitor that sent anything could hide a dead phone link.
+
+```
+pip install websockets
+python tools/live_monitor.py --uri ws://<pi-ip>:8765          # or ws://127.0.0.1:8765 on the Pi
+python tools/live_monitor.py --uri ws://<pi-ip>:8765 --only tracking_update --rate 5
+```
+
+High-rate types are throttled (default 2 lines/s per type) but flight-mode/arm/guidance changes
+and events are always shown at once. The Pi's own log lines are separate:
+`ssh omkar@<pi-ip> journalctl -u ai-vision-drone -f`.
+
 ## `calibrate_camera.py` (implemented, unit-tested)
 
 OpenCV checkerboard-based camera intrinsics calibration (M4, Distance

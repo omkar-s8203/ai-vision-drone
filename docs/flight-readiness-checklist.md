@@ -6,6 +6,11 @@ on the physical transmitter/aircraft. See `docs/safety-case.md` for why
 each of these matters and `README.md`'s "What's next" for how this fits
 into the bigger picture.
 
+**Superseded for bench testing by [`lab-test-checklist.md`](lab-test-checklist.md)**
+(the complete props-off protocol, including the operator-link, battery, GPS and
+force-disarm failsafes added later). The two steps below remain accurate and are
+repeated there as Stage 4 and Stage 7.
+
 **Do not skip ahead.** Step 2 assumes step 1 is already confirmed working
 - running a guidance dry-run before the hardware override is proven would
 defeat the entire point of the override.

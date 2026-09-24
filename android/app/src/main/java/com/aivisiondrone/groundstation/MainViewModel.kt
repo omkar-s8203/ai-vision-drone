@@ -805,6 +805,16 @@ class MainViewModel : ViewModel() {
             // climb actually finished and Follow started computing setpoints.
             _alertEvents.tryEmit(AlertEvent.FOLLOWING_ENGAGED)
         }
+
+        // A deliberate hold beginning (or changing reason) - announced once,
+        // so the operator knows the drone stopped on purpose (guidanceHold).
+        if (current.guidanceHold != previous.guidanceHold) {
+            when (current.guidanceHold) {
+                "auto_takeoff" -> _alertEvents.tryEmit(AlertEvent.HOLDING_TAKEOFF_CLIMB)
+                "target_unseen" -> _alertEvents.tryEmit(AlertEvent.HOLDING_TARGET_UNSEEN)
+                "identity_lost" -> _alertEvents.tryEmit(AlertEvent.HOLDING_IDENTITY_UNSURE)
+            }
+        }
     }
 
     private fun parseHealth(p: JSONObject) = HealthState(
@@ -840,6 +850,7 @@ class MainViewModel : ViewModel() {
             commandedVzMps = p.optDoubleOrNull("commanded_vz_mps"),
             commandedYawRateRads = p.optDoubleOrNull("commanded_yaw_rate_rads"),
             guidanceSent = p.optBoolean("guidance_sent", false),
+            guidanceHold = p.optStringOrNull("guidance_hold"),
         )
     }
 

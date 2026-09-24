@@ -74,6 +74,9 @@ class AlertSoundPlayer(context: Context) {
         AlertEvent.MODE_REJECTED -> ToneGenerator.TONE_SUP_ERROR
         AlertEvent.ARM_REJECTED -> ToneGenerator.TONE_SUP_ERROR
         AlertEvent.DISARM_REJECTED -> ToneGenerator.TONE_SUP_ERROR
+        AlertEvent.HOLDING_TAKEOFF_CLIMB -> ToneGenerator.TONE_PROP_BEEP
+        AlertEvent.HOLDING_TARGET_UNSEEN -> ToneGenerator.TONE_CDMA_ABBR_ALERT
+        AlertEvent.HOLDING_IDENTITY_UNSURE -> ToneGenerator.TONE_CDMA_ABBR_ALERT
     }
 
     companion object {

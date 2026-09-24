@@ -96,6 +96,12 @@ data class TrackingState(
     val commandedVzMps: Double? = null,
     val commandedYawRateRads: Double? = null,
     val guidanceSent: Boolean = false,
+    // Why guidance is deliberately holding still even though the Safety
+    // Supervisor allows it (companion/main.py): "auto_takeoff" (climbing to a
+    // safe altitude first), "target_unseen" (briefly out of sight - holds
+    // rather than steering on stale coordinates), "identity_lost" (the tracked
+    // subject stopped looking like the selected target). null = not holding.
+    val guidanceHold: String? = null,
 )
 
 /** One live object detection before/independent of target selection - lets

@@ -159,6 +159,7 @@ class CompanionOrchestrator:
         self._frame_size: Optional[tuple[int, int]] = None  # (width, height) of the latest frame
         self._distance_filter = DistanceFilter()
         self._distance_filter_target_id: Optional[int] = None
+        self._identity_dropped = False  # the current REACQUIRE came from a failed identity check, not a plain miss
         self._identity_mismatch_frames = 0  # consecutive frames the tracked box failed the appearance check
         self._was_armed = False  # edge-detects the arm transition to request HOME_POSITION once
         self._was_rc_override_in_guided = False  # edge-detects entering override-while-GUIDED (see process_frame)
@@ -363,6 +364,7 @@ class CompanionOrchestrator:
         self.grid_search.reset()
         self.auto_takeoff.reset()
         self._identity_mismatch_frames = 0
+        self._identity_dropped = False
         self.state_machine.stop()
         self.appearance.forget()
         self.recovery.cancel()
@@ -527,6 +529,7 @@ class CompanionOrchestrator:
         if self._identity_mismatch_frames >= self.appearance.track_drop_frames:
             self._identity_mismatch_frames = 0
             self.state_machine.drop_identity(frame.ts)
+            self._identity_dropped = True
             self.recorder.record("identity_lost")
             return self.state_machine.state
         return tracking_state
@@ -612,6 +615,8 @@ class CompanionOrchestrator:
                 tracking_state = self.state_machine.state
                 self.recorder.record("appearance_reacquired", class_name=rematch.class_name)
 
+        if tracking_state == TrackingState.TRACKING:
+            self._identity_dropped = False
         if tracking_state == TrackingState.TRACKING and self.appearance.has_signature:
             tracking_state = self._verify_tracked_identity(frame, detections, tracking_state)
         else:
@@ -814,6 +819,13 @@ class CompanionOrchestrator:
         command = None
         follow_ran = False
         orbit_ran = False
+        # Why guidance is deliberately holding still this frame even though
+        # the Supervisor allows it - sent to the app (guidance_hold) so a
+        # drone that has stopped never looks like a drone that has failed.
+        hold_reason: Optional[str] = None
+        hold_state = (
+            "identity_lost" if self._identity_dropped else "target_unseen"
+        )
         # While the tracker is in REACQUIRE (target briefly unseen),
         # state_machine.target still holds the LAST known box. Follow/Orbit
         # used to keep computing from it - a frozen lateral error is a
@@ -822,7 +834,7 @@ class CompanionOrchestrator:
         # up to reacquire_timeout_s old. Command a hold (zero velocity)
         # instead until the target is genuinely seen again.
         if auto_takeoff_holding:
-            pass  # withhold real guidance this frame - see the check above
+            hold_reason = "auto_takeoff"  # withhold real guidance this frame - see the check above
         elif decision.state == SupervisorState.SEARCHING:
             command = recovery_result.command
         elif decision.state == SupervisorState.FOLLOWING and self.state_machine.target is not None:
@@ -838,6 +850,7 @@ class CompanionOrchestrator:
                 follow_ran = True
             else:
                 command = _HOLD_COMMAND
+                hold_reason = hold_state
         elif decision.state == SupervisorState.ORBITING and self.state_machine.target is not None:
             if tracking_state == TrackingState.TRACKING:
                 command = self.orbit.compute(
@@ -851,6 +864,7 @@ class CompanionOrchestrator:
                 orbit_ran = True
             else:
                 command = _HOLD_COMMAND
+                hold_reason = hold_state
         elif decision.state == SupervisorState.APPROACHING:
             result = self.approach.update(
                 ApproachInputs(
@@ -934,6 +948,7 @@ class CompanionOrchestrator:
                 "commanded_vz_mps": command.vz_mps if command is not None else None,
                 "commanded_yaw_rate_rads": command.yaw_rate_rads if command is not None else None,
                 "guidance_sent": sent,
+                "guidance_hold": hold_reason,
             }
         )
         await self.link.send_detections_update(

@@ -281,3 +281,71 @@ async def test_identity_check_is_a_no_op_without_real_frames(tmp_path):
         for i in range(30):
             result = await orch.process_frame(_frame(0.05 * i, [_person(box)]))
         assert result["tracking_state"] == TrackingState.TRACKING
+
+
+# --- the operator is told *why* the drone is holding -----------------------
+
+def _last_tracking_update(orch):
+    import json
+
+    for raw in reversed(orch.link.transport.sent):
+        msg = json.loads(raw)
+        if msg["type"] == "tracking_update":
+            return msg["payload"]
+    raise AssertionError("no tracking_update was sent")
+
+
+@pytest.mark.asyncio
+async def test_hold_reason_is_reported_while_the_target_is_unseen(tmp_path):
+    with _build(tmp_path) as (orch, _rec, _conn):
+        person = _person(BBox(300, 300, 80, 160))
+        orch._on_target_selected({"x": 340.0, "y": 380.0, "point": True})
+        await orch.process_frame(_frame(0.0, [person]))
+        orch._on_mode_command({"mode": "follow"})
+        await orch.process_frame(_frame(0.1, [person]))
+        assert _last_tracking_update(orch)["guidance_hold"] is None  # normal following: nothing held
+
+        await orch.process_frame(_frame(0.2, []))
+        update = _last_tracking_update(orch)
+        assert update["guidance_hold"] == "target_unseen"
+        assert update["guidance_sent"] is True  # a zero-velocity hold was actually sent
+
+
+@pytest.mark.asyncio
+async def test_hold_reason_distinguishes_a_failed_identity_check(tmp_path):
+    camera = _PaintableCamera()
+    with _build(tmp_path, camera) as (orch, _rec, _conn):
+        box = BBox(200, 200, 80, 160)
+        await _select_red_target(orch, camera, box)
+        orch._on_mode_command({"mode": "follow"})
+        camera.paint(box, BLUE)
+        for i in range(1, 40):
+            await orch.process_frame(_frame(0.05 * i, [_person(box)]))
+        assert _last_tracking_update(orch)["guidance_hold"] == "identity_lost"
+
+
+@pytest.mark.asyncio
+async def test_hold_reason_clears_once_the_target_is_tracked_again(tmp_path):
+    with _build(tmp_path) as (orch, _rec, _conn):
+        person = _person(BBox(300, 300, 80, 160))
+        orch._on_target_selected({"x": 340.0, "y": 380.0, "point": True})
+        await orch.process_frame(_frame(0.0, [person]))
+        orch._on_mode_command({"mode": "follow"})
+        await orch.process_frame(_frame(0.1, []))
+        assert _last_tracking_update(orch)["guidance_hold"] == "target_unseen"
+        await orch.process_frame(_frame(0.2, [person]))
+        assert _last_tracking_update(orch)["guidance_hold"] is None
+
+
+@pytest.mark.asyncio
+async def test_hold_reason_reports_the_takeoff_climb(tmp_path):
+    with _build(tmp_path) as (orch, _rec, _conn):
+        orch.mavlink.telemetry.alt_m = 0.0
+        person = _person(BBox(300, 300, 80, 160))
+        orch._on_target_selected({"x": 340.0, "y": 380.0, "point": True})
+        await orch.process_frame(_frame(0.0, [person]))
+        orch._on_mode_command({"mode": "follow", "auto_takeoff": True})
+        await orch.process_frame(_frame(0.1, [person]))
+        update = _last_tracking_update(orch)
+        assert update["guidance_hold"] == "auto_takeoff"
+        assert update["guidance_sent"] is False

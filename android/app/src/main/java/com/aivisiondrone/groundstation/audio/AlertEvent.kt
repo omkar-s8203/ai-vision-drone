@@ -82,4 +82,11 @@ enum class AlertEvent(val spokenLine: String) {
      * app's DISARM button does nothing"). The app's separate "Force
      * disarm" control is the documented way past this, not a retry. */
     DISARM_REJECTED("Disarm rejected by flight controller"),
+
+    /** The Pi is deliberately holding position instead of guiding - see
+     * TrackingState.guidanceHold. Edge-triggered on the hold beginning, so a
+     * drone that has stopped never sounds like a drone that has failed. */
+    HOLDING_TAKEOFF_CLIMB("Climbing to follow altitude"),
+    HOLDING_TARGET_UNSEEN("Target not visible. Holding position"),
+    HOLDING_IDENTITY_UNSURE("Not sure this is your target. Holding position"),
 }

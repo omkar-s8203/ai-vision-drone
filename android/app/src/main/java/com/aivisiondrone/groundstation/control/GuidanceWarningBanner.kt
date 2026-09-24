@@ -30,6 +30,17 @@ import com.aivisiondrone.groundstation.ui.theme.DroneColors
  * something re-sending the same mode command can do anything about. */
 private val RESUMABLE_REASONS = setOf("rc_override", "fc_not_in_ai_mode")
 
+/** Banner reason codes for the Pi's `guidance_hold` values. */
+const val HOLD_AUTO_TAKEOFF = "hold:auto_takeoff"
+const val HOLD_TARGET_UNSEEN = "hold:target_unseen"
+const val HOLD_IDENTITY_LOST = "hold:identity_lost"
+
+/** The banner text for whatever is currently limiting guidance: a real
+ * Supervisor block wins over a deliberate hold, since a block is the more
+ * serious explanation. null when guidance is running normally. */
+fun guidanceBannerReason(guidanceReason: String?, guidanceHold: String?): String? =
+    guidanceReason ?: guidanceHold?.let { "hold:$it" }
+
 /** Human-readable labels for the Safety Supervisor's `guidance_reason`
  * codes (companion/safety/supervisor.py) - shown to the operator instead
  * of the raw wire string. Falls back to the raw code for anything new. */
@@ -46,6 +57,12 @@ private fun describeReason(reason: String): String = when {
     reason == "comms_lost" -> "Ground station link lost - guidance paused"
     reason == "fc_not_in_ai_mode" -> "Flight controller not in AI guidance mode"
     reason == "target_lost" -> "Target lost - guidance paused"
+    // Not Supervisor reasons - guidance_hold codes from the Pi (see
+    // TrackingState.guidanceHold), prefixed "hold:" by the caller. The
+    // drone is deliberately holding still, not failing.
+    reason == HOLD_AUTO_TAKEOFF -> "Climbing to safe altitude - following starts when reached"
+    reason == HOLD_TARGET_UNSEEN -> "Target not visible - holding position"
+    reason == HOLD_IDENTITY_LOST -> "Not sure this is your target - holding position"
     else -> reason
 }
 

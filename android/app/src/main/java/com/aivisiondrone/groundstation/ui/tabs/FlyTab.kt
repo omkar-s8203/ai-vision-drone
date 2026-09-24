@@ -61,6 +61,7 @@ import com.aivisiondrone.groundstation.control.PerimeterZoneOverlay
 import com.aivisiondrone.groundstation.control.TargetTrailOverlay
 import com.aivisiondrone.groundstation.control.GuidanceCommandPanel
 import com.aivisiondrone.groundstation.control.GuidanceWarningBanner
+import com.aivisiondrone.groundstation.control.guidanceBannerReason
 import com.aivisiondrone.groundstation.control.RecordButton
 import com.aivisiondrone.groundstation.control.TargetActionSheet
 import com.aivisiondrone.groundstation.control.TargetSelectionOverlay
@@ -458,14 +459,15 @@ fun FlyTab(
             // below is the one source of truth for connectivity; this
             // banner defers to it and reappears fresh, from a real
             // tracking_update, once reconnected.
-            visible = tracking.guidanceReason != null && linkState == LinkState.CONNECTED,
+            visible = guidanceBannerReason(tracking.guidanceReason, tracking.guidanceHold) != null &&
+                linkState == LinkState.CONNECTED,
             enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
             exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(top = 80.dp)
         ) {
-            tracking.guidanceReason?.let { reason ->
+            guidanceBannerReason(tracking.guidanceReason, tracking.guidanceHold)?.let { reason ->
                 GuidanceWarningBanner(
                     reason = reason,
                     // A field request: "when FC override happens, add a way

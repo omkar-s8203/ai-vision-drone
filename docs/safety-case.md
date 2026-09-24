@@ -496,6 +496,12 @@ graceful fallback:
   than reality and make Follow close in), and is median/EMA-filtered.
   Obstacle proximity deliberately keeps the width-only estimate, which is the
   more conservative read for a "too close" check.
+- **The operator is told why the drone stopped**: a deliberate hold is not a
+  Supervisor block, so `guidance_reason` stays `null` - without more, a drone
+  holding position looked identical to a failed one. `tracking_update` now
+  carries `guidance_hold` (`auto_takeoff` / `target_unseen` / `identity_lost`),
+  which the Android app shows as a banner and announces once when the hold
+  begins. Tested in `test_tracking_safety_orchestrator.py`.
 - **Known limits, stated plainly**: appearance matching is a color histogram
   - two people in similar clothing can still be confused, which is why a
   mismatch that has no confident alternative *stops* rather than guesses;
@@ -528,7 +534,7 @@ Every mechanism above that has a corresponding `SafetySupervisor` gate is
 covered by at least one test that independently trips *only that
 condition* and asserts guidance is denied - this is what "fault injection"
 means in this codebase's test suite, not a separate framework. As of this
-writing: 490 companion tests passing
+writing: 494 companion tests passing
 (`.venv/Scripts/python -m pytest -q`), including a real end-to-end test
 (`test_integration_websocket.py`) that drives the actual JSON wire
 protocol over a real WebSocket and real MAVLink link, and real-MAVLink

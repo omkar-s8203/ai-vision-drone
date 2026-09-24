@@ -60,6 +60,23 @@ class DetectorBase:
         raise NotImplementedError
 
 
+def load_class_names(labels_path, default):
+    """Class names for the on-sensor model: the firmware's own labels by default, or
+    one label per line from `camera.labels_path` in hardware.yaml. Needed after
+    deploying a retrained model (docs/teach-and-train.md), whose classes differ from
+    the stock COCO list - with the wrong list every detection is mislabelled. Order
+    must match the model's class indices exactly."""
+    if not labels_path:
+        return default
+    from pathlib import Path
+
+    names = [line.strip() for line in Path(labels_path).read_text(encoding="utf-8").splitlines()]
+    names = [n for n in names if n]
+    if not names:
+        raise ValueError(f"labels file {labels_path} is empty")
+    return names
+
+
 class IMX500Detector(DetectorBase):
     """Parses picamera2 IMX500 on-sensor inference output for the SSD
     MobileNetV2 FPN-Lite model (imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk).
@@ -79,7 +96,14 @@ class IMX500Detector(DetectorBase):
         class_names: Union[Sequence[str], dict],
         score_threshold: float = 0.5,
         diagnostic_log_interval_s: float = 5.0,
+        bbox_order: str = "yx",
     ) -> None:
+        # "yx" = (y0, x0, y1, x1), what the stock SSD model emits. A retrained model exported
+        # by other tools (e.g. YOLO) may emit (x0, y0, x1, y1) - "xy" - and would otherwise
+        # produce boxes with x/y swapped, which looks plausible but is completely wrong.
+        if bbox_order not in ("yx", "xy"):
+            raise ValueError(f"bbox_order must be 'yx' or 'xy', got {bbox_order!r}")
+        self.bbox_order = bbox_order
         self.class_names = class_names
         self.score_threshold = score_threshold
         # Rate-limited, not per-frame - "is the AI actually seeing
@@ -142,7 +166,10 @@ class IMX500Detector(DetectorBase):
         for score, class_id_raw, box in zip(scores[:n], classes[:n], boxes[:n]):
             if score < self.score_threshold:
                 continue
-            y0, x0, y1, x1 = box
+            if self.bbox_order == "xy":
+                x0, y0, x1, y1 = box
+            else:
+                y0, x0, y1, x1 = box
             x, y, w, h = imx500.convert_inference_coords((y0, x0, y1, x1), metadata, picam2)
             if not all(math.isfinite(float(v)) for v in (x, y, w, h)) or w <= 1 or h <= 1:
                 # A NaN/inf or degenerate box from the on-sensor model would

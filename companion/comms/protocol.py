@@ -26,6 +26,8 @@ class MessageType:
     ERROR = "error"
     WEBRTC_OFFER = "webrtc_offer"
     WEBRTC_ANSWER = "webrtc_answer"
+    TEACH_OBJECT = "teach_object"
+    TEACH_RESULT = "teach_result"
     PING = "ping"
     PONG = "pong"
 

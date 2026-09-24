@@ -182,6 +182,25 @@ class GroundStationClient(
         send(MessageType.MODE_COMMAND, payload)
     }
 
+    /** Teach mode: the operator drew a box around an object the detector has no class
+     * for and named it. Coordinates are in the video's native pixels. The real size
+     * (metres) is optional but is the only way Follow can judge distance to it. */
+    fun sendTeachObject(
+        x: Double, y: Double, w: Double, h: Double,
+        name: String, realWidthM: Double?, realHeightM: Double?,
+    ) {
+        val payload = JSONObject().apply {
+            put("x", x)
+            put("y", y)
+            put("w", w)
+            put("h", h)
+            put("name", name)
+        }
+        if (realWidthM != null) payload.put("real_width_m", realWidthM)
+        if (realHeightM != null) payload.put("real_height_m", realHeightM)
+        send(MessageType.TEACH_OBJECT, payload)
+    }
+
     fun sendAbort(reason: String) {
         send(MessageType.ABORT, JSONObject().put("reason", reason))
     }

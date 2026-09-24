@@ -315,3 +315,16 @@ Two things accumulate under `~/ai-vision-drone-logs/` on the Pi over time:
   (`scp` it off, or `rm ~/ai-vision-drone-logs/recordings/*` once copied)
   as part of routine field maintenance, especially before an extended
   video-recording session on a full SD card.
+
+## Optional: better tracker for Teach mode
+
+Teach mode (`docs/teach-and-train.md`) tracks taught objects with an OpenCV tracker. The
+plain `opencv-python-headless` this project depends on only has the MIL tracker; the
+contrib build adds CSRT/KCF, which are used automatically when present:
+
+```
+pip uninstall -y opencv-python-headless
+pip install opencv-contrib-python-headless
+```
+
+Measure fps with a taught object on the Pi (lab checklist 6D.3) before relying on it.

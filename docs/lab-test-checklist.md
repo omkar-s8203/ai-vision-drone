@@ -235,6 +235,24 @@ driven by the distance estimate, so this must be real.
 | 6C.8 | Target returns after being lost (same person, same clothing) | Auto re-locked by appearance ("AI learning") without a tap | |
 | 6C.9 | **Obstacle proximity**: a person walks to ~1.5 m from the camera | Banner **"Obstacle too close: person at ..."** and all guidance stops (`obstacle_alert` in log) | |
 
+### 6D - Teach mode (RECORD; MANDATORY only if you will fly with taught objects)
+
+See `docs/teach-and-train.md`. Props off. Use an object the AI does not know (a coloured box, a bag).
+
+| # | Check | Expected | Result |
+|---|---|---|---|
+| 6D.1 | **TEACH NEW OBJECT**, draw a tight box, name it, give real width/height | Chip shows `TEACHING: <name> (n)`; message "Learning ..."; Track/Follow/Orbit sheet opens | |
+| 6D.2 | Walk the object around slowly for 60 s | Lock holds; photo count `n` rises steadily (roughly 1 per second while moving) | n = |
+| 6D.3 | Look at the CPU/fps in the health panel while teaching | fps stays >= 15; no link or heartbeat problems (the tracker runs off the control loop) | fps / CPU |
+| 6D.4 | Check the tracked box against the object at 3 m, 6 m, 10 m | Box stays on the object; distance within 15 % of the tape | |
+| 6D.5 | Cover the object / take it out of view > 2 s | Tracking drops (target lost), chip clears, **does not** re-lock on its own | |
+| 6D.6 | Move the camera so a similar-looking background fills the box | Drift is caught: "Not sure this is your target - holding position" (Follow engaged) or target lost | |
+| 6D.7 | Follow the taught object (props off, GUIDED) | Commanded speeds never exceed **1.5 m/s**; with no real size entered, vx stays 0 | |
+| 6D.8 | Tap a detected person / press STOP | Teaching ends, normal tracking resumes / everything stops | |
+| 6D.9 | Inspect `companion/datasets/<name>/`: open 10 random photos with their `labels/*.txt` boxes drawn | Box sits on the object in every one; no photos with the object cut off at the edge | |
+| 6D.10 | Teach with a hostile name (`../../evil`) | Stored as `evil` inside `companion/datasets/` - nothing outside that folder | |
+
+
 ---
 
 ## Stage 7 - Guidance dry-run (props off, armed, GUIDED) - MANDATORY

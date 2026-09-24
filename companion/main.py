@@ -30,6 +30,9 @@ from companion.guidance.follow import FollowController
 from companion.guidance.geo import bearing_deg, haversine_distance_m
 from companion.guidance.grid_search import GridSearchController, GridSearchPhase
 from companion.guidance.limits import clamp_to_range
+from companion.learning.dataset import DatasetRecorder
+from companion.learning.registry import TaughtObject, TaughtObjectRegistry, slugify
+from companion.learning.visual_tracker import TeachError, VisualObjectTracker, visual_tracking_available
 from companion.guidance.orbit import OrbitController
 from companion.guidance.target_recovery import RecoveryPhase, TargetRecoveryController
 from companion.logging_.session_recorder import SessionRecorder
@@ -52,7 +55,7 @@ from companion.tracking.iou_tracker import IouKalmanTracker
 from companion.tracking.state import TrackingState, TrackingStateMachine
 from companion.tracking.target_selector import select_target, select_target_at_point
 from companion.vision.camera import CameraBase
-from companion.vision.detector import BBox, Detection, DetectorBase
+from companion.vision.detector import BBox, Detection, DetectorBase, load_class_names
 
 if TYPE_CHECKING:
     from companion.comms.video_pipeline import VideoPipeline
@@ -132,6 +135,9 @@ class CompanionOrchestrator:
         auto_takeoff_controller: Optional[AutoTakeoffController] = None,
         reacquire_timeout_s: float = 2.0,
         min_obstacle_distance_m: float = 2.0,
+        taught_registry: Optional[TaughtObjectRegistry] = None,
+        dataset_recorder: Optional[DatasetRecorder] = None,
+        visual_tracker: Optional[Tracker] = None,
     ) -> None:
         self.camera = camera
         self.detector = detector
@@ -141,6 +147,22 @@ class CompanionOrchestrator:
         self.orbit = orbit_controller
         self.approach = approach_controller
         self.appearance = appearance_memory or AppearanceMemory(**load_yaml("reidentification.yaml"))
+        # Teach mode (docs/teach-and-train.md): objects the detector has no class for.
+        teach_cfg = load_yaml("teach_limits.yaml")
+        self.default_tracker = tracker
+        self.visual_tracker = visual_tracker if visual_tracker is not None else (
+            VisualObjectTracker(self._camera_frame, teach_cfg) if visual_tracking_available() else None
+        )
+        dataset_root = Path(teach_cfg["dataset_root"])
+        self.registry = taught_registry or TaughtObjectRegistry(dataset_root / "taught_objects.json")
+        self.dataset = dataset_recorder or DatasetRecorder(dataset_root, teach_cfg)
+        self.custom_max_speed_mps = teach_cfg.get("custom_max_speed_mps")
+        for taught in self.registry.all():
+            distance_estimator.register_custom_object(taught.name, taught.real_width_m, taught.real_height_m)
+        self._pending_teach: Optional[dict] = None
+        self._teach_result: Optional[dict] = None  # one-shot mailbox, sent by process_frame
+        self._custom_object: Optional[TaughtObject] = None  # set while the target is a taught object
+        self._last_identity_similarity: Optional[float] = None
         self.recovery = recovery_controller or TargetRecoveryController(load_yaml("target_recovery.yaml"))
         self.grid_search = grid_search_controller or GridSearchController(load_yaml("grid_search_limits.yaml"))
         self.auto_takeoff = auto_takeoff_controller or AutoTakeoffController(load_yaml("auto_takeoff_limits.yaml"))
@@ -179,6 +201,7 @@ class CompanionOrchestrator:
 
         self.link.on_target_selected(self._on_target_selected)
         self.link.on_mode_command(self._on_mode_command)
+        self.link.on_teach_object(self._on_teach_object)
         self.link.on_abort(self._on_abort)
         self.link.on_arm_command(self._on_arm_command)
         self.link.on_set_flight_mode(self._on_set_flight_mode)
@@ -208,6 +231,92 @@ class CompanionOrchestrator:
                 "bbox",
                 BBox(x=payload["x"], y=payload["y"], w=payload["w"], h=payload["h"]),
             )
+
+    def _on_teach_object(self, payload: dict) -> None:
+        """The operator drew a box around something the detector has no class for
+        and named it. Validated here; started in process_frame (it needs the frame).
+        Every field is untrusted app input."""
+        try:
+            x, y, w, h = (float(payload[key]) for key in ("x", "y", "w", "h"))
+        except (KeyError, TypeError, ValueError):
+            self._teach_result = {"ok": False, "reason": "bad_box"}
+            return
+        if not all(math.isfinite(v) for v in (x, y, w, h)) or w <= 0 or h <= 0:
+            self._teach_result = {"ok": False, "reason": "bad_box"}
+            return
+        if slugify(payload.get("name")) is None:
+            self._teach_result = {"ok": False, "reason": "bad_name"}
+            return
+        self._pending_teach = {
+            "bbox": BBox(x, y, w, h),
+            "name": payload.get("name"),
+            "real_width_m": payload.get("real_width_m"),
+            "real_height_m": payload.get("real_height_m"),
+        }
+
+    def _fail_teach(self, reason: str) -> None:
+        self.recorder.record("teach_failed", reason=reason)
+        self._teach_result = {"ok": False, "reason": reason}
+
+    def _start_teaching(self, frame) -> None:
+        pending, self._pending_teach = self._pending_teach, None
+        if self.visual_tracker is None:
+            self._fail_teach("no_visual_tracker")
+            return
+        frame_bgr = self._camera_frame()
+        if frame_bgr is None:
+            self._fail_teach("no_camera_frame")
+            return
+        taught = self.registry.register(pending["name"], pending["real_width_m"], pending["real_height_m"])
+        if taught is None:
+            self._fail_teach("bad_name")
+            return
+        self.distance_estimator.register_custom_object(taught.name, taught.real_width_m, taught.real_height_m)
+        detection = Detection(
+            bbox=pending["bbox"], score=1.0, class_id=taught.class_id,
+            class_name=taught.name, frame_ts=frame.ts,
+        )
+        self._pending_selection = None  # an older tap/drag must not override this
+        self._end_teaching()
+        self.state_machine.stop()  # resets whichever tracker was active
+        self.state_machine.tracker = self.visual_tracker
+        try:
+            self.state_machine.start(frame.ts, detection)
+        except TeachError as exc:
+            self.state_machine.tracker = self.default_tracker
+            self.state_machine.stop()
+            self._fail_teach(str(exc))
+            return
+        self.appearance.learn(frame_bgr, self.state_machine.target)
+        if not self.appearance.has_signature:
+            # Without an appearance signature the identity check (the only thing
+            # that catches a drifting visual tracker) could not run - refuse.
+            self.state_machine.stop()
+            self.state_machine.tracker = self.default_tracker
+            self._fail_teach("box_outside_frame")
+            return
+        self._identity_mismatch_frames = 0
+        self._identity_dropped = False
+        self._custom_object = taught
+        self.dataset.start(taught)
+        self.recorder.record(
+            "teach_started", name=taught.name, real_width_m=taught.real_width_m, real_height_m=taught.real_height_m
+        )
+        self._teach_result = {
+            "ok": True,
+            "name": taught.name,
+            "has_distance": taught.real_width_m is not None or taught.real_height_m is not None,
+        }
+
+    def _end_teaching(self) -> None:
+        """Back to detector-based tracking. Safe to call when not teaching."""
+        if self._custom_object is None:
+            return
+        self.dataset.stop()
+        self._custom_object = None
+        self.state_machine.tracker = self.default_tracker
+        if self.visual_tracker is not None:
+            self.visual_tracker.reset()
 
     def _on_mode_command(self, payload: dict) -> None:
         mode_str = payload.get("mode", "idle")
@@ -385,6 +494,8 @@ class CompanionOrchestrator:
         self._identity_dropped = False
         self._takeoff_refusal = None
         self.state_machine.stop()
+        self._end_teaching()
+        self._pending_teach = None
         self.appearance.forget()
         self.recovery.cancel()
         # A real field-reported bug: "the selected target should be
@@ -542,6 +653,7 @@ class CompanionOrchestrator:
         stranger. A no-op wherever there is no real frame (sim mode)."""
         frame_bgr = self._camera_frame()
         similarity_now = self.appearance.check_identity(frame_bgr, self.state_machine.target)
+        self._last_identity_similarity = similarity_now
         if similarity_now is None:
             return tracking_state
         if similarity_now >= self.appearance.track_min_similarity:
@@ -693,6 +805,9 @@ class CompanionOrchestrator:
         # TrackingStateMachine.start()); recovery.update()'s own
         # target_reacquired check (below) cleanly cancels an in-progress
         # search/RTL the same frame if one was running.
+        if self._pending_teach is not None:
+            self._start_teaching(frame)
+
         if self._pending_selection is not None:
             if self._pending_selection[0] == "point":
                 _, px, py = self._pending_selection
@@ -701,12 +816,26 @@ class CompanionOrchestrator:
                 _, bbox = self._pending_selection
                 det = select_target(detections, bbox)
             if det is not None:
+                self._end_teaching()  # a normal selection returns to detector-based tracking
                 self.state_machine.start(frame.ts, det)
                 self.appearance.learn(self._camera_frame(), self.state_machine.target)
                 self._identity_mismatch_frames = 0
             self._pending_selection = None
 
-        tracking_state = self.state_machine.update(frame.ts, detections)
+        if self._custom_object is not None:
+            # The OpenCV tracker costs tens of milliseconds a frame - on a worker
+            # thread so it can never stall the event loop (link heartbeats, the
+            # watchdog, MAVLink) or the control loop's timing.
+            tracking_state = await asyncio.get_running_loop().run_in_executor(
+                None, self.state_machine.update, frame.ts, detections
+            )
+            if tracking_state == TrackingState.TARGET_LOST:
+                # No detector to re-find it with, and no automatic re-lock by design:
+                # the operator re-draws the object.
+                self.recorder.record("teach_target_lost", name=self._custom_object.name)
+                self._end_teaching()
+        else:
+            tracking_state = self.state_machine.update(frame.ts, detections)
         self.watchdog.beat("tracker")
 
         if tracking_state == TrackingState.TARGET_LOST and self.appearance.has_signature:
@@ -728,6 +857,18 @@ class CompanionOrchestrator:
             tracking_state = self._verify_tracked_identity(frame, detections, tracking_state)
         else:
             self._identity_mismatch_frames = 0
+            self._last_identity_similarity = None
+        if (
+            self._custom_object is not None
+            and tracking_state == TrackingState.TRACKING
+            and self.state_machine.target is not None
+        ):
+            # Label the frame the tracker actually looked at, not whatever the camera
+            # has captured since - a moving target would otherwise be mislabelled.
+            labelled_frame = getattr(self.visual_tracker, "last_frame", None)
+            self.dataset.maybe_save(
+                labelled_frame, self.state_machine.target.bbox, frame.ts, self._last_identity_similarity
+            )
 
         distance_m = None
         det_for_distance = None
@@ -1049,6 +1190,17 @@ class CompanionOrchestrator:
         if not orbit_ran:
             self.orbit.reset()
 
+        if command is not None and self._custom_object is not None and self.custom_max_speed_mps is not None:
+            # A visual tracker has no detector confirming it is still on the object -
+            # follow it slower than a detector-confirmed target.
+            cap = self.custom_max_speed_mps
+            command = GuidanceCommand(
+                vx_mps=max(-cap, min(cap, command.vx_mps)),
+                vy_mps=max(-cap, min(cap, command.vy_mps)),
+                vz_mps=max(-cap, min(cap, command.vz_mps)),
+                yaw_rate_rads=command.yaw_rate_rads,
+            )
+
         sent = False
         if command is not None and decision.guidance_allowed:
             sent = self.mavlink.send_velocity_setpoint(
@@ -1060,6 +1212,10 @@ class CompanionOrchestrator:
                 vx=command.vx_mps, vy=command.vy_mps, vz=command.vz_mps,
                 yaw_rate=command.yaw_rate_rads,
             )
+
+        if self._teach_result is not None:
+            teach_result, self._teach_result = self._teach_result, None
+            await self.link.send_teach_result(teach_result)
 
         target = self.state_machine.target
         await self.link.send_tracking_update(
@@ -1089,6 +1245,8 @@ class CompanionOrchestrator:
                 "commanded_yaw_rate_rads": command.yaw_rate_rads if command is not None else None,
                 "guidance_sent": sent,
                 "guidance_hold": hold_reason or self._takeoff_refusal,
+                "teaching": self._custom_object.name if self._custom_object is not None else None,
+                "teach_samples": self.dataset.sample_count if self._custom_object is not None else None,
             }
         )
         await self.link.send_detections_update(
@@ -1368,8 +1526,9 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
     )
     intrinsics = camera.imx500.network_intrinsics
     detector = IMX500Detector(
-        class_names=intrinsics.labels,
+        class_names=load_class_names(hardware_cfg["camera"].get("labels_path"), intrinsics.labels),
         score_threshold=hardware_cfg["camera"].get("score_threshold", 0.5),
+        bbox_order=hardware_cfg["camera"].get("bbox_order", "yx"),
     )
     tracker = build_tracker(hardware_cfg)
     rangefinder = None
@@ -1555,6 +1714,10 @@ def run_startup_health_check(mode: str) -> None:
         "auto_takeoff_limits.yaml",
     ):
         _load(file_name)
+
+    teach_cfg = _load("teach_limits.yaml")
+    for path in (["dataset_root"], ["custom_max_speed_mps"], ["sample_interval_s"], ["min_box_px"], ["max_samples_per_object"]):
+        _require(teach_cfg, path, "teach_limits.yaml")
 
     if problems:
         raise StartupHealthCheckError(

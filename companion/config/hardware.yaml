@@ -19,6 +19,12 @@ camera:
   # working against real IMX500 hardware (docs plan M2). 90 labels, 0-indexed
   # directly (no background offset) - see IMX500Detector.
   imx500_model_path: /usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk
+  # Only when running a RETRAINED model (docs/teach-and-train.md): a text file with one
+  # class name per line, in the model's class-index order. Leave unset for the stock model.
+  # labels_path: /home/omkar/ai-vision-drone/models/taught_labels.txt
+  # Box coordinate order the model emits: "yx" (default - stock SSD model) or "xy". A retrained
+  # model from another toolchain may need "xy"; check with a known object before trusting it.
+  # bbox_order: yx
   # Minimum on-sensor detection confidence to accept a box at all
   # (IMX500Detector.parse() drops anything below this before it ever
   # reaches tracking/selection). Lowered from the original 0.5 default to

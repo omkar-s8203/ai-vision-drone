@@ -73,11 +73,37 @@ def _touches_vertical_edges(bbox, intrinsics: CameraIntrinsics) -> bool:
     return bbox.y <= EDGE_MARGIN_PX or bbox.y + bbox.h >= intrinsics.image_height - EDGE_MARGIN_PX
 
 
+def _estimate_custom_object_m(
+    detection: Detection,
+    intrinsics: CameraIntrinsics,
+    size_m: tuple[Optional[float], Optional[float]],
+    reject_truncated: bool,
+    prefer_height: bool,
+) -> Optional[float]:
+    """Distance to a taught object from the real size the operator supplied. Uses
+    whichever dimension is known (height first when preferred), skipping one that is
+    clipped by the image border when truncation is being rejected."""
+    width_m, height_m = size_m
+    bbox = detection.bbox
+    candidates = []
+    if height_m is not None:
+        candidates.append((height_m * intrinsics.fy / bbox.h, _touches_vertical_edges(bbox, intrinsics)))
+    if width_m is not None:
+        candidates.append((width_m * intrinsics.fx / bbox.w, _touches_horizontal_edges(bbox, intrinsics)))
+    if not prefer_height:
+        candidates.reverse()
+    for distance, clipped in candidates:
+        if not (reject_truncated and clipped):
+            return distance
+    return None
+
+
 def estimate_distance_vision_m(
     detection: Detection,
     intrinsics: CameraIntrinsics,
     reject_truncated: bool = False,
     prefer_height: bool = False,
+    custom_sizes: Optional[dict] = None,
 ) -> Optional[float]:
     """Monocular estimate. With `prefer_height`, an upright person's height
     is used instead of their (pose-dependent) width - meant for Follow/Orbit,
@@ -95,6 +121,11 @@ def estimate_distance_vision_m(
     bbox = detection.bbox
     if bbox.w <= 0 or bbox.h <= 0:
         return None
+
+    if custom_sizes and detection.class_name in custom_sizes:
+        return _estimate_custom_object_m(
+            detection, intrinsics, custom_sizes[detection.class_name], reject_truncated, prefer_height
+        )
 
     real_height = KNOWN_OBJECT_HEIGHTS_M.get(detection.class_name)
     if prefer_height and real_height is not None and bbox.h >= UPRIGHT_MIN_ASPECT * bbox.w:
@@ -168,6 +199,18 @@ class DistanceEstimator:
     ) -> None:
         self.intrinsics = intrinsics
         self.rangefinder = rangefinder or NullDistanceSource()
+        # Objects the operator taught (companion/learning): name -> (width_m, height_m),
+        # either may be None. Without a real size a taught object has NO distance
+        # estimate (never a guess), and Follow then holds its forward speed at zero.
+        self.custom_sizes: dict[str, tuple[Optional[float], Optional[float]]] = {}
+
+    def register_custom_object(
+        self, name: str, width_m: Optional[float], height_m: Optional[float]
+    ) -> None:
+        if width_m is None and height_m is None:
+            self.custom_sizes.pop(name, None)
+        else:
+            self.custom_sizes[name] = (width_m, height_m)
 
     def estimate(
         self,
@@ -190,6 +233,7 @@ class DistanceEstimator:
             if rf is not None:
                 return rf, "rangefinder"
         vision = estimate_distance_vision_m(
-            detection, self.intrinsics, reject_truncated=reject_truncated, prefer_height=prefer_height
+            detection, self.intrinsics, reject_truncated=reject_truncated, prefer_height=prefer_height,
+            custom_sizes=self.custom_sizes,
         )
         return vision, "vision"

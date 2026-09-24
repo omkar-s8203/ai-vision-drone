@@ -37,6 +37,11 @@ class GroundStationLink:
     def on_mode_command(self, handler: Callable[[dict], None]) -> None:
         self._handlers[MessageType.MODE_COMMAND] = handler
 
+    def on_teach_object(self, handler: Callable[[dict], None]) -> None:
+        """handler receives {x, y, w, h, name, real_width_m?, real_height_m?} - the
+        operator's drawn box around an object to teach (docs/teach-and-train.md)."""
+        self._handlers[MessageType.TEACH_OBJECT] = handler
+
     def on_abort(self, handler: Callable[[dict], None]) -> None:
         self._handlers[MessageType.ABORT] = handler
 
@@ -118,6 +123,9 @@ class GroundStationLink:
 
     async def send_arm_command_result(self, payload: dict) -> None:
         await self._send(MessageType.ARM_COMMAND_RESULT, payload)
+
+    async def send_teach_result(self, payload: dict) -> None:
+        await self._send(MessageType.TEACH_RESULT, payload)
 
     async def _send(self, msg_type: str, payload: dict) -> None:
         envelope = make_envelope(msg_type, payload, self._seq.next())

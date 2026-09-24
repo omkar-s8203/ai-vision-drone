@@ -575,3 +575,28 @@ def test_a_normal_disarm_and_arm_are_never_blocked_by_altitude(tmp_path):
         orch._on_arm_command({"armed": False})
         orch._on_arm_command({"armed": True})
         assert len(_arm_calls(conn)) == 2
+
+
+def test_bbox_order_xy_swaps_a_retrained_models_coordinates_before_conversion():
+    seen = []
+
+    class _Imx:
+        def convert_inference_coords(self, box, metadata, picam2):
+            seen.append(box)                     # what the firmware helper is asked to convert: (y0, x0, y1, x1)
+            y0, x0, y1, x1 = box
+            return (x0 * 1000, y0 * 1000, (x1 - x0) * 1000, (y1 - y0) * 1000)
+
+    boxes = np.array([[[0.10, 0.20, 0.50, 0.60]]])   # a model emitting (x0, y0, x1, y1)
+    raw = (_Imx(), [boxes, np.array([[0.9]]), np.array([[0.0]]), np.array([[1]])], None, None)
+
+    IMX500Detector(class_names=["thing"], bbox_order="xy").parse(raw, 0.0)
+    assert seen == [(0.20, 0.10, 0.60, 0.50)]        # swapped into (y0, x0, y1, x1)
+
+    seen.clear()
+    IMX500Detector(class_names=["thing"], bbox_order="yx").parse(raw, 0.0)
+    assert seen == [(0.10, 0.20, 0.50, 0.60)]        # default: untouched
+
+
+def test_an_unknown_bbox_order_is_rejected():
+    with pytest.raises(ValueError):
+        IMX500Detector(class_names=["thing"], bbox_order="wh")

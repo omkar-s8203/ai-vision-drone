@@ -102,6 +102,10 @@ data class TrackingState(
     // rather than steering on stale coordinates), "identity_lost" (the tracked
     // subject stopped looking like the selected target). null = not holding.
     val guidanceHold: String? = null,
+    // Teach mode: the name of the object being learned right now (null = not teaching)
+    // and how many training photos have been saved so far.
+    val teaching: String? = null,
+    val teachSamples: Int? = null,
 )
 
 /** One live object detection before/independent of target selection - lets

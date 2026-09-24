@@ -383,6 +383,36 @@ class MainViewModel : ViewModel() {
         _showTargetActionSheet.value = true
     }
 
+    /** Result text for the last teach request (success guidance or why it failed). */
+    private val _teachMessage = MutableStateFlow<String?>(null)
+    val teachMessage = _teachMessage.asStateFlow()
+
+    fun dismissTeachMessage() {
+        _teachMessage.value = null
+    }
+
+    /** Teach mode: track an object the AI has no class for and save labelled photos of
+     * it for later training (docs/teach-and-train.md). The Pi answers with a
+     * teach_result; on success the usual Track/Follow/Orbit sheet opens. */
+    fun teachObject(x: Double, y: Double, w: Double, h: Double, name: String, widthM: Double?, heightM: Double?) {
+        _teachMessage.value = null
+        client.sendTeachObject(x, y, w, h, name, widthM, heightM)
+    }
+
+    private fun describeTeachResult(ok: Boolean, name: String?, hasDistance: Boolean, reason: String?): String =
+        if (ok) {
+            "Learning \"$name\" - keep it in view from different angles; photos are saved for training." +
+                if (hasDistance) "" else " No size given, so Follow can only turn toward it, not keep a distance."
+        } else when (reason) {
+            "bad_box" -> "Couldn't read that box - draw it again."
+            "bad_name" -> "Give it a name using letters or numbers."
+            "no_camera_frame" -> "No camera image yet - try again in a moment."
+            "no_visual_tracker" -> "Teach mode isn't available on this Pi (no OpenCV tracker installed)."
+            "box_too_small" -> "That box is too small - draw a bigger one around the object."
+            "box_outside_frame" -> "That box is outside the picture - draw it on the object."
+            else -> "Teach failed: ${reason ?: "unknown"}"
+        }
+
     fun dismissTargetActionSheet() {
         _showTargetActionSheet.value = false
     }
@@ -699,6 +729,20 @@ class MainViewModel : ViewModel() {
                 recording = envelope.payload.optBoolean("recording", false),
                 durationS = envelope.payload.optDoubleOrNull("duration_s") ?: 0.0,
             )
+            MessageType.TEACH_RESULT -> {
+                val ok = envelope.payload.optBoolean("ok", false)
+                _teachMessage.value = describeTeachResult(
+                    ok,
+                    envelope.payload.optStringOrNull("name"),
+                    envelope.payload.optBoolean("has_distance", false),
+                    envelope.payload.optStringOrNull("reason"),
+                )
+                if (ok) {
+                    // Same next step as selecting any target: pick Track / Follow / Orbit.
+                    setMode(DroneMode.TRACKING)
+                    _showTargetActionSheet.value = true
+                }
+            }
             MessageType.ARM_COMMAND_RESULT -> {
                 // A real, previously-documented gap: an arm/disarm request
                 // refused by the FC's own pre-arm checks used to be
@@ -851,6 +895,8 @@ class MainViewModel : ViewModel() {
             commandedYawRateRads = p.optDoubleOrNull("commanded_yaw_rate_rads"),
             guidanceSent = p.optBoolean("guidance_sent", false),
             guidanceHold = p.optStringOrNull("guidance_hold"),
+            teaching = p.optStringOrNull("teaching"),
+            teachSamples = p.optIntOrNull("teach_samples"),
         )
     }
 

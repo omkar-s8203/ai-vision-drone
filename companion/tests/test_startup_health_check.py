@@ -27,6 +27,10 @@ _COMPLETE_FOLLOW_CONFIG = {
     "max_accel_mps2": 1.5, "min_altitude_m": 2.0, "max_altitude_m": 30.0,
     "min_separation_m": 3.0, "max_separation_m": 15.0, "target_separation_m": 6.0,
 }
+_COMPLETE_TEACH_CONFIG = {
+    "dataset_root": "companion/datasets", "custom_max_speed_mps": 1.5, "sample_interval_s": 0.5,
+    "min_box_px": 12, "max_samples_per_object": 400,
+}
 _COMPLETE_ORBIT_CONFIG = {
     "max_accel_mps2": 1.5, "min_altitude_m": 2.0, "max_altitude_m": 30.0,
     "min_radius_m": 3.0, "max_radius_m": 20.0, "orbit_radius_m": 8.0,
@@ -60,6 +64,7 @@ def test_sim_mode_does_not_require_mavlink_config():
         "safety_limits.yaml": _COMPLETE_SAFETY_CONFIG,
         "grid_search_limits.yaml": _COMPLETE_GRID_SEARCH_CONFIG,
         "follow_limits.yaml": _COMPLETE_FOLLOW_CONFIG,
+        "teach_limits.yaml": _COMPLETE_TEACH_CONFIG,
         "orbit_limits.yaml": _COMPLETE_ORBIT_CONFIG,
     }
     with patch("companion.main.load_yaml", side_effect=lambda name: fake_configs.get(name, {})):
@@ -154,6 +159,7 @@ def test_passes_with_no_problems_does_not_raise():
         "safety_limits.yaml": _COMPLETE_SAFETY_CONFIG,
         "grid_search_limits.yaml": _COMPLETE_GRID_SEARCH_CONFIG,
         "follow_limits.yaml": _COMPLETE_FOLLOW_CONFIG,
+        "teach_limits.yaml": _COMPLETE_TEACH_CONFIG,
         "orbit_limits.yaml": _COMPLETE_ORBIT_CONFIG,
     }
     with patch("companion.main.load_yaml", side_effect=lambda name: fake_configs.get(name, {})):

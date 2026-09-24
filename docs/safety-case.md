@@ -590,6 +590,48 @@ drone stay stable and safe through a mission".
   reverse cap, detector, force-disarm guard) - mutation-checked - plus updates
   to the health-check tests.
 
+## Teach mode (taught objects) - what is and is not protected
+
+A field request: "detect and learn new things". The on-sensor model is fixed, so this
+adds (1) tracking of an operator-drawn object with a class-agnostic OpenCV tracker and
+(2) capture of labelled photos for **offline** training. It never changes flight
+behaviour or safety limits by itself.
+
+- **The new risk**: a taught object is tracked by pixels alone - no detector confirms it
+  is still on the object, so the tracker can drift onto background. Mitigations:
+  the appearance identity check runs on every tracked frame (drift becomes a hold, then
+  target-lost, exactly as for a swapped person - tested with real pixels); sanity limits
+  on box size/shape/position reject implausible tracker output; Follow/Orbit speed is
+  capped at 1.5 m/s while the target is a taught object; **no automatic re-lock** (a lost
+  object must be re-drawn by the operator).
+- **No guessed distance**: without a real size a taught object has no distance estimate,
+  and Follow holds its forward speed at zero. Implausible sizes are ignored.
+- **Not an obstacle**: taught objects are not detections, so the obstacle-proximity check
+  cannot see them. This is deliberate and documented; it changes only when a retrained
+  model detects them (then their real size applies).
+- **Control loop protected**: the tracker costs tens of milliseconds a frame (measured,
+  laptop CPU) so it runs on a worker thread; it cannot stall link heartbeats, the
+  watchdog or MAVLink handling. The Pi's cost is not yet measured - lab checklist 6D.
+- **Untrusted input**: every `teach_object` field comes from the app. The name is reduced
+  to a `[a-z0-9_-]` slug (no path can be formed - tested with `../../..`), the box must be
+  finite and positive, sizes are range-checked, the registry (100 objects) and dataset
+  (400 photos/object, 500 MB total) are capped, and registry writes are atomic.
+- **Dataset quality gates**: photos are saved only while the track still matches the
+  object, not for near-duplicates, and never for a box clipped by the frame edge; each
+  photo is labelled against the exact frame the tracker processed. JPEG encoding is on a
+  background thread.
+- **Deploying a retrained model is a separate, deliberate step** (`docs/teach-and-train.md`):
+  labels file, `bbox_order` (a swapped x/y order looks plausible but is wrong), and the
+  lab stages must be re-run. A model trained only on taught objects forgets people/cars,
+  which this system depends on - the guide says to merge datasets.
+- **Not verified**: training, IMX500 conversion and on-sensor deployment of a retrained
+  model were **not run** here (documented from vendor docs); tracker drift and speed on
+  real footage/the Pi are untested.
+- **Tests**: `test_teach_mode.py` (real OpenCV tracking on synthetic moving video, dataset
+  gates and label correctness, registry safety, distance for taught sizes, the full
+  orchestrator flow incl. drift/loss/abort/selection, speed cap, off-loop execution) and
+  `test_export_taught_dataset.py` - mutation-checked.
+
 ## Grid Search finishing - a deliberately different design from Approach-Test
 
 - Unlike the above, a Grid Search sweep that finishes on its own (every
@@ -608,7 +650,7 @@ Every mechanism above that has a corresponding `SafetySupervisor` gate is
 covered by at least one test that independently trips *only that
 condition* and asserts guidance is denied - this is what "fault injection"
 means in this codebase's test suite, not a separate framework. As of this
-writing: 545 companion tests passing
+writing: 633 companion tests passing
 (`.venv/Scripts/python -m pytest -q`), including a real end-to-end test
 (`test_integration_websocket.py`) that drives the actual JSON wire
 protocol over a real WebSocket and real MAVLink link, and real-MAVLink

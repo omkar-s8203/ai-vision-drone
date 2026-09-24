@@ -12,6 +12,8 @@ venv/
 
 # Companion runtime artifacts
 companion/logs/
+# Taught-object photos/labels (teach mode) - personal data, can be large
+companion/datasets/
 *.tlog
 *.bin.ulg
 

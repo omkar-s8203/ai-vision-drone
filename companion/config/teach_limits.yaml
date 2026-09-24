@@ -1,0 +1,37 @@
+# Teach mode: the operator draws a box around any object and names it; the Pi
+# tracks it with a class-agnostic visual tracker (the on-sensor AI only knows
+# its fixed model's classes) and saves labelled photos so a proper model can be
+# trained offline later (docs/teach-and-train.md).
+
+# Where taught-object photos, labels and the object registry are stored,
+# relative to the working directory (the repo root on the Pi).
+dataset_root: companion/datasets
+
+# --- dataset capture ---------------------------------------------------------
+# At most one saved sample per this many seconds while the object is tracked.
+sample_interval_s: 0.5
+# A sample must ALSO differ from the last saved one (moved / changed size), or be
+# at least min_repeat_s later - near-duplicates teach a model nothing.
+min_center_shift_frac: 0.03   # fraction of the frame width
+min_scale_change_frac: 0.08   # fractional change in box area
+min_repeat_s: 3.0
+# Stop capturing an object after this many samples / when the dataset folder
+# reaches this size (the Pi's SD card is finite).
+max_samples_per_object: 400
+max_total_mb: 500
+# Only save when the tracked box still looks like the taught object (histogram
+# similarity from the appearance check) - a drifting tracker would otherwise
+# save wrongly-labelled images.
+min_similarity: 0.6
+jpeg_quality: 90
+
+# --- safety while following a taught (non-detector) object -------------------
+# A visual tracker has no detector confirming it is still on the object, so it
+# can drift onto background. Follow/Orbit velocity is capped lower while the
+# target is a taught object.
+custom_max_speed_mps: 1.5
+# Tracker sanity: a box smaller than this, or one that changes area / aspect by
+# more than these factors in a single update, is treated as a lost track.
+min_box_px: 12
+max_area_change_factor: 1.8
+max_aspect_change_factor: 1.8

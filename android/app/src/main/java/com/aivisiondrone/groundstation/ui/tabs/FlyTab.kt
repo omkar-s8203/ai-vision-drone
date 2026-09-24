@@ -27,7 +27,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -125,6 +130,7 @@ fun FlyTab(
     val trailSnapshot by viewModel.trailSnapshot.collectAsState()
     val perimeterZone by viewModel.perimeterZone.collectAsState()
     val perimeterBreached by viewModel.perimeterBreached.collectAsState()
+    val teachMessage by viewModel.teachMessage.collectAsState()
 
     var rendererRef by remember { mutableStateOf<SurfaceViewRenderer?>(null) }
     var overlaySizePx by remember { mutableStateOf(Size.Zero) }
@@ -133,6 +139,9 @@ fun FlyTab(
     // composable. Drag-to-define exits automatically once a zone is drawn
     // (see the PerimeterZoneEditOverlay callback below).
     var perimeterEditMode by remember { mutableStateOf(false) }
+    // Teach mode: drag a box around an unknown object, then name it in a dialog.
+    var teachEditMode by remember { mutableStateOf(false) }
+    var pendingTeachRect by remember { mutableStateOf<TargetBBox?>(null) }
 
     val videoWidth = tracking.imageWidth?.toDouble() ?: ASSUMED_VIDEO_WIDTH
     val videoHeight = tracking.imageHeight?.toDouble() ?: ASSUMED_VIDEO_HEIGHT
@@ -215,6 +224,25 @@ fun FlyTab(
                         )
                     }
                     perimeterEditMode = false
+                },
+            )
+        } else if (teachEditMode) {
+            // Same drag gesture as the perimeter zone, so it can never conflict with
+            // normal target selection either.
+            PerimeterZoneEditOverlay(
+                modifier = Modifier.fillMaxSize(),
+                onZoneDefined = { rect: Rect ->
+                    if (overlaySizePx.width > 0f && overlaySizePx.height > 0f) {
+                        val scaleX = videoWidth / overlaySizePx.width
+                        val scaleY = videoHeight / overlaySizePx.height
+                        pendingTeachRect = TargetBBox(
+                            x = rect.left * scaleX,
+                            y = rect.top * scaleY,
+                            w = rect.width * scaleX,
+                            h = rect.height * scaleY,
+                        )
+                    }
+                    teachEditMode = false
                 },
             )
         } else {
@@ -380,6 +408,50 @@ fun FlyTab(
                             letterSpacing = 0.5.sp
                         )
                     }
+
+                    // Teach mode: track and learn an object the AI has no class for. Tap to
+                    // draw a box around it; while teaching, tap again to stop.
+                    val teachingName = tracking.teaching
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .background(
+                                when {
+                                    teachingName != null -> DroneColors.Accent.copy(alpha = 0.25f)
+                                    teachEditMode -> DroneColors.Warning.copy(alpha = 0.25f)
+                                    else -> DroneColors.Overlay
+                                },
+                                RoundedCornerShape(8.dp),
+                            )
+                            .clickable {
+                                when {
+                                    teachEditMode -> teachEditMode = false
+                                    teachingName != null -> viewModel.cancelTargetSelection()
+                                    else -> {
+                                        perimeterEditMode = false
+                                        teachEditMode = true
+                                    }
+                                }
+                            }
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = when {
+                                teachingName != null ->
+                                    "TEACHING: $teachingName (${tracking.teachSamples ?: 0}) - TAP TO STOP"
+                                teachEditMode -> "TEACH: DRAW A BOX"
+                                else -> "TEACH NEW OBJECT"
+                            },
+                            color = when {
+                                teachingName != null -> DroneColors.Accent
+                                teachEditMode -> DroneColors.Warning
+                                else -> DroneColors.TextSecondary
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 0.5.sp
+                        )
+                    }
                 }
 
                 Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -484,6 +556,76 @@ fun FlyTab(
                     },
                 )
             }
+        }
+
+        teachMessage?.let { message ->
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 130.dp, start = 24.dp, end = 24.dp)
+                    .background(DroneColors.Overlay, RoundedCornerShape(12.dp))
+                    .clickable { viewModel.dismissTeachMessage() }
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
+            ) {
+                Text(
+                    text = message + "  (tap to dismiss)",
+                    color = DroneColors.TextPrimary,
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+        }
+
+        val teachRect = pendingTeachRect
+        if (teachRect != null) {
+            var teachName by remember(teachRect) { mutableStateOf("") }
+            var teachWidth by remember(teachRect) { mutableStateOf("") }
+            var teachHeight by remember(teachRect) { mutableStateOf("") }
+            AlertDialog(
+                onDismissRequest = { pendingTeachRect = null },
+                title = { Text("Teach the drone a new object") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "Name it. The real size in metres is optional but is the only way Follow can " +
+                                "judge distance to it - without it the drone can only turn toward it.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        OutlinedTextField(
+                            value = teachName,
+                            onValueChange = { teachName = it },
+                            label = { Text("Name") },
+                            singleLine = true,
+                        )
+                        OutlinedTextField(
+                            value = teachWidth,
+                            onValueChange = { teachWidth = it },
+                            label = { Text("Real width (m, optional)") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        )
+                        OutlinedTextField(
+                            value = teachHeight,
+                            onValueChange = { teachHeight = it },
+                            label = { Text("Real height (m, optional)") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        enabled = teachName.isNotBlank(),
+                        onClick = {
+                            viewModel.teachObject(
+                                teachRect.x, teachRect.y, teachRect.w, teachRect.h,
+                                teachName.trim(), teachWidth.toDoubleOrNull(), teachHeight.toDoubleOrNull(),
+                            )
+                            pendingTeachRect = null
+                        },
+                    ) { Text("Teach") }
+                },
+                dismissButton = { TextButton(onClick = { pendingTeachRect = null }) { Text("Cancel") } },
+            )
         }
 
         if (showTargetActionSheet) {

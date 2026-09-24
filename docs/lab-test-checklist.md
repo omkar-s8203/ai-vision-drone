@@ -52,8 +52,8 @@ Why each mechanism exists: `docs/safety-case.md`. Message formats: `docs/protoco
   (`ai-vision-drone`).
 - Tape measure (10 m+), a helper to act as the tracked "target", a second helper and two
   differently coloured shirts for the identity tests, a stopwatch.
-- A clear outdoor spot with sky view for the GPS-dependent tests (Stage 7 - grid search,
-  Stage 8 - takeoff/GPS tests). Stages 1-6 can run indoors.
+- A clear outdoor spot with sky view for the GPS-dependent tests (Stage 5.3, Stage 8).
+  Stages 1-4, 5 (except GPS), 6 and 7 can run indoors.
 
 ### Handy commands (on the Pi)
 

@@ -273,3 +273,35 @@ async def test_a_finished_grid_search_is_reset_even_if_the_next_start_attempt_fa
         assert orchestrator.grid_search.status().waypoints == []
         assert orchestrator.requested_mode == SupervisorState.IDLE
         recorder.close()
+
+
+def test_absurd_grid_search_dimensions_are_clamped_not_planned_literally(tmp_path):
+    """An unbounded width/height from the app would try to plan (and then
+    stream to the app every frame) an enormous waypoint list."""
+    with _build_orchestrator(tmp_path) as (orchestrator, recorder, conn, transport):
+        orchestrator.grid_search.limits["min_dimension_m"] = 20.0
+        orchestrator.grid_search.limits["max_dimension_m"] = 200.0
+        orchestrator.mavlink.telemetry.lat = 37.7749
+        orchestrator.mavlink.telemetry.lon = -122.4194
+
+        orchestrator._on_mode_command(
+            {"mode": "grid_search", "grid_search_width_m": 1e9, "grid_search_height_m": 1e9}
+        )
+
+        assert orchestrator.grid_search.is_active is True
+        assert len(orchestrator.grid_search.status().waypoints) < 200
+        recorder.close()
+
+
+def test_non_finite_grid_search_dimensions_fall_back_to_idle(tmp_path):
+    with _build_orchestrator(tmp_path) as (orchestrator, recorder, conn, transport):
+        orchestrator.mavlink.telemetry.lat = 37.7749
+        orchestrator.mavlink.telemetry.lon = -122.4194
+
+        orchestrator._on_mode_command(
+            {"mode": "grid_search", "grid_search_width_m": float("nan"), "grid_search_height_m": 60.0}
+        )
+
+        assert orchestrator.grid_search.is_active is False
+        assert orchestrator.requested_mode == SupervisorState.IDLE
+        recorder.close()

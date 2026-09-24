@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import time
 from pathlib import Path
@@ -23,10 +24,12 @@ from companion.comms.ws_server import GroundStationLink
 from companion.config.loader import load_yaml
 from companion.guidance.approach_test import ApproachInputs, ApproachTestController
 from companion.guidance.auto_takeoff import AutoTakeoffController
-from companion.guidance.distance import CameraIntrinsics, DistanceEstimator
+from companion.guidance.command import GuidanceCommand
+from companion.guidance.distance import CameraIntrinsics, DistanceEstimator, DistanceFilter
 from companion.guidance.follow import FollowController
 from companion.guidance.geo import bearing_deg, haversine_distance_m
 from companion.guidance.grid_search import GridSearchController, GridSearchPhase
+from companion.guidance.limits import clamp_to_range
 from companion.guidance.orbit import OrbitController
 from companion.guidance.target_recovery import RecoveryPhase, TargetRecoveryController
 from companion.logging_.session_recorder import SessionRecorder
@@ -83,6 +86,24 @@ MODES_REQUIRING_GUIDED = set(MODE_COMMAND_MAP.values()) - {
 }
 
 
+_HOLD_COMMAND = GuidanceCommand(vx_mps=0.0, vy_mps=0.0, vz_mps=0.0, yaw_rate_rads=0.0)
+
+
+def _safe_clamp(value, low, high):
+    """Coerces an app-supplied number and clamps it into [low, high] (either
+    bound may be None). Returns None - "ignore this field" - for a missing,
+    non-numeric or non-finite value."""
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return clamp_to_range(number, low, high)
+
+
 class CompanionOrchestrator:
     def __init__(
         self,
@@ -136,6 +157,9 @@ class CompanionOrchestrator:
         self._last_frame_ts: Optional[float] = None
         self._recent_frame_ts: list[float] = []
         self._frame_size: Optional[tuple[int, int]] = None  # (width, height) of the latest frame
+        self._distance_filter = DistanceFilter()
+        self._distance_filter_target_id: Optional[int] = None
+        self._identity_mismatch_frames = 0  # consecutive frames the tracked box failed the appearance check
         self._was_armed = False  # edge-detects the arm transition to request HOME_POSITION once
         self._was_rc_override_in_guided = False  # edge-detects entering override-while-GUIDED (see process_frame)
 
@@ -200,8 +224,13 @@ class CompanionOrchestrator:
             # search, then engage this mode from there.
             lat = self.mavlink.telemetry.lat
             lon = self.mavlink.telemetry.lon
-            width_m = payload.get("grid_search_width_m")
-            height_m = payload.get("grid_search_height_m")
+            grid_cfg = self.grid_search.limits
+            width_m = _safe_clamp(
+                payload.get("grid_search_width_m"), grid_cfg.get("min_dimension_m"), grid_cfg.get("max_dimension_m")
+            )
+            height_m = _safe_clamp(
+                payload.get("grid_search_height_m"), grid_cfg.get("min_dimension_m"), grid_cfg.get("max_dimension_m")
+            )
             heading_deg = payload.get("grid_search_heading_deg")
             if heading_deg is None:
                 heading_deg = self.mavlink.telemetry.heading_deg or 0.0
@@ -279,18 +308,36 @@ class CompanionOrchestrator:
             self.approach.start()
         else:
             self.approach.stop()
-        separation = payload.get("follow_separation_m")
+        # Every app-supplied value is clamped to the bounds the config
+        # files already declare (min/max_separation_m, min/max_altitude_m,
+        # min/max_radius_m) - those bounds existed in follow_limits.yaml /
+        # orbit_limits.yaml but nothing ever enforced them, so a stray or
+        # hostile mode_command could ask for a 0.1m separation, a 500m
+        # altitude, or a negative one. The Android sliders already stay
+        # inside these ranges; the Pi must not depend on that. A non-finite
+        # value (JSON allows NaN/Infinity) is ignored outright.
+        follow_cfg = self.follow.limits
+        orbit_cfg = self.orbit.limits
+        separation = _safe_clamp(
+            payload.get("follow_separation_m"), follow_cfg.get("min_separation_m"), follow_cfg.get("max_separation_m")
+        )
         if separation is not None:
-            self.follow.limits["target_separation_m"] = float(separation)
-        altitude = payload.get("follow_altitude_m")
+            follow_cfg["target_separation_m"] = separation
+        altitude = _safe_clamp(
+            payload.get("follow_altitude_m"), follow_cfg.get("min_altitude_m"), follow_cfg.get("max_altitude_m")
+        )
         if altitude is not None:
-            self.follow.limits["target_altitude_m"] = float(altitude)
-        orbit_radius = payload.get("orbit_radius_m")
+            follow_cfg["target_altitude_m"] = altitude
+        orbit_radius = _safe_clamp(
+            payload.get("orbit_radius_m"), orbit_cfg.get("min_radius_m"), orbit_cfg.get("max_radius_m")
+        )
         if orbit_radius is not None:
-            self.orbit.limits["orbit_radius_m"] = float(orbit_radius)
-        orbit_altitude = payload.get("orbit_altitude_m")
+            orbit_cfg["orbit_radius_m"] = orbit_radius
+        orbit_altitude = _safe_clamp(
+            payload.get("orbit_altitude_m"), orbit_cfg.get("min_altitude_m"), orbit_cfg.get("max_altitude_m")
+        )
         if orbit_altitude is not None:
-            self.orbit.limits["target_altitude_m"] = float(orbit_altitude)
+            orbit_cfg["target_altitude_m"] = orbit_altitude
         follow_max_speed = payload.get("follow_max_speed_mps")
         if follow_max_speed is not None:
             self.follow.set_max_speed(float(follow_max_speed))
@@ -315,6 +362,7 @@ class CompanionOrchestrator:
         self.approach.stop()
         self.grid_search.reset()
         self.auto_takeoff.reset()
+        self._identity_mismatch_frames = 0
         self.state_machine.stop()
         self.appearance.forget()
         self.recovery.cancel()
@@ -450,6 +498,39 @@ class CompanionOrchestrator:
             return None
         return self.camera.get_latest_frame()
 
+    def _verify_tracked_identity(self, frame, detections, tracking_state):
+        """Guards against the tracker silently following the wrong person
+        (two similar-class subjects crossing paths - IoU association alone
+        cannot tell them apart). Compares the tracked box to the remembered
+        appearance each frame; sustained mismatch first tries to switch to a
+        same-class detection that does match the remembered look, and if
+        none does for long enough, stops following the box altogether
+        (REACQUIRE - the drone holds) rather than keep pursuing a probable
+        stranger. A no-op wherever there is no real frame (sim mode)."""
+        frame_bgr = self._camera_frame()
+        similarity_now = self.appearance.check_identity(frame_bgr, self.state_machine.target)
+        if similarity_now is None:
+            return tracking_state
+        if similarity_now >= self.appearance.track_min_similarity:
+            self._identity_mismatch_frames = 0
+            return tracking_state
+
+        self._identity_mismatch_frames += 1
+        if self._identity_mismatch_frames >= self.appearance.track_swap_frames:
+            better = self.appearance.find_match(frame_bgr, detections)
+            if better is not None and better.bbox != self.state_machine.target.bbox:
+                self.state_machine.start(frame.ts, better)
+                self.appearance.learn(frame_bgr, self.state_machine.target)
+                self._identity_mismatch_frames = 0
+                self.recorder.record("identity_swap_corrected", class_name=better.class_name)
+                return self.state_machine.state
+        if self._identity_mismatch_frames >= self.appearance.track_drop_frames:
+            self._identity_mismatch_frames = 0
+            self.state_machine.drop_identity(frame.ts)
+            self.recorder.record("identity_lost")
+            return self.state_machine.state
+        return tracking_state
+
     async def process_frame(self, frame) -> dict:
         """Runs one full perception -> tracking -> guidance -> safety cycle
         for a single frame. Split out from `_perception_loop` so tests can
@@ -512,6 +593,7 @@ class CompanionOrchestrator:
             if det is not None:
                 self.state_machine.start(frame.ts, det)
                 self.appearance.learn(self._camera_frame(), self.state_machine.target)
+                self._identity_mismatch_frames = 0
             self._pending_selection = None
 
         tracking_state = self.state_machine.update(frame.ts, detections)
@@ -530,15 +612,29 @@ class CompanionOrchestrator:
                 tracking_state = self.state_machine.state
                 self.recorder.record("appearance_reacquired", class_name=rematch.class_name)
 
+        if tracking_state == TrackingState.TRACKING and self.appearance.has_signature:
+            tracking_state = self._verify_tracked_identity(frame, detections, tracking_state)
+        else:
+            self._identity_mismatch_frames = 0
+
         distance_m = None
         det_for_distance = None
         if self.state_machine.target is not None:
             t = self.state_machine.target
             det_for_distance = Detection(
-                bbox=t.bbox, score=t.confidence, class_id=t.class_id,
+                bbox=t.guidance_bbox, score=t.confidence, class_id=t.class_id,
                 class_name=t.class_name, frame_ts=frame.ts,
             )
-            distance_m, _source = self.distance_estimator.estimate(det_for_distance, trust_rangefinder=True)
+            raw_distance, _source = self.distance_estimator.estimate(
+                det_for_distance, trust_rangefinder=True, reject_truncated=True, prefer_height=True
+            )
+            if t.target_id != self._distance_filter_target_id:
+                self._distance_filter.reset()
+                self._distance_filter_target_id = t.target_id
+            distance_m = self._distance_filter.update(raw_distance, frame.ts)
+        else:
+            self._distance_filter.reset()
+            self._distance_filter_target_id = None
 
         rc_override = self.rc_monitor.is_overriding(self.mavlink.telemetry.rc_channels)
         # A real, field-reported gap: RcOverrideMonitor's software backstop
@@ -716,28 +812,45 @@ class CompanionOrchestrator:
         )
 
         command = None
+        follow_ran = False
+        orbit_ran = False
+        # While the tracker is in REACQUIRE (target briefly unseen),
+        # state_machine.target still holds the LAST known box. Follow/Orbit
+        # used to keep computing from it - a frozen lateral error is a
+        # constant yaw rate and a frozen distance a constant forward speed,
+        # so the aircraft kept turning/advancing on coordinates that were
+        # up to reacquire_timeout_s old. Command a hold (zero velocity)
+        # instead until the target is genuinely seen again.
         if auto_takeoff_holding:
             pass  # withhold real guidance this frame - see the check above
         elif decision.state == SupervisorState.SEARCHING:
             command = recovery_result.command
         elif decision.state == SupervisorState.FOLLOWING and self.state_machine.target is not None:
-            command = self.follow.compute(
-                self.state_machine.target,
-                distance_m,
-                frame.width,
-                frame.height,
-                dt,
-                current_altitude_m=self.mavlink.telemetry.alt_m,
-            )
+            if tracking_state == TrackingState.TRACKING:
+                command = self.follow.compute(
+                    self.state_machine.target,
+                    distance_m,
+                    frame.width,
+                    frame.height,
+                    dt,
+                    current_altitude_m=self.mavlink.telemetry.alt_m,
+                )
+                follow_ran = True
+            else:
+                command = _HOLD_COMMAND
         elif decision.state == SupervisorState.ORBITING and self.state_machine.target is not None:
-            command = self.orbit.compute(
-                self.state_machine.target,
-                distance_m,
-                frame.width,
-                frame.height,
-                dt,
-                current_altitude_m=self.mavlink.telemetry.alt_m,
-            )
+            if tracking_state == TrackingState.TRACKING:
+                command = self.orbit.compute(
+                    self.state_machine.target,
+                    distance_m,
+                    frame.width,
+                    frame.height,
+                    dt,
+                    current_altitude_m=self.mavlink.telemetry.alt_m,
+                )
+                orbit_ran = True
+            else:
+                command = _HOLD_COMMAND
         elif decision.state == SupervisorState.APPROACHING:
             result = self.approach.update(
                 ApproachInputs(
@@ -771,6 +884,16 @@ class CompanionOrchestrator:
                 # with no command actually being sent.
                 self.requested_mode = SupervisorState.IDLE
                 self.recorder.record("grid_search_finished")
+
+        # A controller that did not run this frame must not carry PID
+        # derivative state or its acceleration limiter's last output across
+        # the gap (RC override, SAFE, a REACQUIRE hold, auto-takeoff): when
+        # it next runs it should ramp up from a standstill, matching what
+        # the aircraft is actually doing after setpoints stopped.
+        if not follow_ran:
+            self.follow.reset()
+        if not orbit_ran:
+            self.orbit.reset()
 
         sent = False
         if command is not None and decision.guidance_allowed:
@@ -1221,6 +1344,8 @@ def run_startup_health_check(mode: str) -> None:
         ["max_yaw_rate_rads"],
         ["max_speed_mps"],
         ["leg_spacing_m"],
+        ["min_dimension_m"],
+        ["max_dimension_m"],
         ["waypoint_radius_m"],
         ["max_heading_error_deg_to_advance"],
         ["search_speed_mps"],
@@ -1230,9 +1355,25 @@ def run_startup_health_check(mode: str) -> None:
     # These are read in full (unpacked as **kwargs, or indexed piecemeal by
     # their own controllers) but have no single required top-level key this
     # check can name usefully - just confirm each one actually parses.
+    # These bounds are what the orchestrator clamps app-supplied values to and
+    # what the controllers enforce (guidance/limits.py). Silently missing
+    # them would mean silently running with no floor/ceiling/accel limit -
+    # exactly the state this project used to be in unnoticed - so a missing
+    # key must stop boot instead.
+    follow_limits_cfg = _load("follow_limits.yaml")
+    for path in (
+        ["max_accel_mps2"], ["min_altitude_m"], ["max_altitude_m"],
+        ["min_separation_m"], ["max_separation_m"], ["target_separation_m"],
+    ):
+        _require(follow_limits_cfg, path, "follow_limits.yaml")
+    orbit_limits_cfg = _load("orbit_limits.yaml")
+    for path in (
+        ["max_accel_mps2"], ["min_altitude_m"], ["max_altitude_m"],
+        ["min_radius_m"], ["max_radius_m"], ["orbit_radius_m"],
+    ):
+        _require(orbit_limits_cfg, path, "orbit_limits.yaml")
+
     for file_name in (
-        "follow_limits.yaml",
-        "orbit_limits.yaml",
         "camera_calibration.yaml",
         "reidentification.yaml",
         "target_recovery.yaml",

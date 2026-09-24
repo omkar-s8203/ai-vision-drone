@@ -62,6 +62,18 @@ class TrackingStateMachine:
 
         return self.state
 
+    def drop_identity(self, frame_ts: float) -> None:
+        """The tracker is still matching a box, but it's judged to be the
+        wrong subject: forget the tracker's own lock (otherwise it would
+        immediately re-latch onto the same wrong box next frame) and enter
+        REACQUIRE, whose existing timeout then hands over to the normal
+        TARGET_LOST handling / appearance-based reacquisition."""
+        if self.state != TrackingState.TRACKING:
+            return
+        self.tracker.reset()
+        self.state = TrackingState.REACQUIRE
+        self._lost_since_ts = frame_ts
+
     def stop(self) -> None:
         self.tracker.reset()
         self.state = TrackingState.IDLE

@@ -16,3 +16,23 @@ min_similarity: 0.65
 # TARGET_LOST rather than guessing). Deliberately conservative starting
 # value, not yet tuned against real multi-person footage.
 min_margin: 0.08
+
+# Identity check while the target is still being tracked (not just after a
+# full loss): the IoU tracker follows whichever box overlaps its prediction,
+# so two people crossing paths can silently swap which one is followed.
+# Each frame the tracked box is compared to the remembered appearance.
+#   track_min_similarity: below this counts as "doesn't look like my target"
+#     (deliberately far below min_similarity - a person turning around or
+#     stepping into shade shouldn't trip it, a different person should).
+#   track_swap_frames: this many consecutive mismatches AND another
+#     same-class detection that does match the remembered look -> switch to it.
+#   track_drop_frames: this many consecutive mismatches with no better
+#     candidate -> stop following the box (REACQUIRE, drone holds) rather
+#     than keep following someone who is probably the wrong person.
+track_min_similarity: 0.30
+track_swap_frames: 5
+track_drop_frames: 20
+# A strong match (>= adapt_similarity) blends adapt_rate of the current look
+# into the remembered signature, tracking gradual lighting/angle change.
+adapt_similarity: 0.80
+adapt_rate: 0.10

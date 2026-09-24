@@ -9,8 +9,11 @@ from companion.vision.detector import BBox, Detection
 INTRINSICS = CameraIntrinsics(image_width=1280, image_height=720, fx=900.0, fy=900.0, cx=640.0, cy=360.0)
 
 
-def make_det(w, class_name="person"):
-    return Detection(bbox=BBox(0, 0, w, 100), score=0.9, class_id=0, class_name=class_name, frame_ts=0.0)
+def make_det(w, class_name="person", h=45, x=100, y=100):
+    # Default h == w keeps the box non-upright, so the classic width-based
+    # pinhole path is what these tests exercise (upright people use height -
+    # see the height-based tests below).
+    return Detection(bbox=BBox(x, y, w, h), score=0.9, class_id=0, class_name=class_name, frame_ts=0.0)
 
 
 def test_pinhole_distance_known_class():

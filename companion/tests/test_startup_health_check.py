@@ -13,12 +13,23 @@ from companion.main import StartupHealthCheckError, _amain, run_startup_health_c
 
 _COMPLETE_GRID_SEARCH_CONFIG = {
     "leg_spacing_m": 15.0,
+    "min_dimension_m": 20.0,
+    "max_dimension_m": 200.0,
     "search_speed_mps": 2.5,
     "waypoint_radius_m": 3.0,
     "max_heading_error_deg_to_advance": 25.0,
     "max_yaw_rate_rads": 0.5,
     "max_speed_mps": 2.5,
     "pid": {"yaw": {"kp": 0.02, "ki": 0.0, "kd": 0.005}, "altitude": {"kp": 0.5, "ki": 0.05, "kd": 0.1}},
+}
+
+_COMPLETE_FOLLOW_CONFIG = {
+    "max_accel_mps2": 1.5, "min_altitude_m": 2.0, "max_altitude_m": 30.0,
+    "min_separation_m": 3.0, "max_separation_m": 15.0, "target_separation_m": 6.0,
+}
+_COMPLETE_ORBIT_CONFIG = {
+    "max_accel_mps2": 1.5, "min_altitude_m": 2.0, "max_altitude_m": 30.0,
+    "min_radius_m": 3.0, "max_radius_m": 20.0, "orbit_radius_m": 8.0,
 }
 
 
@@ -43,6 +54,8 @@ def test_sim_mode_does_not_require_mavlink_config():
         "approach_limits.yaml": {"rc_override_deadband": 0.15},
         "safety_limits.yaml": {"min_obstacle_distance_m": 2.0},
         "grid_search_limits.yaml": _COMPLETE_GRID_SEARCH_CONFIG,
+        "follow_limits.yaml": _COMPLETE_FOLLOW_CONFIG,
+        "orbit_limits.yaml": _COMPLETE_ORBIT_CONFIG,
     }
     with patch("companion.main.load_yaml", side_effect=lambda name: fake_configs.get(name, {})):
         run_startup_health_check("sim")  # must not raise
@@ -135,6 +148,8 @@ def test_passes_with_no_problems_does_not_raise():
         "approach_limits.yaml": {"rc_override_deadband": 0.15},
         "safety_limits.yaml": {"min_obstacle_distance_m": 2.0},
         "grid_search_limits.yaml": _COMPLETE_GRID_SEARCH_CONFIG,
+        "follow_limits.yaml": _COMPLETE_FOLLOW_CONFIG,
+        "orbit_limits.yaml": _COMPLETE_ORBIT_CONFIG,
     }
     with patch("companion.main.load_yaml", side_effect=lambda name: fake_configs.get(name, {})):
         run_startup_health_check("hardware")  # must not raise
@@ -153,3 +168,27 @@ async def test_amain_exits_before_touching_hardware_when_health_check_fails():
             await _amain()
     mock_build_sim.assert_not_called()
     mock_build_hw.assert_not_called()
+
+
+@pytest.mark.parametrize("file_name,complete,missing_key", [
+    ("follow_limits.yaml", _COMPLETE_FOLLOW_CONFIG, "max_accel_mps2"),
+    ("follow_limits.yaml", _COMPLETE_FOLLOW_CONFIG, "min_altitude_m"),
+    ("follow_limits.yaml", _COMPLETE_FOLLOW_CONFIG, "max_separation_m"),
+    ("orbit_limits.yaml", _COMPLETE_ORBIT_CONFIG, "max_accel_mps2"),
+    ("orbit_limits.yaml", _COMPLETE_ORBIT_CONFIG, "max_radius_m"),
+    ("orbit_limits.yaml", _COMPLETE_ORBIT_CONFIG, "max_altitude_m"),
+])
+def test_a_missing_enforced_limit_stops_boot_instead_of_silently_disabling_it(file_name, complete, missing_key):
+    """These bounds are enforced by the controllers/orchestrator - a config
+    that quietly lacks one would run with no floor/ceiling/accel limit."""
+    from companion.config.loader import load_yaml as real_load_yaml
+
+    def fake_load(name):
+        cfg = real_load_yaml(name)
+        if name == file_name:
+            cfg = {k: v for k, v in cfg.items() if k != missing_key}
+        return cfg
+
+    with patch("companion.main.load_yaml", side_effect=fake_load):
+        with pytest.raises(StartupHealthCheckError, match=missing_key):
+            run_startup_health_check("sim")

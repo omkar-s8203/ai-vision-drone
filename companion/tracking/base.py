@@ -15,6 +15,16 @@ class TrackedTarget:
     class_name: str
     last_seen_ts: float
     velocity_px_s: tuple[float, float] = (0.0, 0.0)
+    # Motion-filtered box (tracking/motion.py) - `bbox` stays the raw
+    # detection so the app overlay shows exactly what the detector saw;
+    # guidance and distance estimation read `guidance_bbox` instead, since
+    # raw per-frame detector jitter turns directly into velocity-command
+    # jitter otherwise.
+    smooth_bbox: Optional[BBox] = None
+
+    @property
+    def guidance_bbox(self) -> BBox:
+        return self.smooth_bbox if self.smooth_bbox is not None else self.bbox
 
 
 class Tracker:

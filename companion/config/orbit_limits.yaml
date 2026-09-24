@@ -2,6 +2,9 @@ max_speed_mps: 3.0
 # Floor for the Android speed slider (setOrbitMaxSpeed) - never fully 0, so
 # a "slow" orbit still sweeps rather than stalling in place.
 min_speed_mps: 0.5
+# Enforced by SlewLimiter (guidance/limits.py) on vx/vy/vz - same meaning as
+# follow_limits.yaml's max_accel_mps2.
+max_accel_mps2: 1.5
 orbit_radius_m: 8.0
 min_radius_m: 3.0
 max_radius_m: 20.0

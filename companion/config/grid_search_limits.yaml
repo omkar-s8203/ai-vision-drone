@@ -7,6 +7,12 @@
 # How far apart parallel sweep legs are, in meters - the effective "swath
 # width" of whatever the camera can usefully see at the search altitude.
 # Smaller = more thorough coverage but a longer, slower sweep.
+# Bounds on the swept rectangle's width/height as requested by the app (the
+# app's own sliders are 20-200m). Enforced on the Pi too: an absurd or
+# non-finite value would otherwise try to plan an enormous waypoint list,
+# which is then streamed to the app every frame.
+min_dimension_m: 20.0
+max_dimension_m: 200.0
 leg_spacing_m: 15.0
 
 # Forward speed while actually facing a waypoint (see

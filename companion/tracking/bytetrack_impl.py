@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import Optional
 
 from companion.tracking.base import Tracker, TrackedTarget
-from companion.vision.detector import BBox, Detection
+from companion.tracking.motion import MotionModel, best_match_any
+from companion.vision.detector import Detection
 
 
 class ByteTrackTracker(Tracker):
@@ -50,8 +51,10 @@ class ByteTrackTracker(Tracker):
         self.low_score_thresh = low_score_thresh
         self.min_iou = min_iou
         self._target: Optional[TrackedTarget] = None
+        self._motion: Optional[MotionModel] = None
 
     def init_target(self, frame_ts: float, detection: Detection, target_id: int) -> TrackedTarget:
+        self._motion = MotionModel(detection.bbox)
         self._target = TrackedTarget(
             target_id=target_id,
             bbox=detection.bbox,
@@ -60,52 +63,32 @@ class ByteTrackTracker(Tracker):
             class_name=detection.class_name,
             last_seen_ts=frame_ts,
             velocity_px_s=(0.0, 0.0),
+            smooth_bbox=detection.bbox,
         )
         return self._target
 
-    def _predicted_bbox(self, dt: float) -> BBox:
-        assert self._target is not None
-        b = self._target.bbox
-        vx, vy = self._target.velocity_px_s
-        return BBox(x=b.x + vx * dt, y=b.y + vy * dt, w=b.w, h=b.h)
-
-    def _best_match(self, predicted: BBox, candidates: list[Detection]) -> tuple[Optional[Detection], float]:
-        assert self._target is not None
-        best_det: Optional[Detection] = None
-        best_iou = 0.0
-        for det in candidates:
-            if det.class_id != self._target.class_id:
-                continue
-            iou = predicted.iou(det.bbox)
-            if iou > best_iou:
-                best_iou = iou
-                best_det = det
-        return best_det, best_iou
-
     def update(self, frame_ts: float, detections: list[Detection]) -> Optional[TrackedTarget]:
-        if self._target is None or not detections:
+        if self._target is None or self._motion is None or not detections:
             return None
 
         dt = max(0.0, frame_ts - self._target.last_seen_ts)
-        predicted = self._predicted_bbox(dt)
+        predicted = self._motion.search_boxes(dt)
+        class_id = self._target.class_id
 
         high = [d for d in detections if d.score >= self.high_score_thresh]
-        best_det, best_iou = self._best_match(predicted, high)
+        best_det, _iou = best_match_any(predicted, high, class_id, self.min_iou)
 
         if best_det is None:
             # Stage 2 (the actual "Byte" in ByteTrack): retry against the
             # detections a confidence-only cutoff would have discarded,
             # before giving up on this frame entirely.
             low = [d for d in detections if self.low_score_thresh <= d.score < self.high_score_thresh]
-            best_det, best_iou = self._best_match(predicted, low)
+            best_det, _iou = best_match_any(predicted, low, class_id, self.min_iou)
 
-        if best_det is None or best_iou < self.min_iou:
+        if best_det is None:
             return None
 
-        old_bbox = self._target.bbox
-        vx = (best_det.bbox.cx - old_bbox.cx) / dt if dt > 0 else 0.0
-        vy = (best_det.bbox.cy - old_bbox.cy) / dt if dt > 0 else 0.0
-
+        self._motion.update(best_det.bbox, dt)
         self._target = TrackedTarget(
             target_id=self._target.target_id,
             bbox=best_det.bbox,
@@ -113,9 +96,11 @@ class ByteTrackTracker(Tracker):
             class_id=best_det.class_id,
             class_name=best_det.class_name,
             last_seen_ts=frame_ts,
-            velocity_px_s=(vx, vy),
+            velocity_px_s=self._motion.velocity,
+            smooth_bbox=self._motion.smooth_bbox,
         )
         return self._target
 
     def reset(self) -> None:
         self._target = None
+        self._motion = None

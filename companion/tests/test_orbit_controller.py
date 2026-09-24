@@ -115,7 +115,8 @@ def test_set_max_speed_actually_lowers_the_pid_internal_cap():
     controller.set_max_speed(1.0)
     assert limits["max_speed_mps"] == 1.0
     target = make_target(IMAGE_W / 2, IMAGE_H / 2)
-    cmd = controller.compute(target, distance_m=1000.0, image_width=IMAGE_W, image_height=IMAGE_H, dt=0.1)
+    for _ in range(40):  # let the acceleration limit finish ramping up
+        cmd = controller.compute(target, distance_m=1000.0, image_width=IMAGE_W, image_height=IMAGE_H, dt=0.1)
     assert cmd.vx_mps == pytest.approx(1.0)
 
 

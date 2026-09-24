@@ -69,8 +69,25 @@ class AppearanceMemory:
     remember. A no-op wherever no real frame is available (sim mode).
     """
 
-    def __init__(self, min_similarity: float = 0.65, min_margin: float = 0.08) -> None:
+    def __init__(
+        self,
+        min_similarity: float = 0.65,
+        min_margin: float = 0.08,
+        track_min_similarity: float = 0.30,
+        track_swap_frames: int = 5,
+        track_drop_frames: int = 20,
+        adapt_similarity: float = 0.80,
+        adapt_rate: float = 0.10,
+    ) -> None:
         self.min_similarity = min_similarity
+        # Identity check while actively tracking (see check_identity()):
+        # the IoU tracker only ever follows *a* box, so two people crossing
+        # paths can silently swap which one it is following.
+        self.track_min_similarity = track_min_similarity
+        self.track_swap_frames = track_swap_frames
+        self.track_drop_frames = track_drop_frames
+        self.adapt_similarity = adapt_similarity
+        self.adapt_rate = adapt_rate
         # A real field-reported bug: with no margin check, find_match()
         # always picked whichever same-class candidate scored highest, even
         # when a second candidate scored almost as well - e.g. two people
@@ -97,6 +114,25 @@ class AppearanceMemory:
 
     def forget(self) -> None:
         self._signature = None
+
+    def check_identity(self, frame_bgr: Optional[np.ndarray], target: TrackedTarget) -> Optional[float]:
+        """How closely the currently-tracked box still looks like the
+        remembered target (same scale as similarity()), or None if that
+        can't be judged right now (no real frame, no signature, box off
+        frame). When the match is strong, the remembered signature is nudged
+        toward the current look, so gradual lighting/angle change doesn't
+        slowly erode a correct match - and a wrong (weak) match never
+        contaminates it."""
+        if self._signature is None or frame_bgr is None:
+            return None
+        candidate = compute_signature(frame_bgr, target.guidance_bbox, target.class_id)
+        if candidate is None:
+            return None
+        score = similarity(self._signature, candidate)
+        if score >= self.adapt_similarity:
+            blended = (1.0 - self.adapt_rate) * self._signature.histogram + self.adapt_rate * candidate.histogram
+            self._signature = AppearanceSignature(class_id=self._signature.class_id, histogram=blended.astype(np.float32))
+        return score
 
     def find_match(self, frame_bgr: Optional[np.ndarray], detections: list[Detection]) -> Optional[Detection]:
         """Returns the best same-class detection whose appearance most

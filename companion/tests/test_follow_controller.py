@@ -96,12 +96,15 @@ def test_altitude_hold_falls_back_to_pixel_framing_without_telemetry():
     limits = load_yaml("follow_limits.yaml")
     limits["target_altitude_m"] = 10.0
     controller = FollowController(limits)
-    target = make_target(IMAGE_W / 2, IMAGE_H / 2 + 200)  # off-center vertically
+    # Above image center -> pixel-framing climbs. (A target *below* center
+    # would command a descent, which is deliberately suppressed with no
+    # altitude telemetry - see test_no_descent_without_altitude_telemetry.)
+    target = make_target(IMAGE_W / 2, IMAGE_H / 2 - 200)
     cmd = controller.compute(
         target, distance_m=limits["target_separation_m"], image_width=IMAGE_W, image_height=IMAGE_H,
         dt=0.1, current_altitude_m=None,
     )
-    assert cmd.vz_mps != 0.0
+    assert cmd.vz_mps < 0.0
 
 
 def test_no_altitude_configured_uses_pixel_framing_by_default():
@@ -130,7 +133,10 @@ def test_set_max_speed_actually_lowers_the_pid_internal_cap():
     controller.set_max_speed(1.0)
     assert limits["max_speed_mps"] == 1.0
     target = make_target(IMAGE_W / 2, IMAGE_H / 2)
-    cmd = controller.compute(target, distance_m=1000.0, image_width=IMAGE_W, image_height=IMAGE_H, dt=0.1)
+    # The acceleration limit ramps vx up over several frames - run until it
+    # has had time to reach whatever cap is actually in force.
+    for _ in range(40):
+        cmd = controller.compute(target, distance_m=1000.0, image_width=IMAGE_W, image_height=IMAGE_H, dt=0.1)
     assert cmd.vx_mps == pytest.approx(1.0)
 
 

@@ -452,6 +452,64 @@ graceful fallback:
   timeout-to-idle path, and reset-on-mode-switch/reset-on-abort) - all
   passing.
 
+## Guidance limit enforcement and tracking identity (safety audit)
+
+- **Found: configured limits that nothing enforced.** `follow_limits.yaml`
+  and `orbit_limits.yaml` declared `max_accel_mps2`, `min_altitude_m`,
+  `max_altitude_m`, `min/max_separation_m` and `min/max_radius_m`, but a
+  search of the whole codebase (Pi and Android) found no code reading any of
+  them. Pixel-framing vertical control in particular had no altitude floor:
+  a target below the image center commanded a descent for as long as it
+  stayed there.
+- **Mechanism now**: `guidance/limits.py` - `SlewLimiter` (acceleration cap
+  on vx/vy/vz, reset whenever a controller did not run, so guidance resuming
+  after RC override / SAFE / a hold ramps from standstill), and
+  `apply_altitude_limits()` (refuses a descent at or below `min_altitude_m`
+  and a climb at or above `max_altitude_m`; with no altitude telemetry,
+  descent is suppressed and climbing allowed). Applied last in
+  `FollowController`/`OrbitController.compute()` after the speed clamp, then
+  the speed clamp is re-applied so a live `set_max_speed()` decrease takes
+  effect immediately despite the ramp.
+- **App-supplied values are clamped on the Pi** (`_on_mode_command`) to those
+  same bounds, and non-finite/non-numeric values (JSON permits `NaN`) are
+  ignored; grid-search width/height are bounded by
+  `grid_search_limits.yaml`'s `min/max_dimension_m`. The Android sliders
+  already stay inside these ranges - the Pi no longer depends on that.
+  `run_startup_health_check()` refuses to boot if any enforced key is
+  missing, so a config typo can no longer silently disable a limit.
+- **No driving on frozen coordinates**: while the tracker is in REACQUIRE,
+  `state_machine.target` still holds the last box, and Follow/Orbit used to
+  keep computing from it (constant yaw rate, constant forward speed, for up
+  to `reacquire_timeout_s`). They now command zero velocity until the target
+  is genuinely seen again (Approach-Test already aborted on this).
+- **Tracking identity**: the IoU tracker follows whichever box overlaps its
+  prediction, so two people crossing could silently swap the followed
+  subject. `AppearanceMemory.check_identity()` compares the tracked box to
+  the remembered appearance every frame (real camera frames only). After
+  `track_swap_frames` consecutive mismatches it switches to a same-class
+  detection that clearly matches the remembered look; after
+  `track_drop_frames` with no such candidate it drops the lock to REACQUIRE
+  (the drone holds) rather than pursue a probable stranger. A brief
+  mismatch (turning around, shade) resets the counter on recovery.
+- **Distance for Follow/Orbit** uses an upright person's height (steadier
+  than width), refuses a border-clipped box (which would read as further
+  than reality and make Follow close in), and is median/EMA-filtered.
+  Obstacle proximity deliberately keeps the width-only estimate, which is the
+  more conservative read for a "too close" check.
+- **Known limits, stated plainly**: appearance matching is a color histogram
+  - two people in similar clothing can still be confused, which is why a
+  mismatch that has no confident alternative *stops* rather than guesses;
+  thresholds are conservative starting values not yet tuned on real
+  multi-person footage; height-based distance assumes 1.7m (a child or a very
+  tall person skews it) and the calibration intrinsics are still placeholders;
+  Follow's backward retreat is toward a side the camera cannot see, which
+  this audit did not change.
+- **Tests**: `test_guidance_limits.py`, `test_motion_model.py`,
+  `test_distance_accuracy.py`, `test_identity_check.py`,
+  `test_tracking_safety_orchestrator.py` (real-pixel swap/drop/no-false-trigger
+  and REACQUIRE-hold, mutation-checked), plus health-check and grid-search
+  clamp tests.
+
 ## Grid Search finishing - a deliberately different design from Approach-Test
 
 - Unlike the above, a Grid Search sweep that finishes on its own (every
@@ -470,7 +528,7 @@ Every mechanism above that has a corresponding `SafetySupervisor` gate is
 covered by at least one test that independently trips *only that
 condition* and asserts guidance is denied - this is what "fault injection"
 means in this codebase's test suite, not a separate framework. As of this
-writing: 401 companion tests passing
+writing: 490 companion tests passing
 (`.venv/Scripts/python -m pytest -q`), including a real end-to-end test
 (`test_integration_websocket.py`) that drives the actual JSON wire
 protocol over a real WebSocket and real MAVLink link, and real-MAVLink

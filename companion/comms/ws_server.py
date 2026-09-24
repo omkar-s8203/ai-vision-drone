@@ -124,6 +124,9 @@ class GroundStationLink:
     async def send_arm_command_result(self, payload: dict) -> None:
         await self._send(MessageType.ARM_COMMAND_RESULT, payload)
 
+    async def send_mode_change_result(self, payload: dict) -> None:
+        await self._send(MessageType.MODE_CHANGE_RESULT, payload)
+
     async def send_teach_result(self, payload: dict) -> None:
         await self._send(MessageType.TEACH_RESULT, payload)
 

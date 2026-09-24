@@ -23,6 +23,7 @@ object MessageType {
     const val ERROR = "error"
     const val WEBRTC_OFFER = "webrtc_offer"
     const val WEBRTC_ANSWER = "webrtc_answer"
+    const val MODE_CHANGE_RESULT = "mode_change_result"
     const val TEACH_OBJECT = "teach_object"
     const val TEACH_RESULT = "teach_result"
     const val PING = "ping"

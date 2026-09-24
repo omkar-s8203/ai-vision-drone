@@ -729,6 +729,13 @@ class MainViewModel : ViewModel() {
                 recording = envelope.payload.optBoolean("recording", false),
                 durationS = envelope.payload.optDoubleOrNull("duration_s") ?: 0.0,
             )
+            MessageType.MODE_CHANGE_RESULT -> {
+                // Only a failure is announced - success is already visible as the flight mode
+                // changing on the HUD.
+                if (!envelope.payload.optBoolean("confirmed", true)) {
+                    _alertEvents.tryEmit(AlertEvent.MODE_CHANGE_FAILED)
+                }
+            }
             MessageType.TEACH_RESULT -> {
                 val ok = envelope.payload.optBoolean("ok", false)
                 _teachMessage.value = describeTeachResult(

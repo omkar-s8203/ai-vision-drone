@@ -632,6 +632,30 @@ behaviour or safety limits by itself.
   orchestrator flow incl. drift/loss/abort/selection, speed cap, off-loop execution) and
   `test_export_taught_dataset.py` - mutation-checked.
 
+## Flight-mode requests are confirmed, retried and reported
+
+- **Gap**: every mode change the Pi asks for (GUIDED for a guidance mode, LOITER on stick
+  override, RTL on failsafe, BRAKE on STOP) was sent once with no confirmation. A request
+  lost on the serial link was never noticed - and for the failsafe RTL the once-per-episode
+  latch turned one lost message into a permanent failure: a drone with no operator link
+  or a dying battery would keep hovering in GUIDED.
+- **Mechanism**: `MavlinkBridge.set_mode()` records the request; `check_pending_mode()`
+  (once per frame) resolves it against the FC's HEARTBEAT. Confirmed when the reported
+  mode matches; re-sent after 1.5 s if the mode is unchanged, up to 3 sends in total;
+  then reported as not confirmed (`mode_change_result`, session log, spoken alert in
+  the app).
+- **Never fights the pilot**: if the mode changed to something *else* while waiting (the
+  pilot's switch), the request is dropped silently - no re-send, no failure. No re-send
+  while the pilot has RC stick override either.
+- **Limits**: confirmation is by the mode the FC reports, which is only as fresh as its
+  1 Hz heartbeat, hence the 1.5 s retry delay. A mode the FC refuses on purpose (e.g. BRAKE
+  or GUIDED without a position estimate) also ends as "not confirmed" - that is the
+  intended signal, not a fault. Not confirmed against a real FC.
+- **Tests**: `test_mode_confirmation.py` (confirm, delayed retry, attempt cap, late
+  confirmation, pilot-changed-mode, RC override, replacement, unknown mode, and the
+  failsafe-RTL retry / never-happens / stick-override cases through the orchestrator) -
+  mutation-checked.
+
 ## Grid Search finishing - a deliberately different design from Approach-Test
 
 - Unlike the above, a Grid Search sweep that finishes on its own (every
@@ -650,7 +674,7 @@ Every mechanism above that has a corresponding `SafetySupervisor` gate is
 covered by at least one test that independently trips *only that
 condition* and asserts guidance is denied - this is what "fault injection"
 means in this codebase's test suite, not a separate framework. As of this
-writing: 633 companion tests passing
+writing: 646 companion tests passing
 (`.venv/Scripts/python -m pytest -q`), including a real end-to-end test
 (`test_integration_websocket.py`) that drives the actual JSON wire
 protocol over a real WebSocket and real MAVLink link, and real-MAVLink

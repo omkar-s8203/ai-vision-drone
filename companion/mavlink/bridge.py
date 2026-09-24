@@ -27,6 +27,13 @@ POSITION_MAX_AGE_S = 2.0
 STREAM_STALE_S = 3.0
 STREAM_RETRY_S = 5.0
 
+# A requested flight-mode change is confirmed by the FC's next HEARTBEAT showing the
+# new mode. If it has not shown up after this long the request is re-sent (up to
+# MODE_MAX_ATTEMPTS sends in total) - SET_MODE is fire-and-forget, so a request lost
+# on the serial link would otherwise never be noticed.
+MODE_RETRY_AFTER_S = 1.5
+MODE_MAX_ATTEMPTS = 3
+
 # SET_POSITION_TARGET_LOCAL_NED type_mask: use velocity (vx,vy,vz) and
 # yaw_rate only - ignore position, acceleration, and yaw angle.
 TYPE_MASK_VELOCITY_AND_YAW_RATE = (
@@ -143,6 +150,10 @@ class MavlinkBridge:
         # equality-based change detection the way a repeating telemetry
         # field would be.
         self.pending_arm_ack: Optional[dict] = None
+        # Mode-change confirmation (see request_mode / check_pending_mode).
+        self._pending_mode: Optional[dict] = None
+        # One-shot mailbox like pending_arm_ack: {"mode": str, "confirmed": bool}.
+        self.pending_mode_result: Optional[dict] = None
 
     @property
     def is_connected(self) -> bool:
@@ -474,12 +485,51 @@ class MavlinkBridge:
         if mode_number is None:
             return False
         assert self._conn is not None, "call connect() first"
+        self._send_mode(mode_number)
+        self._pending_mode = {
+            "mode": mode_name.upper(),
+            "sent_ts": time.monotonic(),
+            "attempts": 1,
+            "mode_at_request": self.telemetry.fc_mode,
+        }
+        return True
+
+    def _send_mode(self, mode_number: int) -> None:
         self._conn.mav.set_mode_send(
             self._conn.target_system,
             mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
             mode_number,
         )
-        return True
+
+    def check_pending_mode(self, allow_retry: bool = True, now: Optional[float] = None) -> None:
+        """Call once per frame. Resolves the most recent set_mode() request: confirmed
+        when the FC reports that mode; cancelled if someone else (the pilot's switch)
+        changed the mode to something else in the meantime - never fight them; otherwise
+        re-sent every MODE_RETRY_AFTER_S up to MODE_MAX_ATTEMPTS sends in total, then
+        reported as not confirmed. `allow_retry=False` (pilot has RC override) waits
+        without re-sending. The outcome lands in `pending_mode_result`."""
+        pending = self._pending_mode
+        if pending is None:
+            return
+        current = self.telemetry.fc_mode
+        if current == pending["mode"]:
+            self._pending_mode = None
+            self.pending_mode_result = {"mode": pending["mode"], "confirmed": True}
+            return
+        if current != pending["mode_at_request"]:
+            self._pending_mode = None  # the mode moved somewhere else on its own: not ours to force
+            return
+        now = time.monotonic() if now is None else now
+        if now - pending["sent_ts"] < MODE_RETRY_AFTER_S or not allow_retry:
+            return
+        if pending["attempts"] >= MODE_MAX_ATTEMPTS:
+            self._pending_mode = None
+            self.pending_mode_result = {"mode": pending["mode"], "confirmed": False}
+            log.error("FC did not switch to %s after %d requests", pending["mode"], pending["attempts"])
+            return
+        pending["attempts"] += 1
+        pending["sent_ts"] = now
+        self._send_mode(ARDUCOPTER_MODE_TO_NUMBER[pending["mode"]])
 
     def send_velocity_setpoint(
         self, vx: float, vy: float, vz: float, yaw_rate: float, guidance_allowed: bool

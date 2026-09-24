@@ -375,6 +375,8 @@ Setup: FC armed in **GUIDED**, Follow engaged with a tracked target, **guidance 
 | 9.7 | Repeat 9.1-9.2 with the pilot **holding a stick** (RC override) | Pi does **not** change the mode (`failsafe_rtl_suppressed_rc_override`) | |
 | 9.8 | Repeat 9.1-9.2 with the FC in **LOITER** (not GUIDED) | Pi does **not** change the mode | |
 | 9.9 | Pi-side kill: while Follow is engaged, `sudo systemctl stop ai-vision-drone` | Setpoints stop instantly; the FC (per `GUID_TIMEOUT`) holds - confirm in Mission Planner that it stops commanding motion; nothing restarts guidance on its own | |
+| 9.10 | **Lost mode request is retried.** With the FC in GUIDED and Follow engaged, drop the Pi-to-FC serial link for ~2 s right as you trigger the comms-loss RTL (or unplug the FC TELEM lead briefly during 9.2) | The Pi re-sends RTL (up to 3 sends 1.5 s apart) and the FC ends in RTL; if it never does, the app speaks **"Flight controller did not change mode"** and the session log has `mode_change_result` with `confirmed: false` | |
+| 9.11 | The pilot flips the switch to LOITER while the Pi is retrying a mode request | The Pi stops retrying immediately and does **not** force its own mode | |
 
 ---
 

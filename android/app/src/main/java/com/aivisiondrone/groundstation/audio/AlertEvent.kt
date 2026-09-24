@@ -86,6 +86,10 @@ enum class AlertEvent(val spokenLine: String) {
     /** The Pi is deliberately holding position instead of guiding - see
      * TrackingState.guidanceHold. Edge-triggered on the hold beginning, so a
      * drone that has stopped never sounds like a drone that has failed. */
+    /** The Pi asked the flight controller to change mode (GUIDED, LOITER, RTL, BRAKE...) three
+     * times and it never did - see MavlinkBridge.check_pending_mode(). */
+    MODE_CHANGE_FAILED("Flight controller did not change mode"),
+
     HOLDING_TAKEOFF_CLIMB("Climbing to follow altitude"),
     HOLDING_TARGET_UNSEEN("Target not visible. Holding position"),
     HOLDING_IDENTITY_UNSURE("Not sure this is your target. Holding position"),

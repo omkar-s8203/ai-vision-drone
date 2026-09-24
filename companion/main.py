@@ -773,6 +773,16 @@ class CompanionOrchestrator:
                 self.recorder.record(
                     "arm_command_rejected", armed_requested=ack["armed_requested"]
                 )
+        if self.mavlink.is_connected:
+            # Confirm / retry / report the last flight-mode request (GUIDED, LOITER, RTL,
+            # BRAKE...). No retry while the pilot has stick override: they are flying it.
+            self.mavlink.check_pending_mode(
+                allow_retry=not self.rc_monitor.is_overriding(self.mavlink.telemetry.rc_channels)
+            )
+            if self.mavlink.pending_mode_result is not None:
+                mode_result, self.mavlink.pending_mode_result = self.mavlink.pending_mode_result, None
+                self.recorder.record("mode_change_result", **mode_result)
+                await self.link.send_mode_change_result(mode_result)
         self._recent_frame_ts.append(time.monotonic())
         if len(self._recent_frame_ts) > 30:
             self._recent_frame_ts.pop(0)

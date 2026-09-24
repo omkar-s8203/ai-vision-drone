@@ -3,6 +3,9 @@ max_speed_mps: 3.0
 # so a "slow" Follow still makes forward progress rather than stalling.
 min_speed_mps: 0.5
 max_accel_mps2: 1.5
+# Backing away from the target flies toward the side the camera cannot see, so
+# retreat is capped well below the forward speed limit.
+max_reverse_speed_mps: 1.0
 min_separation_m: 3.0
 max_separation_m: 15.0
 target_separation_m: 6.0

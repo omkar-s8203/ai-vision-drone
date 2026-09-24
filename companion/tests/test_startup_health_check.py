@@ -32,6 +32,11 @@ _COMPLETE_ORBIT_CONFIG = {
     "min_radius_m": 3.0, "max_radius_m": 20.0, "orbit_radius_m": 8.0,
 }
 
+_COMPLETE_SAFETY_CONFIG = {
+    "min_obstacle_distance_m": 2.0, "min_battery_pct": 20, "min_takeoff_battery_pct": 30, "min_gps_fix_type": 3,
+    "max_force_disarm_altitude_m": 1.5,
+}
+
 
 def test_passes_against_the_real_repo_configs_in_sim_mode():
     """The actual companion/config/*.yaml files checked into this repo must
@@ -50,9 +55,9 @@ def test_sim_mode_does_not_require_mavlink_config():
     it for sim mode."""
     fake_configs = {
         "hardware.yaml": {"camera": {"width": 1280, "height": 720, "target_fps": 30}},
-        "network.yaml": {"ws_host": "0.0.0.0", "ws_port": 8765},
+        "network.yaml": {"ws_host": "0.0.0.0", "ws_port": 8765, "comms_timeout_s": 3.0, "comms_loss_rtl_s": 15.0},
         "approach_limits.yaml": {"rc_override_deadband": 0.15},
-        "safety_limits.yaml": {"min_obstacle_distance_m": 2.0},
+        "safety_limits.yaml": _COMPLETE_SAFETY_CONFIG,
         "grid_search_limits.yaml": _COMPLETE_GRID_SEARCH_CONFIG,
         "follow_limits.yaml": _COMPLETE_FOLLOW_CONFIG,
         "orbit_limits.yaml": _COMPLETE_ORBIT_CONFIG,
@@ -64,9 +69,9 @@ def test_sim_mode_does_not_require_mavlink_config():
 def test_hardware_mode_requires_mavlink_and_imx500_config():
     fake_configs = {
         "hardware.yaml": {"camera": {"width": 1280, "height": 720, "target_fps": 30}},
-        "network.yaml": {"ws_host": "0.0.0.0", "ws_port": 8765},
+        "network.yaml": {"ws_host": "0.0.0.0", "ws_port": 8765, "comms_timeout_s": 3.0, "comms_loss_rtl_s": 15.0},
         "approach_limits.yaml": {"rc_override_deadband": 0.15},
-        "safety_limits.yaml": {"min_obstacle_distance_m": 2.0},
+        "safety_limits.yaml": _COMPLETE_SAFETY_CONFIG,
     }
     with patch("companion.main.load_yaml", side_effect=lambda name: fake_configs.get(name, {})):
         with pytest.raises(StartupHealthCheckError) as exc_info:
@@ -102,9 +107,9 @@ def test_flags_a_missing_grid_search_key_instead_of_only_parse_checking_it():
     mid-flight - an even worse time to discover a config typo)."""
     fake_configs = {
         "hardware.yaml": {"camera": {"width": 1280, "height": 720, "target_fps": 30}},
-        "network.yaml": {"ws_host": "0.0.0.0", "ws_port": 8765},
+        "network.yaml": {"ws_host": "0.0.0.0", "ws_port": 8765, "comms_timeout_s": 3.0, "comms_loss_rtl_s": 15.0},
         "approach_limits.yaml": {"rc_override_deadband": 0.15},
-        "safety_limits.yaml": {"min_obstacle_distance_m": 2.0},
+        "safety_limits.yaml": _COMPLETE_SAFETY_CONFIG,
         # A real-world typo: "waypoint_radius_m" renamed/misspelled, and
         # the whole "pid" section missing.
         "grid_search_limits.yaml": {
@@ -144,9 +149,9 @@ def test_passes_with_no_problems_does_not_raise():
             },
             "mavlink": {"connection": "/dev/serial0", "baud": 57600},
         },
-        "network.yaml": {"ws_host": "0.0.0.0", "ws_port": 8765},
+        "network.yaml": {"ws_host": "0.0.0.0", "ws_port": 8765, "comms_timeout_s": 3.0, "comms_loss_rtl_s": 15.0},
         "approach_limits.yaml": {"rc_override_deadband": 0.15},
-        "safety_limits.yaml": {"min_obstacle_distance_m": 2.0},
+        "safety_limits.yaml": _COMPLETE_SAFETY_CONFIG,
         "grid_search_limits.yaml": _COMPLETE_GRID_SEARCH_CONFIG,
         "follow_limits.yaml": _COMPLETE_FOLLOW_CONFIG,
         "orbit_limits.yaml": _COMPLETE_ORBIT_CONFIG,
@@ -181,6 +186,42 @@ async def test_amain_exits_before_touching_hardware_when_health_check_fails():
 def test_a_missing_enforced_limit_stops_boot_instead_of_silently_disabling_it(file_name, complete, missing_key):
     """These bounds are enforced by the controllers/orchestrator - a config
     that quietly lacks one would run with no floor/ceiling/accel limit."""
+    from companion.config.loader import load_yaml as real_load_yaml
+
+    def fake_load(name):
+        cfg = real_load_yaml(name)
+        if name == file_name:
+            cfg = {k: v for k, v in cfg.items() if k != missing_key}
+        return cfg
+
+    with patch("companion.main.load_yaml", side_effect=fake_load):
+        with pytest.raises(StartupHealthCheckError, match=missing_key):
+            run_startup_health_check("sim")
+
+
+def test_a_camera_resolution_that_does_not_match_the_calibration_stops_boot():
+    """Distances assume boxes are in the calibrated pixel space - a mismatch
+    would silently skew Follow's forward/back velocity and the proximity check."""
+    from companion.config.loader import load_yaml as real_load_yaml
+
+    def fake_load(name):
+        cfg = real_load_yaml(name)
+        if name == "hardware.yaml":
+            cfg = {**cfg, "camera": {**cfg["camera"], "width": 640, "height": 480}}
+        return cfg
+
+    with patch("companion.main.load_yaml", side_effect=fake_load):
+        with pytest.raises(StartupHealthCheckError, match="does not match hardware.yaml camera.width"):
+            run_startup_health_check("sim")
+
+
+@pytest.mark.parametrize("file_name,missing_key", [
+    ("safety_limits.yaml", "min_battery_pct"),
+    ("safety_limits.yaml", "min_gps_fix_type"),
+    ("network.yaml", "comms_timeout_s"),
+    ("network.yaml", "comms_loss_rtl_s"),
+])
+def test_a_missing_failsafe_setting_stops_boot(file_name, missing_key):
     from companion.config.loader import load_yaml as real_load_yaml
 
     def fake_load(name):

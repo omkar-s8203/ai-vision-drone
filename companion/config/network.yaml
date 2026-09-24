@@ -3,3 +3,13 @@ ssid: ai-vision-drone
 ws_host: 0.0.0.0
 ws_port: 8765
 video_pipeline: aiortc
+# The app sends a ping every 500ms; no message from it for this long means the
+# operator link is dead even if the TCP socket still looks open, and guidance
+# stops (SafetySupervisor comms_lost). Must comfortably exceed the app's ping
+# interval plus WiFi jitter.
+comms_timeout_s: 3.0
+# Continuous comms loss this long while the Pi is holding the aircraft in GUIDED
+# requests RTL: a drone left hovering in GUIDED with no operator only drains its
+# battery. (ArduPilot's own GCS failsafe does not count a companion computer's
+# heartbeat, so it cannot cover this.) Suppressed while the pilot has RC override.
+comms_loss_rtl_s: 15.0

@@ -74,9 +74,10 @@ def test_climb_refused_at_or_above_the_ceiling():
     assert apply_altitude_limits(1.0, 30.0, 2.0, 30.0) == 1.0
 
 
-def test_unknown_altitude_suppresses_descent_but_allows_climb():
+def test_unknown_altitude_holds_vertical_motion_in_both_directions():
     assert apply_altitude_limits(1.0, None, 2.0, 30.0) == 0.0
-    assert apply_altitude_limits(-1.0, None, 2.0, 30.0) == -1.0
+    assert apply_altitude_limits(-1.0, None, 2.0, 30.0) == 0.0
+    assert apply_altitude_limits(-1.0, None, None, 30.0) == 0.0  # a ceiling alone is enough
 
 
 def test_no_configured_floor_means_no_restriction_even_without_telemetry():

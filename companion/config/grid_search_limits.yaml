@@ -39,6 +39,11 @@ max_speed_mps: 2.5
 # when the mode engages. Set a real value once flight-tested, per this
 # project's own "verify against real hardware before trusting it" pattern.
 search_altitude_m: null
+# Same floor/ceiling as Follow/Orbit, enforced on the sweep's vertical command.
+min_altitude_m: 2.0
+max_altitude_m: 30.0
+# Forward speed ramps at this rate (see guidance/limits.py SlewLimiter).
+max_accel_mps2: 1.5
 
 pid:
   yaw:

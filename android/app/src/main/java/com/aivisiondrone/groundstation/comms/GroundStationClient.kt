@@ -4,6 +4,9 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -13,13 +16,44 @@ import org.json.JSONObject
 
 enum class LinkState { DISCONNECTED, CONNECTING, CONNECTED }
 
+private const val HEARTBEAT_PERIOD_MS = 500L
+
 /**
  * Control/telemetry channel to the Pi's GroundStationLink (companion/comms/ws_server.py).
  * Kept separate from video (WebRtcClient) so a video hiccup never blocks an abort command -
  * see docs plan M5/M6.
  */
-class GroundStationClient(private val client: OkHttpClient = OkHttpClient()) {
+class GroundStationClient(
+    // OkHttp's own WebSocket ping (default: none) lets the app notice a dead Pi
+    // link within seconds instead of waiting on the OS's TCP timeout.
+    private val client: OkHttpClient = OkHttpClient.Builder()
+        .pingInterval(2, TimeUnit.SECONDS)
+        .build(),
+) {
     private var socket: WebSocket? = null
+
+    // The Pi treats this app as gone (and stops all guidance) if it hears
+    // nothing for comms_timeout_s - a TCP socket can look open long after a
+    // WiFi link has died, so liveness is judged from real traffic. A tiny
+    // application-level ping every 500ms is that traffic; the Pi's pong reply
+    // is ignored. Runs only while the socket is open.
+    private val heartbeatExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
+        Thread(runnable, "gs-heartbeat").apply { isDaemon = true }
+    }
+    private var heartbeat: ScheduledFuture<*>? = null
+
+    private fun startHeartbeat(webSocket: WebSocket) {
+        stopHeartbeat()
+        heartbeat = heartbeatExecutor.scheduleAtFixedRate(
+            { runCatching { webSocket.send(makeEnvelope(MessageType.PING, JSONObject()).toJson()) } },
+            0, HEARTBEAT_PERIOD_MS, TimeUnit.MILLISECONDS,
+        )
+    }
+
+    private fun stopHeartbeat() {
+        heartbeat?.cancel(false)
+        heartbeat = null
+    }
 
     private val _linkState = MutableStateFlow(LinkState.DISCONNECTED)
     val linkState = _linkState.asStateFlow()
@@ -46,6 +80,7 @@ class GroundStationClient(private val client: OkHttpClient = OkHttpClient()) {
             object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     _linkState.value = LinkState.CONNECTED
+                    startHeartbeat(webSocket)
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
@@ -53,10 +88,12 @@ class GroundStationClient(private val client: OkHttpClient = OkHttpClient()) {
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    stopHeartbeat()
                     _linkState.value = LinkState.DISCONNECTED
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    stopHeartbeat()
                     _linkState.value = LinkState.DISCONNECTED
                 }
             },
@@ -73,6 +110,7 @@ class GroundStationClient(private val client: OkHttpClient = OkHttpClient()) {
 
     fun disconnect() {
         shouldAutoReconnect = false
+        stopHeartbeat()
         socket?.close(1000, "client disconnect")
         socket = null
         _linkState.value = LinkState.DISCONNECTED

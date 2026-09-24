@@ -31,6 +31,10 @@ class SupervisorInputs:
     comms_alive: bool
     requested_state: SupervisorState
     obstacle_alert: Optional[ObstacleAlert] = None
+    # Cross-mode, like the obstacle check: a geofence breach or a critically
+    # low battery stops ALL guidance, not just Approach-Test's own abort.
+    fence_breached: bool = False
+    battery_critical: bool = False
 
 
 @dataclass
@@ -76,6 +80,22 @@ class SafetySupervisor:
         if inputs.rc_override_active:
             self.state = SupervisorState.SAFE
             return SupervisorDecision(self.state, False, "rc_override")
+
+        # The FC's own geofence/battery failsafes are the primary action; this
+        # only makes sure the Pi is never still steering the aircraft while
+        # either is in effect (previously only Approach-Test looked at the
+        # fence, and nothing looked at the battery).
+        # Approach-Test is excluded: it already treats a fence breach as a
+        # *sticky* abort (ApproachState.ABORTED persists until restart), and
+        # forcing SAFE here would stop it from ever seeing the breach - it
+        # would then quietly resume once the fence cleared.
+        if inputs.fence_breached and inputs.requested_state != SupervisorState.APPROACHING:
+            self.state = SupervisorState.SAFE
+            return SupervisorDecision(self.state, False, "geofence_breached")
+
+        if inputs.battery_critical:
+            self.state = SupervisorState.SAFE
+            return SupervisorDecision(self.state, False, "battery_critical")
 
         if inputs.obstacle_alert is not None:
             self.state = SupervisorState.SAFE

@@ -8,3 +8,24 @@
 # same vision/rangefinder DistanceEstimator as Follow/Orbit, so it inherits
 # the same accuracy caveats (see docs plan M4) - deliberately conservative.
 min_obstacle_distance_m: 2.0
+
+# Battery: at or below this remaining percentage all guidance stops and, if the
+# Pi is the one holding the aircraft in GUIDED, RTL is requested (once). The
+# FC's own battery failsafe (BATT_LOW_ACT / BATT_CRT_ACT) is the primary
+# protection and should ALSO be configured; this only guarantees the
+# companion is never still chasing a target on a nearly-empty pack. Unknown
+# battery (no BATTERY_STATUS) never trips this.
+min_battery_pct: 20
+# Arm & Follow refuses to take off at or below this.
+min_takeoff_battery_pct: 30
+
+# GPS quality required by the one mode that navigates purely by GPS
+# coordinates (grid search), and checked before an auto-takeoff. fix_type 3 =
+# 3D fix. HDOP above max_hdop (lower = better) is treated as degraded.
+min_gps_fix_type: 3
+max_hdop: 2.5
+
+# A FORCED disarm cuts the motors regardless of the FC's own flying-detection. On
+# the ground that is the documented bench workaround; in the air it drops the
+# aircraft. Refused above this height (metres above home) when altitude is known.
+max_force_disarm_altitude_m: 1.5

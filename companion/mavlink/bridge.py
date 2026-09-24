@@ -19,6 +19,14 @@ log = logging.getLogger(__name__)
 # arming to override preflight checks and disarming in flight)").
 FORCE_ARM_DISARM_MAGIC_NUMBER = 21196
 
+# Position data older than this is treated as unknown by fresh_alt_m()/
+# fresh_position() - guidance must not steer or apply altitude limits on it.
+POSITION_MAX_AGE_S = 2.0
+# Re-ask the FC for its telemetry streams if position is this stale while
+# heartbeats still arrive, at most once per STREAM_RETRY_S.
+STREAM_STALE_S = 3.0
+STREAM_RETRY_S = 5.0
+
 # SET_POSITION_TARGET_LOCAL_NED type_mask: use velocity (vx,vy,vz) and
 # yaw_rate only - ignore position, acceleration, and yaw angle.
 TYPE_MASK_VELOCITY_AND_YAW_RATE = (
@@ -74,6 +82,9 @@ class TelemetrySnapshot:
     throttle_pct: Optional[int] = None
     rc_rssi_pct: Optional[int] = None
     current_battery_a: Optional[float] = None
+    # Monotonic time of the last GLOBAL_POSITION_INT - lat/lon/alt_m above are
+    # only as trustworthy as this is recent (see MavlinkBridge.fresh_*).
+    position_ts: Optional[float] = None
 
 
 class MavlinkBridge:
@@ -107,6 +118,7 @@ class MavlinkBridge:
         # right after the first heartbeat reveals the FC's target_system/
         # target_component (see _handle_message).
         self._requested_data_streams = False
+        self._last_stream_request_ts = 0.0
         # A real, previously-documented gap ("this bridge doesn't listen
         # for COMMAND_ACK"): an arm/disarm request rejected by the FC's own
         # pre-arm checks used to be completely invisible - the operator
@@ -141,6 +153,28 @@ class MavlinkBridge:
         if self.baud is not None:
             kwargs["baud"] = self.baud
         self._conn = mavutil.mavlink_connection(self.connection_string, **kwargs)
+
+    def position_age_s(self) -> Optional[float]:
+        ts = self.telemetry.position_ts
+        return None if ts is None else time.monotonic() - ts
+
+    def fresh_alt_m(self, max_age_s: float = POSITION_MAX_AGE_S) -> Optional[float]:
+        """Altitude above home, or None if it is unknown or stale. Guidance
+        uses this (not telemetry.alt_m directly) so a stalled position
+        stream degrades to "altitude unknown -> hold vertical" instead of
+        enforcing altitude limits against a frozen number."""
+        age = self.position_age_s()
+        if age is None or age > max_age_s:
+            return None
+        return self.telemetry.alt_m
+
+    def fresh_position(self, max_age_s: float = POSITION_MAX_AGE_S) -> Optional[tuple[float, float]]:
+        age = self.position_age_s()
+        if age is None or age > max_age_s:
+            return None
+        if self.telemetry.lat is None or self.telemetry.lon is None:
+            return None
+        return (self.telemetry.lat, self.telemetry.lon)
 
     def prime_udp_peer(self, host: str, port: int) -> None:
         """Sim/dev-only helper: pymavlink's connected ('udpout') sockets
@@ -202,13 +236,27 @@ class MavlinkBridge:
                 msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED
             )
             self.telemetry.last_heartbeat_ts = time.monotonic()
-            if not self._requested_data_streams:
+            # Requested once at first contact - and again whenever position
+            # data has gone stale while heartbeats keep arriving. A flight
+            # controller that reboots mid-session (brown-out, watchdog) comes
+            # back with its default stream rates and forgets this link ever
+            # asked for anything: heartbeats resume, everything else stays
+            # silent, and altitude/GPS would freeze at their last values.
+            now = time.monotonic()
+            position_stale = (
+                self.telemetry.position_ts is None or now - self.telemetry.position_ts > STREAM_STALE_S
+            )
+            if not self._requested_data_streams or (
+                position_stale and now - self._last_stream_request_ts > STREAM_RETRY_S
+            ):
                 self.request_data_streams()
                 self._requested_data_streams = True
+                self._last_stream_request_ts = now
         elif msg_type == "GLOBAL_POSITION_INT":
             self.telemetry.lat = msg.lat / 1e7
             self.telemetry.lon = msg.lon / 1e7
             self.telemetry.alt_m = msg.relative_alt / 1000.0
+            self.telemetry.position_ts = time.monotonic()
             vx, vy = msg.vx / 100.0, msg.vy / 100.0
             self.telemetry.groundspeed_mps = (vx**2 + vy**2) ** 0.5
         elif msg_type == "GPS_RAW_INT":

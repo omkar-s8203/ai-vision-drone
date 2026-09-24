@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 from dataclasses import dataclass
 from typing import Sequence, Union
@@ -143,6 +144,10 @@ class IMX500Detector(DetectorBase):
                 continue
             y0, x0, y1, x1 = box
             x, y, w, h = imx500.convert_inference_coords((y0, x0, y1, x1), metadata, picam2)
+            if not all(math.isfinite(float(v)) for v in (x, y, w, h)) or w <= 1 or h <= 1:
+                # A NaN/inf or degenerate box from the on-sensor model would
+                # poison tracking, distance and appearance math downstream.
+                continue
             class_id = int(class_id_raw)
             detections.append(
                 Detection(

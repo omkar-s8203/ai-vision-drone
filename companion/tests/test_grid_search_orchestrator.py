@@ -1,3 +1,4 @@
+import time
 from contextlib import contextmanager
 from unittest.mock import patch
 
@@ -69,6 +70,11 @@ def _build_orchestrator(tmp_path):
             recorder=recorder,
             grid_search_controller=GridSearchController(dict(FAST_GRID_SEARCH_LIMITS)),
         )
+        # A healthy 3D fix with fresh position data - grid search refuses to
+        # start or fly without one (see test_gps_gate below for the refusals).
+        orchestrator.mavlink.telemetry.gps_fix_type = 3
+        orchestrator.mavlink.telemetry.hdop = 1.0
+        orchestrator.mavlink.telemetry.position_ts = time.monotonic()
         yield orchestrator, recorder, conn, transport
 
 

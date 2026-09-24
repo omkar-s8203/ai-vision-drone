@@ -16,8 +16,11 @@ class GroundStationLink:
     (video_pipeline.py) so a video hiccup never blocks an abort command.
     """
 
-    def __init__(self, transport: Transport) -> None:
+    def __init__(self, transport: Transport, comms_timeout_s: Optional[float] = None) -> None:
         self.transport = transport
+        # None = judge liveness by the socket alone (tests, fake transports).
+        # Production builders pass network.yaml's comms_timeout_s.
+        self.comms_timeout_s = comms_timeout_s
         self._seq = SequenceCounter()
         self._handlers: dict[str, Callable[[dict], None]] = {}
         transport.on_message(self._dispatch)
@@ -122,4 +125,15 @@ class GroundStationLink:
 
     @property
     def is_connected(self) -> bool:
-        return getattr(self.transport, "has_clients", False)
+        """A client is connected AND has actually been heard from recently.
+        Socket state alone is not enough: a dropped WiFi link leaves the TCP
+        connection looking open for a long time, during which the operator
+        can neither see telemetry nor reach the abort button."""
+        if not getattr(self.transport, "has_clients", False):
+            return False
+        if self.comms_timeout_s is None:
+            return True
+        age = getattr(self.transport, "seconds_since_last_message", None)
+        if age is None:
+            return True
+        return age() <= self.comms_timeout_s

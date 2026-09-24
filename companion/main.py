@@ -86,6 +86,9 @@ MODES_REQUIRING_GUIDED = set(MODE_COMMAND_MAP.values()) - {
 }
 
 
+# Above this frame-to-frame gap the control loop is treated as having stalled.
+MAX_CONTROL_DT_S = 0.5
+
 _HOLD_COMMAND = GuidanceCommand(vx_mps=0.0, vy_mps=0.0, vz_mps=0.0, yaw_rate_rads=0.0)
 
 
@@ -141,6 +144,16 @@ class CompanionOrchestrator:
         self.recovery = recovery_controller or TargetRecoveryController(load_yaml("target_recovery.yaml"))
         self.grid_search = grid_search_controller or GridSearchController(load_yaml("grid_search_limits.yaml"))
         self.auto_takeoff = auto_takeoff_controller or AutoTakeoffController(load_yaml("auto_takeoff_limits.yaml"))
+        safety_cfg = load_yaml("safety_limits.yaml")
+        self.min_battery_pct = safety_cfg.get("min_battery_pct")
+        self.min_takeoff_battery_pct = safety_cfg.get("min_takeoff_battery_pct")
+        self.min_gps_fix_type = safety_cfg.get("min_gps_fix_type", 3)
+        self.max_hdop = safety_cfg.get("max_hdop")
+        self.max_force_disarm_altitude_m = safety_cfg.get("max_force_disarm_altitude_m")
+        self.comms_loss_rtl_s = load_yaml("network.yaml").get("comms_loss_rtl_s")
+        self._comms_lost_since: Optional[float] = None
+        self._failsafe_rtl_latched = False  # one RTL per failsafe episode; cleared when the cause clears
+        self._takeoff_refusal: Optional[str] = None  # why an auto-takeoff was refused, shown to the operator
         self.min_obstacle_distance_m = min_obstacle_distance_m
         self.mavlink = mavlink
         self.rc_monitor = rc_monitor
@@ -235,12 +248,16 @@ class CompanionOrchestrator:
             heading_deg = payload.get("grid_search_heading_deg")
             if heading_deg is None:
                 heading_deg = self.mavlink.telemetry.heading_deg or 0.0
-            if lat is not None and lon is not None and width_m is not None and height_m is not None:
+            if (
+                lat is not None and lon is not None and width_m is not None and height_m is not None
+                and self._gps_ok()
+            ):
                 self.grid_search.start(lat, lon, float(width_m), float(height_m), float(heading_deg))
             else:
                 log.error(
-                    "Cannot start grid search - missing GPS fix (lat=%s, lon=%s) or area "
-                    "dimensions (width_m=%s, height_m=%s)", lat, lon, width_m, height_m,
+                    "Cannot start grid search - missing/degraded GPS fix (lat=%s, lon=%s, fix_type=%s, hdop=%s) or area "
+                    "dimensions (width_m=%s, height_m=%s)",
+                    lat, lon, self.mavlink.telemetry.gps_fix_type, self.mavlink.telemetry.hdop, width_m, height_m,
                 )
                 mode = SupervisorState.IDLE
                 # A code-review audit caught a real gap here: this branch
@@ -277,6 +294,7 @@ class CompanionOrchestrator:
         # the operator switches to something else mid-sequence, since a
         # takeoff planned for one mode doesn't carry over to whatever they
         # picked instead.
+        self._takeoff_refusal = None
         if mode != self.requested_mode:
             if bool(payload.get("auto_takeoff")) and mode in MODES_REQUIRING_GUIDED:
                 self.auto_takeoff.start()
@@ -365,6 +383,7 @@ class CompanionOrchestrator:
         self.auto_takeoff.reset()
         self._identity_mismatch_frames = 0
         self._identity_dropped = False
+        self._takeoff_refusal = None
         self.state_machine.stop()
         self.appearance.forget()
         self.recovery.cancel()
@@ -415,6 +434,18 @@ class CompanionOrchestrator:
         why an unforced disarm can be silently refused by the FC itself."""
         armed = bool(payload.get("armed", False))
         force = bool(payload.get("force", False))
+        if force and not armed and self.max_force_disarm_altitude_m is not None:
+            # A forced disarm cuts the motors regardless of what the FC thinks it
+            # is doing - on the ground that is the documented bench workaround,
+            # in the air it drops the aircraft. The app asks for confirmation, but
+            # the Pi must not depend on that alone: refuse while the aircraft is
+            # known to be above the limit, and report it as a rejected disarm.
+            altitude = self.mavlink.fresh_alt_m()
+            if altitude is not None and altitude > self.max_force_disarm_altitude_m:
+                log.error("Force disarm refused: aircraft is %.1fm above home", altitude)
+                self.recorder.record("force_disarm_refused_airborne", alt_m=altitude)
+                self.mavlink.pending_arm_ack = {"armed_requested": False, "accepted": False}
+                return
         self.mavlink.arm(armed, force=force)
         self.recorder.record("arm_command", armed=armed, force=force)
 
@@ -533,6 +564,82 @@ class CompanionOrchestrator:
             self.recorder.record("identity_lost")
             return self.state_machine.state
         return tracking_state
+
+    def _gps_ok(self) -> bool:
+        """True only for a real 3D-or-better fix with acceptable HDOP.
+        Unknown counts as NOT ok: this gates the one mode (grid search)
+        that navigates purely by GPS coordinates, where flying on a missing
+        or degraded fix means flying to the wrong place."""
+        t = self.mavlink.telemetry
+        if t.gps_fix_type is None or t.gps_fix_type < self.min_gps_fix_type:
+            return False
+        if self.max_hdop is not None and t.hdop is not None and t.hdop > self.max_hdop:
+            return False
+        return True
+
+    def _battery_critical(self) -> bool:
+        pct = self.mavlink.telemetry.battery_remaining_pct
+        return self.min_battery_pct is not None and pct is not None and pct <= self.min_battery_pct
+
+    def _takeoff_refusal_reason(self) -> Optional[str]:
+        """Pre-takeoff checks for Arm & Follow. A value the FC has not
+        reported yet is not a refusal (the FC refuses a takeoff without a
+        position estimate itself) - a value it HAS reported and is bad is."""
+        t = self.mavlink.telemetry
+        if t.gps_fix_type is not None and t.gps_fix_type < self.min_gps_fix_type:
+            return "takeoff_refused_gps"
+        if self.max_hdop is not None and t.hdop is not None and t.hdop > self.max_hdop:
+            return "takeoff_refused_gps"
+        if (
+            self.min_takeoff_battery_pct is not None
+            and t.battery_remaining_pct is not None
+            and t.battery_remaining_pct <= self.min_takeoff_battery_pct
+        ):
+            return "takeoff_refused_battery"
+        return None
+
+    def _update_failsafe_rtl(self, ts: float, comms_alive: bool, rc_override: bool) -> None:
+        """A drone left hovering in GUIDED with no operator link, or with a
+        critically low battery, only waits to fall out of the sky - the Pi
+        stopped its own setpoints (SafetySupervisor comms_lost /
+        battery_critical) but nothing else would ever bring it home:
+        ArduPilot's GCS failsafe does not count a companion computer's
+        heartbeat. So, once per episode, and only while this Pi is the one
+        holding the aircraft (armed, in GUIDED), request RTL. Never while the
+        pilot has RC override (they are flying it), and never re-fired after
+        the pilot changes mode themselves - the latch only clears when the
+        cause does."""
+        if comms_alive:
+            self._comms_lost_since = None
+        elif self._comms_lost_since is None:
+            self._comms_lost_since = ts
+
+        reason = None
+        if (
+            self.comms_loss_rtl_s is not None
+            and self._comms_lost_since is not None
+            and ts - self._comms_lost_since >= self.comms_loss_rtl_s
+        ):
+            reason = "comms_loss"
+        elif self._battery_critical():
+            reason = "battery_critical"
+
+        if reason is None:
+            self._failsafe_rtl_latched = False
+            return
+        t = self.mavlink.telemetry
+        if self._failsafe_rtl_latched or not (t.armed and t.fc_mode == AI_GUIDANCE_MODE_NAME):
+            return
+        if rc_override:
+            self.recorder.record("failsafe_rtl_suppressed_rc_override", reason=reason)
+            return
+        if self.mavlink.is_connected:
+            self.mavlink.set_mode("RTL")
+            self._failsafe_rtl_latched = True
+            self.requested_mode = SupervisorState.IDLE
+            self.auto_takeoff.reset()
+            log.error("Failsafe RTL requested (%s)", reason)
+            self.recorder.record("failsafe_rtl", reason=reason)
 
     async def process_frame(self, frame) -> dict:
         """Runs one full perception -> tracking -> guidance -> safety cycle
@@ -724,6 +831,16 @@ class CompanionOrchestrator:
         # (on a timeout) before the Supervisor ever evaluates it.
         dt = 0.0 if self._last_frame_ts is None else max(0.0, frame.ts - self._last_frame_ts)
         self._last_frame_ts = frame.ts
+        # A stalled frame loop (camera hiccup, GC pause) must not feed a
+        # multi-second dt into the PID derivative terms or the acceleration
+        # limiter (which would allow a proportionally larger velocity step):
+        # treat it as a gap - controllers restart from a standstill and
+        # compute nothing this frame.
+        control_dt = dt
+        if dt > MAX_CONTROL_DT_S:
+            control_dt = 0.0
+            self.follow.reset()
+            self.orbit.reset()
 
         effective_requested_state = self.requested_mode
         if recovery_result.phase == RecoveryPhase.SEARCHING:
@@ -779,13 +896,25 @@ class CompanionOrchestrator:
             action = self.auto_takeoff.update(
                 armed=self.mavlink.telemetry.armed,
                 fc_mode=self.mavlink.telemetry.fc_mode,
-                current_alt_m=self.mavlink.telemetry.alt_m,
+                current_alt_m=self.mavlink.fresh_alt_m(),
                 dt=dt,
             )
             if action == "send_takeoff":
-                self.mavlink.takeoff(self.auto_takeoff.target_altitude_m)
-                self.recorder.record("auto_takeoff_sent", altitude_m=self.auto_takeoff.target_altitude_m)
-                auto_takeoff_holding = True
+                refusal = self._takeoff_refusal_reason()
+                if refusal is not None:
+                    # Armed and in GUIDED, but GPS or battery is not fit for
+                    # a takeoff: do not climb, fall back to idle and tell the
+                    # operator why (banner) instead of silently doing nothing.
+                    log.error("Auto-takeoff refused: %s", refusal)
+                    self.recorder.record("auto_takeoff_refused", reason=refusal)
+                    self._takeoff_refusal = refusal
+                    self.auto_takeoff.reset()
+                    self.requested_mode = SupervisorState.IDLE
+                    effective_requested_state = SupervisorState.IDLE
+                else:
+                    self.mavlink.takeoff(self.auto_takeoff.target_altitude_m)
+                    self.recorder.record("auto_takeoff_sent", altitude_m=self.auto_takeoff.target_altitude_m)
+                    auto_takeoff_holding = True
             elif action == "hold":
                 auto_takeoff_holding = True
             elif action == "timed_out":
@@ -804,6 +933,8 @@ class CompanionOrchestrator:
             # same frame, decision.state below will already reflect
             # effective_requested_state unaffected by auto-takeoff.
 
+        self._update_failsafe_rtl(frame.ts, comms_alive, rc_override)
+
         decision = self.supervisor.evaluate(
             SupervisorInputs(
                 fc_mode=self.mavlink.telemetry.fc_mode,
@@ -813,6 +944,8 @@ class CompanionOrchestrator:
                 comms_alive=comms_alive,
                 requested_state=effective_requested_state,
                 obstacle_alert=obstacle_alert,
+                fence_breached=self.mavlink.telemetry.fence_breached,
+                battery_critical=self._battery_critical(),
             )
         )
 
@@ -844,8 +977,8 @@ class CompanionOrchestrator:
                     distance_m,
                     frame.width,
                     frame.height,
-                    dt,
-                    current_altitude_m=self.mavlink.telemetry.alt_m,
+                    control_dt,
+                    current_altitude_m=self.mavlink.fresh_alt_m(),
                 )
                 follow_ran = True
             else:
@@ -858,8 +991,8 @@ class CompanionOrchestrator:
                     distance_m,
                     frame.width,
                     frame.height,
-                    dt,
-                    current_altitude_m=self.mavlink.telemetry.alt_m,
+                    control_dt,
+                    current_altitude_m=self.mavlink.fresh_alt_m(),
                 )
                 orbit_ran = True
             else:
@@ -880,13 +1013,20 @@ class CompanionOrchestrator:
             if result.abort_reason:
                 self.recorder.record("approach_abort", reason=result.abort_reason)
         elif decision.state == SupervisorState.GRID_SEARCH:
-            command = self.grid_search.compute(
-                self.mavlink.telemetry.lat,
-                self.mavlink.telemetry.lon,
-                self.mavlink.telemetry.heading_deg,
-                self.mavlink.telemetry.alt_m,
-                dt,
-            )
+            # GPS-navigated: never on a stale position or a degraded fix -
+            # no command at all (the FC's own setpoint timeout then holds
+            # position) and the operator is told why.
+            position = self.mavlink.fresh_position()
+            if position is None or not self._gps_ok():
+                hold_reason = "gps_degraded"
+            else:
+                command = self.grid_search.compute(
+                    position[0],
+                    position[1],
+                    self.mavlink.telemetry.heading_deg,
+                    self.mavlink.fresh_alt_m(),
+                    control_dt,
+                )
             if self.grid_search.phase == GridSearchPhase.FINISHED:
                 # Unlike Approach-Test's STOPPED_AT_BOUNDARY (a safety-
                 # relevant state deliberately left "stuck" until the
@@ -948,7 +1088,7 @@ class CompanionOrchestrator:
                 "commanded_vz_mps": command.vz_mps if command is not None else None,
                 "commanded_yaw_rate_rads": command.yaw_rate_rads if command is not None else None,
                 "guidance_sent": sent,
-                "guidance_hold": hold_reason,
+                "guidance_hold": hold_reason or self._takeoff_refusal,
             }
         )
         await self.link.send_detections_update(
@@ -1164,7 +1304,7 @@ def build_sim_orchestrator() -> tuple[CompanionOrchestrator, "object"]:
     watchdog = HeartbeatWatchdog(timeout_s=2.0)
     supervisor = SafetySupervisor(watchdog)
     transport = WebSocketTransport(network_cfg["ws_host"], network_cfg["ws_port"])
-    link = GroundStationLink(transport)
+    link = GroundStationLink(transport, comms_timeout_s=network_cfg.get("comms_timeout_s"))
     recorder = SessionRecorder(Path("companion/logs/sessions"))
 
     def _sim_frame_source():
@@ -1251,7 +1391,7 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
     watchdog = HeartbeatWatchdog(timeout_s=2.0)
     supervisor = SafetySupervisor(watchdog)
     transport = WebSocketTransport(network_cfg["ws_host"], network_cfg["ws_port"])
-    link = GroundStationLink(transport)
+    link = GroundStationLink(transport, comms_timeout_s=network_cfg.get("comms_timeout_s"))
     recorder = SessionRecorder(Path.home() / "ai-vision-drone-logs" / "sessions")
     video_recorder = VideoRecorder(
         Path.home() / "ai-vision-drone-logs" / "recordings",
@@ -1342,7 +1482,13 @@ def run_startup_health_check(mode: str) -> None:
     _require(approach_cfg, ["rc_override_deadband"], "approach_limits.yaml")
 
     safety_cfg = _load("safety_limits.yaml")
-    _require(safety_cfg, ["min_obstacle_distance_m"], "safety_limits.yaml")
+    for path in (
+        ["min_obstacle_distance_m"], ["min_battery_pct"], ["min_takeoff_battery_pct"],
+        ["min_gps_fix_type"], ["max_force_disarm_altitude_m"],
+    ):
+        _require(safety_cfg, path, "safety_limits.yaml")
+    for path in (["comms_timeout_s"], ["comms_loss_rtl_s"]):
+        _require(network_cfg, path, "network.yaml")
 
     # A deep-audit gap: this file used to only be parse-checked below like
     # the others, but GridSearchController's __init__ unconditionally
@@ -1388,8 +1534,22 @@ def run_startup_health_check(mode: str) -> None:
     ):
         _require(orbit_limits_cfg, path, "orbit_limits.yaml")
 
+    # Distance estimation scales the calibrated focal length by nothing: it
+    # assumes detection boxes are in the same pixel space the intrinsics were
+    # calibrated in. A camera resolution that differs from the calibration's
+    # would make every distance (and so Follow's forward/back velocity and the
+    # obstacle-proximity check) silently wrong - refuse to start instead.
+    calibration_cfg = _load("camera_calibration.yaml")
+    camera_cfg = hardware_cfg.get("camera", {})
+    for cam_key, calib_key in (("width", "image_width"), ("height", "image_height")):
+        if cam_key in camera_cfg and calib_key in calibration_cfg and camera_cfg[cam_key] != calibration_cfg[calib_key]:
+            problems.append(
+                f"camera_calibration.yaml: {calib_key}={calibration_cfg[calib_key]} does not match "
+                f"hardware.yaml camera.{cam_key}={camera_cfg[cam_key]} - recalibrate at the running "
+                "resolution (tools/calibrate_camera.py) or scale the intrinsics"
+            )
+
     for file_name in (
-        "camera_calibration.yaml",
         "reidentification.yaml",
         "target_recovery.yaml",
         "auto_takeoff_limits.yaml",

@@ -5,6 +5,7 @@ from enum import Enum, auto
 from typing import Optional
 
 from companion.guidance.command import GuidanceCommand
+from companion.guidance.limits import SlewLimiter, apply_altitude_limits
 from companion.guidance.geo import bearing_deg, generate_lawnmower_waypoints, haversine_distance_m
 from companion.guidance.pid import Pid
 
@@ -56,6 +57,7 @@ class GridSearchController:
         pid_cfg = limits["pid"]
         self._yaw_pid = Pid(**pid_cfg["yaw"], out_limit=limits["max_yaw_rate_rads"])
         self._altitude_pid = Pid(**pid_cfg["altitude"], out_limit=limits["max_speed_mps"])
+        self._vx_slew = SlewLimiter(limits.get("max_accel_mps2"))
         self._waypoints: list[tuple[float, float]] = []
         self._current_index = 0
         self.phase = GridSearchPhase.IDLE
@@ -84,6 +86,7 @@ class GridSearchController:
         self.phase = GridSearchPhase.SEARCHING
         self._yaw_pid.reset()
         self._altitude_pid.reset()
+        self._vx_slew.reset()
 
     def reset(self) -> None:
         self._waypoints = []
@@ -91,6 +94,7 @@ class GridSearchController:
         self.phase = GridSearchPhase.IDLE
         self._yaw_pid.reset()
         self._altitude_pid.reset()
+        self._vx_slew.reset()
 
     def status(self) -> GridSearchStatus:
         return GridSearchStatus(phase=self.phase, waypoints=list(self._waypoints), current_index=self._current_index)
@@ -132,6 +136,7 @@ class GridSearchController:
 
         facing_waypoint = abs(heading_error_deg) < self.limits["max_heading_error_deg_to_advance"]
         vx = self.limits["search_speed_mps"] if facing_waypoint else 0.0
+        vx = self._vx_slew.step(vx, dt)
 
         max_speed = self.limits["max_speed_mps"]
         vz = 0.0
@@ -141,4 +146,7 @@ class GridSearchController:
             vz = -self._altitude_pid.step(altitude_error, dt)  # NED: negative = up
             vz = max(-max_speed, min(max_speed, vz))
 
+        vz = apply_altitude_limits(
+            vz, current_altitude_m, self.limits.get("min_altitude_m"), self.limits.get("max_altitude_m")
+        )
         return GuidanceCommand(vx_mps=vx, vy_mps=0.0, vz_mps=vz, yaw_rate_rads=yaw_rate)

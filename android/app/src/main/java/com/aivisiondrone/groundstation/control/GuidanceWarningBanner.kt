@@ -34,6 +34,9 @@ private val RESUMABLE_REASONS = setOf("rc_override", "fc_not_in_ai_mode")
 const val HOLD_AUTO_TAKEOFF = "hold:auto_takeoff"
 const val HOLD_TARGET_UNSEEN = "hold:target_unseen"
 const val HOLD_IDENTITY_LOST = "hold:identity_lost"
+const val HOLD_GPS_DEGRADED = "hold:gps_degraded"
+const val HOLD_TAKEOFF_REFUSED_GPS = "hold:takeoff_refused_gps"
+const val HOLD_TAKEOFF_REFUSED_BATTERY = "hold:takeoff_refused_battery"
 
 /** The banner text for whatever is currently limiting guidance: a real
  * Supervisor block wins over a deliberate hold, since a block is the more
@@ -57,12 +60,17 @@ private fun describeReason(reason: String): String = when {
     reason == "comms_lost" -> "Ground station link lost - guidance paused"
     reason == "fc_not_in_ai_mode" -> "Flight controller not in AI guidance mode"
     reason == "target_lost" -> "Target lost - guidance paused"
+    reason == "geofence_breached" -> "Geofence breached - guidance stopped"
+    reason == "battery_critical" -> "Battery critically low - guidance stopped"
     // Not Supervisor reasons - guidance_hold codes from the Pi (see
     // TrackingState.guidanceHold), prefixed "hold:" by the caller. The
     // drone is deliberately holding still, not failing.
     reason == HOLD_AUTO_TAKEOFF -> "Climbing to safe altitude - following starts when reached"
     reason == HOLD_TARGET_UNSEEN -> "Target not visible - holding position"
     reason == HOLD_IDENTITY_LOST -> "Not sure this is your target - holding position"
+    reason == HOLD_GPS_DEGRADED -> "GPS fix degraded - holding position"
+    reason == HOLD_TAKEOFF_REFUSED_GPS -> "Takeoff refused - no good GPS fix"
+    reason == HOLD_TAKEOFF_REFUSED_BATTERY -> "Takeoff refused - battery too low"
     else -> reason
 }
 

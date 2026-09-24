@@ -1,3 +1,4 @@
+import time
 from contextlib import contextmanager
 from unittest.mock import patch
 
@@ -78,6 +79,7 @@ async def test_arm_and_follow_holds_guidance_until_altitude_then_starts_followin
         orchestrator.mavlink.telemetry.fc_mode = "STABILIZE"
         orchestrator.mavlink.telemetry.armed = False
         orchestrator.mavlink.telemetry.alt_m = 0.0
+        orchestrator.mavlink.telemetry.position_ts = time.monotonic()
         person = _person()
 
         orchestrator._on_target_selected({"x": 640.0, "y": 380.0, "point": True})
@@ -111,6 +113,7 @@ async def test_arm_and_follow_holds_guidance_until_altitude_then_starts_followin
 
         # Still climbing, below tolerance - held, no repeat takeoff command.
         orchestrator.mavlink.telemetry.alt_m = 5.0
+        orchestrator.mavlink.telemetry.position_ts = time.monotonic()
         await orchestrator.process_frame(Frame(ts=0.3, width=1280, height=720, raw_detection_output=[person]))
         conn.mav.set_position_target_local_ned_send.assert_not_called()
         takeoff_calls = [call for call in conn.mav.command_long_send.call_args_list if call.args[-1] == 10.0]
@@ -120,6 +123,7 @@ async def test_arm_and_follow_holds_guidance_until_altitude_then_starts_followin
         # Altitude reached (within the 1.0m tolerance of a 10.0m target) -
         # sequencing completes and real Follow guidance starts this frame.
         orchestrator.mavlink.telemetry.alt_m = 9.5
+        orchestrator.mavlink.telemetry.position_ts = time.monotonic()
         await orchestrator.process_frame(Frame(ts=0.4, width=1280, height=720, raw_detection_output=[person]))
         assert orchestrator.auto_takeoff.phase == AutoTakeoffPhase.DONE
         assert not orchestrator.auto_takeoff.is_active
@@ -140,6 +144,7 @@ async def test_auto_takeoff_timeout_aborts_to_idle_without_ever_following(tmp_pa
         orchestrator.mavlink.telemetry.fc_mode = "GUIDED"
         orchestrator.mavlink.telemetry.armed = True
         orchestrator.mavlink.telemetry.alt_m = 0.0
+        orchestrator.mavlink.telemetry.position_ts = time.monotonic()
         person = _person()
 
         orchestrator._on_target_selected({"x": 640.0, "y": 380.0, "point": True})

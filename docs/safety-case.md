@@ -516,6 +516,80 @@ graceful fallback:
   and REACQUIRE-hold, mutation-checked), plus health-check and grid-search
   clamp tests.
 
+## Deep audit: flight-controller data, operator link, failsafes
+
+Second full audit, focused on "does the FC get correct commands and does the
+drone stay stable and safe through a mission".
+
+- **Verified correct against the MAVLink/ArduCopter spec (no change needed)**:
+  `SET_POSITION_TARGET_LOCAL_NED` type mask 1479 (velocity + yaw rate, position/
+  acceleration/yaw ignored); `MAV_FRAME_BODY_OFFSET_NED` (ArduCopter rotates
+  body-frame velocity by current yaw); +x forward, +y right, +z DOWN (Follow's
+  climb is negative vz); yaw rate positive = clockwise (target right of center
+  yaws right); `GLOBAL_POSITION_INT` lat/lon /1e7 and `relative_alt` mm to m;
+  grid-search bearing/heading-error sign. Still **not** confirmed against a
+  real flying FC.
+- **Operator-link loss was detected only by socket state** - a dropped WiFi
+  link leaves a TCP socket "connected" for tens of seconds (the WebSocket
+  library's own keepalive is 20 s + 20 s), the app sent no traffic, and the
+  documented 1.5 s comms timeout was never used anywhere. So "phone link lost
+  stops guidance" was not true in practice. Now: the app pings every 500 ms,
+  the Pi treats `comms_timeout_s` (3 s) without any message as link loss
+  (`comms_lost`), and OkHttp pings the Pi every 2 s so the app notices a dead
+  Pi link in seconds too.
+- **Nothing brought a stranded drone home.** After comms loss the Pi only
+  stopped its setpoints, leaving the aircraft hovering in GUIDED until the
+  battery died (ArduPilot's GCS failsafe does not count a companion computer's
+  heartbeat). The Pi now requests RTL once per episode after `comms_loss_rtl_s`
+  (15 s) of continuous loss, or at critical battery (`min_battery_pct`), only
+  while it is the one holding the aircraft (armed + GUIDED), never while the
+  pilot has RC override, and never re-fired after the pilot changes mode.
+- **Geofence and battery only mattered to Approach-Test.** Both now stop ALL
+  guidance in the Supervisor (`geofence_breached`, `battery_critical`);
+  Approach-Test is excluded from the fence gate so it keeps its own sticky
+  abort. The FC's own fence/battery failsafes remain the primary protection.
+- **Frozen telemetry.** The bridge requested telemetry streams once and never
+  again: after an FC reboot (heartbeats resume, stream rates reset) altitude and
+  GPS would freeze at their last values while everything looked alive. It now
+  re-requests when position data goes stale, rate-limited, and guidance reads
+  `fresh_alt_m()`/`fresh_position()` - older than 2 s counts as unknown.
+  **Unknown altitude now holds all vertical motion** (previously it only
+  blocked descent), because neither floor nor ceiling can be verified.
+- **GPS-navigated grid search** refuses to start, and holds if it loses, a 3D
+  fix with acceptable HDOP (unknown counts as bad), and never steers on a stale
+  position. Its forward speed ramps and its vertical command obeys the same
+  floor/ceiling as Follow/Orbit.
+- **Arm & Follow pre-takeoff checks**: refused (and shown to the operator) on a
+  reported bad GPS fix or low battery; values the FC has not reported yet are
+  not treated as failures (the FC refuses a takeoff without a position itself).
+- **Force disarm** is refused above `max_force_disarm_altitude_m` (1.5 m) when
+  altitude is known: forced disarm cuts the motors and would drop a flying
+  aircraft; the app's confirmation dialog is no longer the only guard.
+- **Stalled frame loop**: a frame gap over 0.5 s no longer feeds a huge dt to
+  the PID derivative/acceleration limiter; controllers restart from standstill.
+- **Blind retreat capped**: Follow/Orbit backing away is limited to
+  `max_reverse_speed_mps` (1 m/s) - the camera faces forward.
+- **Detector**: non-finite or degenerate boxes from the on-sensor model are
+  dropped before they reach tracking/distance/appearance math.
+- **Boot check** now also refuses to start on a camera resolution that does not
+  match the calibration (distances would be silently wrong) and on any missing
+  failsafe setting.
+- **Explicitly NOT covered - be aware**: (1) **obstacle avoidance is vision-only
+  and class-based** - it recognises COCO objects (people, cars...), not walls,
+  trees, poles, wires or glass; do not fly Follow near unmapped obstacles
+  without a rangefinder or FC-side avoidance. (2) **FC parameters are outside
+  this code and unverified**: confirm on the real FC `BATT_LOW_ACT`/
+  `BATT_CRT_ACT`, `FENCE_ENABLE`/`FENCE_ACTION`, `GUID_TIMEOUT`, `RTL_ALT`, GPS
+  and EKF failsafes, `FLTMODE_CH`. (3) A frozen Pi process or dead camera stops
+  setpoints, after which the FC's own GUIDED velocity timeout holds position
+  (it does not land). (4) Calibration intrinsics are still placeholders. (5) No
+  SITL or flight test of any of this has been run.
+- **Tests**: `test_failsafes_and_freshness.py` (link liveness, stream
+  re-request, telemetry freshness, supervisor gates, failsafe RTL incl. latch/
+  RC-override/not-guided cases, takeoff refusal, grid GPS gating, stalled loop,
+  reverse cap, detector, force-disarm guard) - mutation-checked - plus updates
+  to the health-check tests.
+
 ## Grid Search finishing - a deliberately different design from Approach-Test
 
 - Unlike the above, a Grid Search sweep that finishes on its own (every
@@ -534,7 +608,7 @@ Every mechanism above that has a corresponding `SafetySupervisor` gate is
 covered by at least one test that independently trips *only that
 condition* and asserts guidance is denied - this is what "fault injection"
 means in this codebase's test suite, not a separate framework. As of this
-writing: 494 companion tests passing
+writing: 545 companion tests passing
 (`.venv/Scripts/python -m pytest -q`), including a real end-to-end test
 (`test_integration_websocket.py`) that drives the actual JSON wire
 protocol over a real WebSocket and real MAVLink link, and real-MAVLink

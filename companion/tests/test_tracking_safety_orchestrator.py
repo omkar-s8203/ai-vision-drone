@@ -1,4 +1,5 @@
 import math
+import time
 from contextlib import contextmanager
 from unittest.mock import patch
 
@@ -82,6 +83,7 @@ def _build(tmp_path, camera=None):
         orchestrator.mavlink.telemetry.fc_mode = "GUIDED"
         orchestrator.mavlink.telemetry.armed = True
         orchestrator.mavlink.telemetry.alt_m = 10.0
+        orchestrator.mavlink.telemetry.position_ts = time.monotonic()
         yield orchestrator, recorder, conn
         recorder.close()
 
@@ -341,6 +343,7 @@ async def test_hold_reason_clears_once_the_target_is_tracked_again(tmp_path):
 async def test_hold_reason_reports_the_takeoff_climb(tmp_path):
     with _build(tmp_path) as (orch, _rec, _conn):
         orch.mavlink.telemetry.alt_m = 0.0
+        orch.mavlink.telemetry.position_ts = time.monotonic()
         person = _person(BBox(300, 300, 80, 160))
         orch._on_target_selected({"x": 340.0, "y": 380.0, "point": True})
         await orch.process_frame(_frame(0.0, [person]))

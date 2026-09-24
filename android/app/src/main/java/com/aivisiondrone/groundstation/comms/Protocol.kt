@@ -23,6 +23,8 @@ object MessageType {
     const val ERROR = "error"
     const val WEBRTC_OFFER = "webrtc_offer"
     const val WEBRTC_ANSWER = "webrtc_answer"
+    const val PING = "ping"
+    const val PONG = "pong"
 }
 
 data class Envelope(

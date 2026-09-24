@@ -52,6 +52,11 @@ class OrbitController:
         self._vy_slew.reset()
         self._vz_slew.reset()
 
+    def _clamp_vx(self, vx: float) -> float:
+        max_speed = self.limits["max_speed_mps"]
+        max_reverse = min(max_speed, self.limits.get("max_reverse_speed_mps", max_speed))
+        return max(-max_reverse, min(max_speed, vx))
+
     def set_max_speed(self, max_speed_mps: float) -> None:
         """Live speed-limit update (Android speed slider) - see
         FollowController.set_max_speed()'s docstring for the full
@@ -114,7 +119,7 @@ class OrbitController:
         # See FollowController.compute() - acceleration limit, re-clamp to
         # the (possibly just-lowered) speed cap, then re-apply the altitude
         # limit so slewing can't carry a move through a floor/ceiling.
-        vx = max(-max_speed, min(max_speed, self._vx_slew.step(vx, dt)))
+        vx = self._clamp_vx(self._vx_slew.step(self._clamp_vx(vx), dt))
         vy = max(-max_speed, min(max_speed, self._vy_slew.step(vy, dt)))
         vz = max(-max_speed, min(max_speed, self._vz_slew.step(vz, dt)))
         vz = apply_altitude_limits(vz, current_altitude_m, min_alt, max_alt)

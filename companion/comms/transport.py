@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Callable
 
 import websockets
@@ -34,14 +35,25 @@ class WebSocketTransport(Transport):
         self._server = None
         self._clients: set = set()
         self._handlers: list[MessageHandler] = []
+        # Monotonic time of the last message received from ANY client. A TCP
+        # socket can stay "connected" for a long time after the phone has
+        # actually gone (WiFi dropped, app frozen) - websockets' own
+        # keepalive only notices after tens of seconds - so liveness is
+        # judged from real traffic (the app sends a ping every 500ms).
+        self._last_rx = time.monotonic()
+
+    def seconds_since_last_message(self) -> float:
+        return time.monotonic() - self._last_rx
 
     def on_message(self, handler: MessageHandler) -> None:
         self._handlers.append(handler)
 
     async def _handle_client(self, ws) -> None:
         self._clients.add(ws)
+        self._last_rx = time.monotonic()  # a fresh connection starts the clock
         try:
             async for raw in ws:
+                self._last_rx = time.monotonic()
                 for handler in self._handlers:
                     handler(raw)
         finally:

@@ -48,6 +48,13 @@ class FollowController:
         self._vx_slew.reset()
         self._vz_slew.reset()
 
+    def _clamp_vx(self, vx: float) -> float:
+        """Forward is capped by max_speed, backward (blind - the camera faces
+        forward) by the lower max_reverse_speed_mps when configured."""
+        max_speed = self.limits["max_speed_mps"]
+        max_reverse = min(max_speed, self.limits.get("max_reverse_speed_mps", max_speed))
+        return max(-max_reverse, min(max_speed, vx))
+
     def set_max_speed(self, max_speed_mps: float) -> None:
         """Live speed-limit update (Android speed slider). Clamped to
         [min_speed_mps, the configured max_speed_mps ceiling] - the app can
@@ -104,7 +111,7 @@ class FollowController:
 
         # Acceleration limit last, then re-clamp: set_max_speed() can lower
         # the cap below where the slew limiter currently sits.
-        vx = max(-max_speed, min(max_speed, self._vx_slew.step(vx, dt)))
+        vx = self._clamp_vx(self._vx_slew.step(self._clamp_vx(vx), dt))
         vz = max(-max_speed, min(max_speed, self._vz_slew.step(vz, dt)))
         # Slewing must not carry a descent through the floor (or a climb
         # through the ceiling) that the limit above just refused.

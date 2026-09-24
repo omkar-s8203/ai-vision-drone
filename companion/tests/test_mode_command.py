@@ -247,6 +247,7 @@ def test_every_mode_requiring_guided_requests_it(tmp_path, mode_str, payload_ext
         orchestrator.mavlink.telemetry.fc_mode = "STABILIZE"
         orchestrator.mavlink.telemetry.lat = 37.7749
         orchestrator.mavlink.telemetry.lon = -122.4194
+        orchestrator.mavlink.telemetry.gps_fix_type = 3  # grid search refuses to start without a real fix
 
         orchestrator._on_mode_command({"mode": mode_str, **payload_extra})
 

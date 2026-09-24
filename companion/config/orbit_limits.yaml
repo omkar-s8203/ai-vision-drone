@@ -5,13 +5,17 @@ min_speed_mps: 0.5
 # Enforced by SlewLimiter (guidance/limits.py) on vx/vy/vz - same meaning as
 # follow_limits.yaml's max_accel_mps2.
 max_accel_mps2: 1.5
+# Radius correction that moves away from the target is blind (camera faces
+# it), so it is capped below the general speed limit.
+max_reverse_speed_mps: 1.0
 orbit_radius_m: 8.0
 min_radius_m: 3.0
 max_radius_m: 20.0
 # degrees/second the drone sweeps around the target - 15 deg/s completes a
 # full circle in 24s, a reasonable default "quickshot"-style orbit speed.
 angular_speed_dps: 15.0
-# 1 = clockwise (strafe right while facing the target), -1 = counter-clockwise
+# 1 = strafe right while facing the target, which circles the target
+# COUNTER-clockwise seen from above; -1 = strafe left = clockwise from above.
 direction: 1
 # null = fall back to pixel-framing vertical control, same convention as
 # follow_limits.yaml's target_altitude_m.

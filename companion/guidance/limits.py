@@ -50,10 +50,12 @@ def apply_altitude_limits(
     vertical-control mode is in use - pixel-framing (keep the target centered
     in frame) in particular has no altitude reference of its own, and a
     target below the image center used to command a descent with no floor at
-    all. With no altitude telemetry the floor can't be verified, so descent
-    is suppressed (climbing is still allowed) rather than assumed safe."""
+    all. With no (or stale) altitude telemetry neither the floor nor the
+    ceiling can be verified, so vertical motion is held at zero rather than
+    assumed safe - descending could hit the ground, climbing could pass the
+    ceiling."""
     if current_altitude_m is None:
-        return min(vz, 0.0) if min_altitude_m is not None else vz
+        return 0.0 if (min_altitude_m is not None or max_altitude_m is not None) else vz
     if min_altitude_m is not None and current_altitude_m <= min_altitude_m and vz > 0:
         return 0.0
     if max_altitude_m is not None and current_altitude_m >= max_altitude_m and vz < 0:

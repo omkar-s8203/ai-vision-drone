@@ -92,19 +92,18 @@ def test_altitude_hold_descends_when_above_target_altitude():
     assert cmd.vz_mps > 0
 
 
-def test_altitude_hold_falls_back_to_pixel_framing_without_telemetry():
+def test_vertical_motion_is_held_when_altitude_telemetry_is_missing():
     limits = load_yaml("follow_limits.yaml")
     limits["target_altitude_m"] = 10.0
     controller = FollowController(limits)
-    # Above image center -> pixel-framing climbs. (A target *below* center
-    # would command a descent, which is deliberately suppressed with no
-    # altitude telemetry - see test_no_descent_without_altitude_telemetry.)
+    # Neither the floor nor the ceiling can be verified without altitude, so
+    # no vertical motion is commanded at all (either direction).
     target = make_target(IMAGE_W / 2, IMAGE_H / 2 - 200)
     cmd = controller.compute(
         target, distance_m=limits["target_separation_m"], image_width=IMAGE_W, image_height=IMAGE_H,
         dt=0.1, current_altitude_m=None,
     )
-    assert cmd.vz_mps < 0.0
+    assert cmd.vz_mps == 0.0
 
 
 def test_no_altitude_configured_uses_pixel_framing_by_default():

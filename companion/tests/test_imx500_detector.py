@@ -50,11 +50,18 @@ def test_parses_detections_above_threshold():
     assert det.bbox.h == pytest.approx(40.0, abs=1e-4)
 
 
-def test_returns_empty_when_outputs_none():
-    """Normal for ~1s after Picamera2.start() while the on-sensor network
-    is still producing its first result - must never be treated as an error."""
+def test_returns_none_when_outputs_none():
+    """Normal for ~1s after Picamera2.start() and intermittently afterwards -
+    never an error, and never "saw nothing" ([]): the orchestrator must be able
+    to tell a frame with no AI result from one where the target is gone."""
     detector = IMX500Detector(class_names=LABELS)
-    assert detector.parse((FakeIMX500(), None, {}, None), frame_ts=1.0) == []
+    assert detector.parse((FakeIMX500(), None, {}, None), frame_ts=1.0) is None
+
+
+def test_returns_empty_list_when_the_model_ran_and_found_nothing():
+    detector = IMX500Detector(class_names=LABELS)
+    outputs = make_outputs(boxes=[[0.1, 0.2, 0.5, 0.6]], scores=[0.9], classes=[0], count=0)
+    assert detector.parse((FakeIMX500(), outputs, {}, None), frame_ts=1.0) == []
 
 
 def test_count_limits_how_many_entries_are_considered():

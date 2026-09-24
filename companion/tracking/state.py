@@ -54,13 +54,23 @@ class TrackingStateMachine:
             return self.state
 
         if self.state == TrackingState.REACQUIRE:
-            assert self._lost_since_ts is not None
-            if frame_ts - self._lost_since_ts >= self.reacquire_timeout_s:
-                self.state = TrackingState.TARGET_LOST
-                self.target = None
-            return self.state
-
+            self._check_reacquire_timeout(frame_ts)
         return self.state
+
+    def coast(self, frame_ts: float) -> TrackingState:
+        """A frame with no AI result: nothing new is known about the target, so
+        the tracker is not updated (an empty detection list would count as a
+        miss and start REACQUIRE on every result-less frame - the flicker). An
+        already-running REACQUIRE timeout still runs out."""
+        if self.state == TrackingState.REACQUIRE:
+            self._check_reacquire_timeout(frame_ts)
+        return self.state
+
+    def _check_reacquire_timeout(self, frame_ts: float) -> None:
+        assert self._lost_since_ts is not None
+        if frame_ts - self._lost_since_ts >= self.reacquire_timeout_s:
+            self.state = TrackingState.TARGET_LOST
+            self.target = None
 
     def drop_identity(self, frame_ts: float) -> None:
         """The tracker is still matching a box, but it's judged to be the

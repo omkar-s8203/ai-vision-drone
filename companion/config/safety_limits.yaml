@@ -29,3 +29,21 @@ max_hdop: 2.5
 # the ground that is the documented bench workaround; in the air it drops the
 # aircraft. Refused above this height (metres above home) when altitude is known.
 max_force_disarm_altitude_m: 1.5
+
+# The AI Camera does not attach an AI result to every video frame. A frame
+# without one reuses the last real detections (boxes, tap-to-select, the
+# obstacle check) for at most detection_carry_max_s; past that, the frame
+# counts as the model seeing nothing, so a stopped AI degrades to "target lost".
+detection_carry_max_s: 0.5
+# Follow/Orbit keep steering on the last known box only while the target has
+# been unseen for less than this, then command a hold (zero velocity) until it
+# is seen again. Short enough that a stale box can never steer the aircraft
+# far; long enough that a single missed detection does not make it stutter.
+target_hold_after_unseen_s: 0.3
+
+# Service watchdog (deploy/ai-vision-drone.service, WatchdogSec=10): the systemd
+# watchdog is only pinged while a frame has made it all the way through the
+# pipeline within this many seconds. Longer than hardware.yaml's
+# camera.stall_timeout_s (the camera's own, cleaner exit comes first), shorter
+# than WatchdogSec.
+pipeline_max_frame_age_s: 5.0

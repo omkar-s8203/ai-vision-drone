@@ -13,9 +13,11 @@ import pytest
 from companion.mavlink.bridge import MavlinkBridge
 
 
-class _StopLoop(Exception):
+class _StopLoop(BaseException):
     """Sentinel raised from a mocked recv_match() to end run()'s otherwise-
-    infinite while True loop once the test has seen enough messages."""
+    infinite while True loop once the test has seen enough messages. A
+    BaseException: run() treats an ordinary read Exception as a lost link and
+    reconnects (see test_mavlink_reconnect.py)."""
 
 
 def _make_msg(msg_type: str) -> MagicMock:

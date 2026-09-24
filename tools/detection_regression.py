@@ -299,7 +299,8 @@ async def capture_session(
     deadline = start + duration_s
 
     async for frame in camera.frames():
-        detections = detector.parse(frame.raw_detection_output, frame.ts)
+        # A frame with no AI result (None) is recorded as seeing nothing, as before.
+        detections = detector.parse(frame.raw_detection_output, frame.ts) or []
         frames.append({"ts": frame.ts, "detections": [_detection_to_dict(d) for d in detections]})
         if time.monotonic() >= deadline:
             break

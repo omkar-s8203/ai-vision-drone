@@ -13,3 +13,7 @@ comms_timeout_s: 3.0
 # battery. (ArduPilot's own GCS failsafe does not count a companion computer's
 # heartbeat, so it cannot cover this.) Suppressed while the pilot has RC override.
 comms_loss_rtl_s: 15.0
+# Outbound backlog per connected app, in messages (~5-6 per frame, so 200 is
+# about one second at 30 FPS). A phone that falls this far behind - weak WiFi -
+# is disconnected so it reconnects fresh, instead of stalling the control loop.
+ws_send_queue_max: 200

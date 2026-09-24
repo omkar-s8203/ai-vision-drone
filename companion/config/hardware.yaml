@@ -9,6 +9,12 @@ mavlink:
   # real fix was matching the Pi's baud to what the FC was actually using,
   # not what the GCS UI displayed (see docs/hardware-wiring.md).
   baud: 57600
+  # Link recovery: no MAVLink data at all for silence_reconnect_s (or a read/
+  # write error) closes and reopens the connection, retrying with backoff up to
+  # reconnect_max_delay_s between attempts until the FC is back. Longer than the
+  # 2s watchdog window, so guidance has already stopped by then.
+  silence_reconnect_s: 5.0
+  reconnect_max_delay_s: 5.0
   # For sim/dev mode, main.py overrides this to a UDP endpoint talking to sim/mock_fc.py.
 
 camera:
@@ -42,6 +48,10 @@ camera:
   # to confirm the detection rate and longest gap actually improve; raise
   # back toward 0.5 if 0.35 trades in too many false positives in practice.
   score_threshold: 0.35
+  # No new camera frame for this long means the camera has hung or failed: the
+  # companion exits (status 3) and systemd restarts it, in IDLE. The very first
+  # frame gets longer (the sensor's AI firmware may still be loading).
+  stall_timeout_s: 2.0
 
 # M4's rangefinder addition (docs plan open item) - a Benewake TFmini-S,
 # picked as the sensor for this project (see companion/guidance/

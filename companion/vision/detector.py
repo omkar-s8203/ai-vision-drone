@@ -4,7 +4,7 @@ import logging
 import math
 import time
 from dataclasses import dataclass
-from typing import Sequence, Union
+from typing import Optional, Sequence, Union
 
 log = logging.getLogger(__name__)
 
@@ -56,7 +56,11 @@ class Detection:
 class DetectorBase:
     """Normalizes a camera backend's raw per-frame output into Detection objects."""
 
-    def parse(self, raw: object, frame_ts: float) -> list[Detection]:
+    def parse(self, raw: object, frame_ts: float) -> Optional[list[Detection]]:
+        """The detections for this frame, or None when the frame carries no
+        AI result at all. The two are different: [] means the model ran and
+        saw nothing (the target really is gone), None means the model has not
+        produced a result for this frame (the target may be right there)."""
         raise NotImplementedError
 
 
@@ -87,8 +91,9 @@ class IMX500Detector(DetectorBase):
     normalized `(y0, x0, y1, x1)` per detection - `imx500.convert_inference_coords`
     converts a box straight to pixel-space `(x, y, w, h)`, and `class_id` is
     a direct 0-based index into `intrinsics.labels` (90 COCO categories, no
-    background offset). `outputs` is None on frames before the on-sensor
-    network has produced its first result (normal for ~1s after start()).
+    background offset). `outputs` is None on frames the on-sensor network
+    has no result attached to - every frame for ~1s after start(), and
+    intermittently afterwards - and parse() then returns None, not [].
     """
 
     def __init__(
@@ -132,7 +137,7 @@ class IMX500Detector(DetectorBase):
             log.warning(message, *args)
             self._last_diagnostic_log_ts = now
 
-    def parse(self, raw: object, frame_ts: float) -> list[Detection]:
+    def parse(self, raw: object, frame_ts: float) -> Optional[list[Detection]]:
         imx500, outputs, metadata, picam2 = raw
         if outputs is None:
             self._maybe_log_diagnostic(
@@ -141,7 +146,7 @@ class IMX500Detector(DetectorBase):
                 "network isn't running at all (check the .rpk model path/firmware), and "
                 "score_threshold has nothing to do with it"
             )
-            return []
+            return None
 
         boxes, scores, classes, count = outputs[0][0], outputs[1][0], outputs[2][0], outputs[3][0]
         n = max(int(count[0]), 0)
@@ -189,8 +194,11 @@ class IMX500Detector(DetectorBase):
 
 
 class PassthroughDetector(DetectorBase):
-    """Sim/dev detector: raw is already a list[Detection] (from a synthetic source)."""
+    """Sim/dev detector: raw is already a list[Detection] (from a synthetic
+    source), or None to simulate a frame with no AI result."""
 
-    def parse(self, raw: object, frame_ts: float) -> list[Detection]:
+    def parse(self, raw: object, frame_ts: float) -> Optional[list[Detection]]:
+        if raw is None:
+            return None
         assert isinstance(raw, list)
         return raw

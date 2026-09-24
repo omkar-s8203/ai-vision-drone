@@ -37,7 +37,7 @@ from companion.guidance.orbit import OrbitController
 from companion.guidance.target_recovery import RecoveryPhase, TargetRecoveryController
 from companion.logging_.session_recorder import SessionRecorder
 from companion.logging_.setup import configure_logging
-from companion.mavlink.bridge import MavlinkBridge
+from companion.mavlink.bridge import DEFAULT_RECONNECT_MAX_DELAY_S, DEFAULT_SILENCE_RECONNECT_S, MavlinkBridge
 from companion.mavlink.rc_monitor import RcOverrideMonitor
 from companion.safety.contact_sensor import ContactSensor, NullContactSensor
 from companion.safety.proximity_guard import check_proximity
@@ -54,7 +54,7 @@ from companion.tracking.bytetrack_impl import ByteTrackTracker
 from companion.tracking.iou_tracker import IouKalmanTracker
 from companion.tracking.state import TrackingState, TrackingStateMachine
 from companion.tracking.target_selector import select_target, select_target_at_point
-from companion.vision.camera import CameraBase
+from companion.vision.camera import CameraBase, CameraStallError
 from companion.vision.detector import BBox, Detection, DetectorBase, load_class_names
 
 if TYPE_CHECKING:
@@ -91,6 +91,17 @@ MODES_REQUIRING_GUIDED = set(MODE_COMMAND_MAP.values()) - {
 
 # Above this frame-to-frame gap the control loop is treated as having stalled.
 MAX_CONTROL_DT_S = 0.5
+
+# Defaults for safety_limits.yaml's target_hold_after_unseen_s /
+# detection_carry_max_s (the startup health check requires both keys).
+DEFAULT_TARGET_HOLD_AFTER_UNSEEN_S = 0.3
+DEFAULT_DETECTION_CARRY_MAX_S = 0.5
+# Default for safety_limits.yaml's pipeline_max_frame_age_s (see _amain()).
+DEFAULT_PIPELINE_MAX_FRAME_AGE_S = 5.0
+
+# Process exit status when the camera stops delivering frames - systemd
+# restarts the service (Restart=always) and it comes back up in IDLE.
+EXIT_CAMERA_STALL = 3
 
 _HOLD_COMMAND = GuidanceCommand(vx_mps=0.0, vy_mps=0.0, vz_mps=0.0, yaw_rate_rads=0.0)
 
@@ -172,6 +183,17 @@ class CompanionOrchestrator:
         self.min_gps_fix_type = safety_cfg.get("min_gps_fix_type", 3)
         self.max_hdop = safety_cfg.get("max_hdop")
         self.max_force_disarm_altitude_m = safety_cfg.get("max_force_disarm_altitude_m")
+        # The IMX500 does not attach an AI result to every camera frame. Those
+        # frames reuse the last real detections (for at most detection_carry_max_s)
+        # instead of reading as "target gone", and Follow/Orbit only hold once the
+        # target has actually been unseen for target_hold_after_unseen_s.
+        self.target_hold_after_unseen_s = safety_cfg.get(
+            "target_hold_after_unseen_s", DEFAULT_TARGET_HOLD_AFTER_UNSEEN_S
+        )
+        self.detection_carry_max_s = safety_cfg.get("detection_carry_max_s", DEFAULT_DETECTION_CARRY_MAX_S)
+        self._last_detections: list[Detection] = []
+        self._last_detections_ts: Optional[float] = None
+        self._last_distance_m: Optional[float] = None
         self.comms_loss_rtl_s = load_yaml("network.yaml").get("comms_loss_rtl_s")
         self._comms_lost_since: Optional[float] = None
         self._failsafe_rtl_latched = False  # one RTL per failsafe episode; cleared when the cause clears
@@ -190,6 +212,7 @@ class CompanionOrchestrator:
         self.requested_mode = SupervisorState.IDLE
         self._pending_selection: Optional[tuple] = None  # ("bbox", BBox) or ("point", x, y)
         self._last_frame_ts: Optional[float] = None
+        self._last_good_frame_monotonic: Optional[float] = None  # see pipeline_healthy()
         self._recent_frame_ts: list[float] = []
         self._frame_size: Optional[tuple[int, int]] = None  # (width, height) of the latest frame
         self._distance_filter = DistanceFilter()
@@ -800,7 +823,7 @@ class CompanionOrchestrator:
                 # field-reported bug ("video gets slow when recording
                 # starts").
                 self.video_recorder.write(frame_bgr)
-        detections = self.detector.parse(frame.raw_detection_output, frame.ts)
+        detections, detections_fresh = self._detections_for(frame)
 
         # A real field-reported bug: this used to only fire while
         # state_machine.state == IDLE, so once ANY target had ever been
@@ -832,6 +855,10 @@ class CompanionOrchestrator:
                 self._identity_mismatch_frames = 0
             self._pending_selection = None
 
+        # Whether the tracker actually looked at new information this frame. The
+        # visual tracker (Teach mode) reads pixels, so it always does; the
+        # detector-based one only when there is a real AI result.
+        tracker_ran = True
         if self._custom_object is not None:
             # The OpenCV tracker costs tens of milliseconds a frame - on a worker
             # thread so it can never stall the event loop (link heartbeats, the
@@ -844,11 +871,19 @@ class CompanionOrchestrator:
                 # the operator re-draws the object.
                 self.recorder.record("teach_target_lost", name=self._custom_object.name)
                 self._end_teaching()
-        else:
+        elif detections_fresh:
             tracking_state = self.state_machine.update(frame.ts, detections)
+        else:
+            # Carried-over detections are not new sightings: feeding them to the
+            # tracker would re-match the old box, and an empty list would count
+            # as a miss. Neither is true - nothing new is known this frame.
+            tracking_state = self.state_machine.coast(frame.ts)
+            tracker_ran = False
         self.watchdog.beat("tracker")
 
-        if tracking_state == TrackingState.TARGET_LOST and self.appearance.has_signature:
+        # Appearance matching compares boxes against the current image, so it
+        # needs boxes from the current image - never carried-over ones.
+        if tracking_state == TrackingState.TARGET_LOST and self.appearance.has_signature and detections_fresh:
             # "AI learning mode": the tracker's own REACQUIRE window (above)
             # is short and motion/IoU-based - this is the longer-term
             # fallback once a target has genuinely left frame and come
@@ -864,7 +899,8 @@ class CompanionOrchestrator:
         if tracking_state == TrackingState.TRACKING:
             self._identity_dropped = False
         if tracking_state == TrackingState.TRACKING and self.appearance.has_signature:
-            tracking_state = self._verify_tracked_identity(frame, detections, tracking_state)
+            if tracker_ran:
+                tracking_state = self._verify_tracked_identity(frame, detections, tracking_state)
         else:
             self._identity_mismatch_frames = 0
             self._last_identity_similarity = None
@@ -894,10 +930,18 @@ class CompanionOrchestrator:
             if t.target_id != self._distance_filter_target_id:
                 self._distance_filter.reset()
                 self._distance_filter_target_id = t.target_id
-            distance_m = self._distance_filter.update(raw_distance, frame.ts)
+                self._last_distance_m = None
+            if t.last_seen_ts == frame.ts or self._last_distance_m is None:
+                distance_m = self._distance_filter.update(raw_distance, frame.ts)
+            else:
+                # Not seen this frame: re-feeding the same old box would pile
+                # duplicate samples into the median filter. Keep the last value.
+                distance_m = self._last_distance_m
+            self._last_distance_m = distance_m
         else:
             self._distance_filter.reset()
             self._distance_filter_target_id = None
+            self._last_distance_m = None
 
         rc_override = self.rc_monitor.is_overriding(self.mavlink.telemetry.rc_channels)
         # A real, field-reported gap: RcOverrideMonitor's software backstop
@@ -1110,19 +1154,33 @@ class CompanionOrchestrator:
         hold_state = (
             "identity_lost" if self._identity_dropped else "target_unseen"
         )
-        # While the tracker is in REACQUIRE (target briefly unseen),
-        # state_machine.target still holds the LAST known box. Follow/Orbit
-        # used to keep computing from it - a frozen lateral error is a
-        # constant yaw rate and a frozen distance a constant forward speed,
-        # so the aircraft kept turning/advancing on coordinates that were
-        # up to reacquire_timeout_s old. Command a hold (zero velocity)
-        # instead until the target is genuinely seen again.
+        # While the target is unseen, state_machine.target still holds the LAST
+        # known box. Follow/Orbit used to keep computing from it for the whole
+        # REACQUIRE window - a frozen lateral error is a constant yaw rate and a
+        # frozen distance a constant forward speed, on coordinates up to
+        # reacquire_timeout_s old. Then they held on the very first missed
+        # frame, which with the IMX500's intermittent results made the drone
+        # stutter. Now: keep steering on the last box only while it is younger
+        # than target_hold_after_unseen_s, then command a hold (zero velocity)
+        # until the target is genuinely seen again. The age is what counts,
+        # not the state - a TRACKING target whose AI results have stopped
+        # arriving goes stale too. A box judged to be the wrong person
+        # (identity_dropped) is never steered on.
+        target = self.state_machine.target
+        target_seen_recently = (
+            target is not None and frame.ts - target.last_seen_ts < self.target_hold_after_unseen_s
+        )
+        target_fresh = (
+            target_seen_recently
+            and not self._identity_dropped
+            and tracking_state in (TrackingState.TRACKING, TrackingState.REACQUIRE)
+        )
         if auto_takeoff_holding:
             hold_reason = "auto_takeoff"  # withhold real guidance this frame - see the check above
         elif decision.state == SupervisorState.SEARCHING:
             command = recovery_result.command
         elif decision.state == SupervisorState.FOLLOWING and self.state_machine.target is not None:
-            if tracking_state == TrackingState.TRACKING:
+            if target_fresh:
                 command = self.follow.compute(
                     self.state_machine.target,
                     distance_m,
@@ -1136,7 +1194,7 @@ class CompanionOrchestrator:
                 command = _HOLD_COMMAND
                 hold_reason = hold_state
         elif decision.state == SupervisorState.ORBITING and self.state_machine.target is not None:
-            if tracking_state == TrackingState.TRACKING:
+            if target_fresh:
                 command = self.orbit.compute(
                     self.state_machine.target,
                     distance_m,
@@ -1154,7 +1212,8 @@ class CompanionOrchestrator:
                 ApproachInputs(
                     distance_m=distance_m,
                     contact_detected=self.contact_sensor.is_contact(),
-                    target_tracked=tracking_state == TrackingState.TRACKING,
+                    # Stricter than Follow/Orbit: any miss aborts the approach.
+                    target_tracked=tracking_state == TrackingState.TRACKING and target_seen_recently,
                     comms_alive=comms_alive,
                     rc_override_active=rc_override,
                     geofence_breached=self.mavlink.telemetry.fence_breached,
@@ -1306,6 +1365,25 @@ class CompanionOrchestrator:
             "command_sent": sent,
         }
 
+    def _detections_for(self, frame) -> tuple[list[Detection], bool]:
+        """(detections, fresh) for this frame. `fresh` is False when the frame
+        carries no AI result and the last real detections are reused instead -
+        so the app's boxes, tap-to-select and the obstacle check do not flicker
+        out on every result-less frame. After detection_carry_max_s without any
+        AI result the frame counts as the model seeing nothing ([], fresh), so
+        a stopped AI degrades to "target lost" instead of frozen tracking."""
+        parsed = self.detector.parse(frame.raw_detection_output, frame.ts)
+        if parsed is not None:
+            self._last_detections = parsed
+            self._last_detections_ts = frame.ts
+            return parsed, True
+        if (
+            self._last_detections_ts is not None
+            and frame.ts - self._last_detections_ts <= self.detection_carry_max_s
+        ):
+            return self._last_detections, False
+        return [], True
+
     def _distance_and_bearing_to_home(self) -> tuple[Optional[float], Optional[float]]:
         """Real geodesy off HOME_POSITION + the current GPS fix - both None
         until home is known (see request_home_position()) and a fix exists.
@@ -1378,6 +1456,14 @@ class CompanionOrchestrator:
             "temperature_c": None,
         }
 
+    def pipeline_healthy(self, max_frame_age_s: float) -> bool:
+        """A frame made it all the way through process_frame() within the last
+        `max_frame_age_s` - what the systemd watchdog pings on. A camera that
+        stopped, a loop stuck awaiting something, or process_frame() failing on
+        every frame all read as unhealthy."""
+        last = self._last_good_frame_monotonic
+        return last is not None and time.monotonic() - last <= max_frame_age_s
+
     async def _perception_loop(self) -> None:
         # A real robustness gap found in a code-review audit: process_frame()
         # ran here with no exception handling at all - a bug anywhere in
@@ -1394,6 +1480,7 @@ class CompanionOrchestrator:
         async for frame in self.camera.frames():
             try:
                 await self.process_frame(frame)
+                self._last_good_frame_monotonic = time.monotonic()
             except Exception:
                 log.exception("process_frame() raised - skipping this frame, camera loop stays alive")
 
@@ -1464,14 +1551,21 @@ def build_sim_orchestrator() -> tuple[CompanionOrchestrator, "object"]:
     mock_fc.set_mode("GUIDED")
     mock_fc.set_armed(True)
 
-    mavlink = MavlinkBridge(f"udpin:127.0.0.1:{SIM_BRIDGE_UDP_PORT}")
+    mavlink_cfg = hardware_cfg.get("mavlink", {})
+    mavlink = MavlinkBridge(
+        f"udpin:127.0.0.1:{SIM_BRIDGE_UDP_PORT}",
+        silence_reconnect_s=mavlink_cfg.get("silence_reconnect_s", DEFAULT_SILENCE_RECONNECT_S),
+        reconnect_max_delay_s=mavlink_cfg.get("reconnect_max_delay_s", DEFAULT_RECONNECT_MAX_DELAY_S),
+    )
     mavlink.connect()
     mavlink.prime_udp_peer("127.0.0.1", SIM_FC_UDP_PORT)
 
     rc_monitor = RcOverrideMonitor(deadband=approach_cfg["rc_override_deadband"])
     watchdog = HeartbeatWatchdog(timeout_s=2.0)
     supervisor = SafetySupervisor(watchdog)
-    transport = WebSocketTransport(network_cfg["ws_host"], network_cfg["ws_port"])
+    transport = WebSocketTransport(
+        network_cfg["ws_host"], network_cfg["ws_port"], send_queue_max=network_cfg["ws_send_queue_max"]
+    )
     link = GroundStationLink(transport, comms_timeout_s=network_cfg.get("comms_timeout_s"))
     recorder = SessionRecorder(Path("companion/logs/sessions"))
 
@@ -1533,6 +1627,7 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
         width=hardware_cfg["camera"]["width"],
         height=hardware_cfg["camera"]["height"],
         target_fps=hardware_cfg["camera"]["target_fps"],
+        stall_timeout_s=hardware_cfg["camera"]["stall_timeout_s"],
     )
     intrinsics = camera.imx500.network_intrinsics
     detector = IMX500Detector(
@@ -1554,12 +1649,17 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
     orbit_controller = OrbitController(orbit_cfg)
     approach_controller = ApproachTestController(approach_cfg)
     mavlink = MavlinkBridge(
-        hardware_cfg["mavlink"]["connection"], baud=hardware_cfg["mavlink"]["baud"]
+        hardware_cfg["mavlink"]["connection"],
+        baud=hardware_cfg["mavlink"]["baud"],
+        silence_reconnect_s=hardware_cfg["mavlink"]["silence_reconnect_s"],
+        reconnect_max_delay_s=hardware_cfg["mavlink"]["reconnect_max_delay_s"],
     )
     rc_monitor = RcOverrideMonitor(deadband=approach_cfg["rc_override_deadband"])
     watchdog = HeartbeatWatchdog(timeout_s=2.0)
     supervisor = SafetySupervisor(watchdog)
-    transport = WebSocketTransport(network_cfg["ws_host"], network_cfg["ws_port"])
+    transport = WebSocketTransport(
+        network_cfg["ws_host"], network_cfg["ws_port"], send_queue_max=network_cfg["ws_send_queue_max"]
+    )
     link = GroundStationLink(transport, comms_timeout_s=network_cfg.get("comms_timeout_s"))
     recorder = SessionRecorder(Path.home() / "ai-vision-drone-logs" / "sessions")
     video_recorder = VideoRecorder(
@@ -1589,6 +1689,10 @@ def build_hardware_orchestrator() -> CompanionOrchestrator:
         video_pipeline=video_pipeline, video_recorder=video_recorder,
         min_obstacle_distance_m=safety_cfg["min_obstacle_distance_m"],
     )
+
+
+def _is_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 class StartupHealthCheckError(Exception):
@@ -1628,6 +1732,16 @@ def run_startup_health_check(mode: str) -> None:
                 return
             node = node[key]
 
+    def _require_number(cfg: dict, path: list[str], file_name: str, low: float, high: float) -> None:
+        node = cfg
+        for key in path:
+            if not isinstance(node, dict) or key not in node:
+                problems.append(f"{file_name}: missing required key {'.'.join(path)!r}")
+                return
+            node = node[key]
+        if not _is_number(node) or not low <= node <= high:
+            problems.append(f"{file_name}: {'.'.join(path)}={node!r} must be a number between {low} and {high}")
+
     def _load(file_name: str) -> dict:
         try:
             return load_yaml(file_name)
@@ -1642,10 +1756,16 @@ def run_startup_health_check(mode: str) -> None:
         _require(hardware_cfg, ["camera", "imx500_model_path"], "hardware.yaml")
         _require(hardware_cfg, ["mavlink", "connection"], "hardware.yaml")
         _require(hardware_cfg, ["mavlink", "baud"], "hardware.yaml")
+        # Link recovery and camera-stall detection (the safety pass). Required,
+        # not defaulted: a typo must not silently fall back to a value nobody chose.
+        _require_number(hardware_cfg, ["camera", "stall_timeout_s"], "hardware.yaml", 0.5, 10.0)
+        _require_number(hardware_cfg, ["mavlink", "silence_reconnect_s"], "hardware.yaml", 2.0, 60.0)
+        _require_number(hardware_cfg, ["mavlink", "reconnect_max_delay_s"], "hardware.yaml", 0.5, 30.0)
 
     network_cfg = _load("network.yaml")
     _require(network_cfg, ["ws_host"], "network.yaml")
     _require(network_cfg, ["ws_port"], "network.yaml")
+    _require_number(network_cfg, ["ws_send_queue_max"], "network.yaml", 10, 10000)
 
     approach_cfg = _load("approach_limits.yaml")
     _require(approach_cfg, ["rc_override_deadband"], "approach_limits.yaml")
@@ -1656,6 +1776,24 @@ def run_startup_health_check(mode: str) -> None:
         ["min_gps_fix_type"], ["max_force_disarm_altitude_m"],
     ):
         _require(safety_cfg, path, "safety_limits.yaml")
+    # Hard ceilings, not just presence: target_hold_after_unseen_s is how old a
+    # box Follow/Orbit may still steer on - a typo like 30 instead of 0.3 would
+    # quietly bring back driving on stale coordinates.
+    _require_number(safety_cfg, ["target_hold_after_unseen_s"], "safety_limits.yaml", 0.05, 1.0)
+    _require_number(safety_cfg, ["detection_carry_max_s"], "safety_limits.yaml", 0.05, 2.0)
+    _require_number(safety_cfg, ["pipeline_max_frame_age_s"], "safety_limits.yaml", 1.0, 9.0)
+    stall_timeout_s = hardware_cfg.get("camera", {}).get("stall_timeout_s")
+    max_frame_age_s = safety_cfg.get("pipeline_max_frame_age_s")
+    if (
+        mode != "sim"
+        and _is_number(stall_timeout_s) and _is_number(max_frame_age_s)
+        and stall_timeout_s >= max_frame_age_s
+    ):
+        problems.append(
+            f"hardware.yaml camera.stall_timeout_s={stall_timeout_s} must be shorter than "
+            f"safety_limits.yaml pipeline_max_frame_age_s={max_frame_age_s} - the camera's own clean "
+            "exit should come before the systemd watchdog kill"
+        )
     for path in (["comms_timeout_s"], ["comms_loss_rtl_s"]):
         _require(network_cfg, path, "network.yaml")
 
@@ -1759,10 +1897,21 @@ async def _amain() -> None:
         log.exception("Startup failed while initializing hardware/orchestrator - see the real cause above")
         raise
 
-    watchdog_task = asyncio.create_task(SystemdWatchdog().run())
+    max_frame_age_s = load_yaml("safety_limits.yaml").get(
+        "pipeline_max_frame_age_s", DEFAULT_PIPELINE_MAX_FRAME_AGE_S
+    )
+    watchdog_task = asyncio.create_task(
+        SystemdWatchdog(is_healthy=lambda: orchestrator.pipeline_healthy(max_frame_age_s)).run()
+    )
     background_tasks.append(watchdog_task)
     try:
         await orchestrator.start()
+    except CameraStallError as exc:
+        # A hung camera cannot be recovered in-process. Exit and let systemd
+        # restart the service (Restart=always); it comes back up in IDLE while
+        # the FC holds position on its own GUID_TIMEOUT.
+        log.critical("Camera stopped delivering frames (%s) - exiting so systemd restarts the service", exc)
+        raise SystemExit(EXIT_CAMERA_STALL) from exc
     finally:
         for task in background_tasks:
             task.cancel()

@@ -2,11 +2,24 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from typing import AsyncIterator, Callable, Optional
 
 log = logging.getLogger(__name__)
+
+# Default for hardware.yaml's camera.stall_timeout_s: no frame for this long
+# after the first one means the camera has stopped (see Picamera2IMX500Camera).
+DEFAULT_CAMERA_STALL_TIMEOUT_S = 2.0
+# The first frame gets longer - the sensor's AI firmware may still be loading.
+CAMERA_FIRST_FRAME_TIMEOUT_S = 15.0
+
+
+class CameraStallError(RuntimeError):
+    """The camera stopped delivering frames (capture hung or failed). Not
+    recoverable in-process - a hung libcamera request cannot be cancelled -
+    so the orchestrator exits and systemd restarts the service."""
 
 
 @dataclass
@@ -80,7 +93,14 @@ class Picamera2IMX500Camera(CameraBase):
        matching firmware upload completion) in that diagnostic script.
     """
 
-    def __init__(self, model_path: str, width: int, height: int, target_fps: int) -> None:
+    def __init__(
+        self,
+        model_path: str,
+        width: int,
+        height: int,
+        target_fps: int,
+        stall_timeout_s: float = DEFAULT_CAMERA_STALL_TIMEOUT_S,
+    ) -> None:
         try:
             from picamera2 import Picamera2  # type: ignore
             from picamera2.devices import IMX500  # type: ignore
@@ -95,6 +115,7 @@ class Picamera2IMX500Camera(CameraBase):
         self.width = width
         self.height = height
         self.target_fps = target_fps
+        self.stall_timeout_s = stall_timeout_s
         self._picam2 = None
         self.last_frame_array = None  # BGR uint8 array, for the video pipeline's frame_source
 
@@ -144,40 +165,95 @@ class Picamera2IMX500Camera(CameraBase):
                 "previously caused IMX500Detector to see outputs=None indefinitely"
             )
         self._picam2.start(show_preview=False)
+        captured = self._captured_frames()
+        try:
+            async for frame in captured:
+                yield frame
+        finally:
+            await captured.aclose()  # stops the capture thread and the camera now, not at GC
+
+    def _capture_one(self):
+        """One frame, on the capture thread. capture_request() blocks until the
+        next frame is ready at the hardware FrameRate configured above - it IS
+        the pacing mechanism. A real bug found in the field: the loop used to
+        also `await asyncio.sleep(1.0 / target_fps)` after every frame, adding a
+        second full frame period and roughly halving throughput (a configured
+        30 FPS delivered ~15). Do not add a sleep back.
+
+        Deliberately ONE capture_request() per frame, not separate
+        capture_metadata() + capture_array() calls - see the class docstring's
+        bug #3. Each of those triggers its own independent capture, and
+        get_outputs() needs the exact same underlying frame's metadata that its
+        image came from; requesting them separately let those desync and left
+        get_outputs() permanently None on real hardware."""
+        request = self._picam2.capture_request()
+        try:
+            metadata = request.get_metadata()
+            array = request.make_array("main")
+            outputs = self.imx500.get_outputs(metadata, add_batch=True)
+        finally:
+            request.release()
+        return time.monotonic(), array, outputs, metadata
+
+    async def _captured_frames(self) -> AsyncIterator[Frame]:
+        """Capture runs on its own daemon thread. It used to run right here on
+        the event loop, so a camera that hung inside capture_request() froze the
+        whole process - MAVLink, the operator link, the failsafes - with nothing
+        to notice. Now a missing frame is detected after stall_timeout_s and
+        raised as CameraStallError. The thread is a daemon because a hung
+        libcamera call cannot be interrupted, and must not keep the process
+        alive for systemd's restart."""
+        loop = asyncio.get_running_loop()
+        latest: asyncio.Queue = asyncio.Queue(maxsize=1)
+        stop = threading.Event()
+
+        def publish(item) -> None:  # on the event loop
+            if latest.full():
+                latest.get_nowait()  # the loop fell behind: newest frame wins
+            latest.put_nowait(item)
+
+        def capture_loop() -> None:  # on the capture thread
+            while not stop.is_set():
+                try:
+                    item = self._capture_one()
+                except Exception as exc:
+                    item = exc
+                try:
+                    loop.call_soon_threadsafe(publish, item)
+                except RuntimeError:
+                    return  # the event loop is gone
+                if isinstance(item, Exception):
+                    return
+
+        thread = threading.Thread(target=capture_loop, name="camera-capture", daemon=True)
+        thread.start()
+        timeout_s = max(self.stall_timeout_s, CAMERA_FIRST_FRAME_TIMEOUT_S)
         try:
             while True:
-                # capture_request() blocks until the next frame is ready at
-                # the hardware FrameRate configured above - it IS the pacing
-                # mechanism. A real bug found in the field: this loop used to
-                # also `await asyncio.sleep(1.0 / target_fps)` after every
-                # iteration, adding a second full frame period on top of the
-                # one already spent blocking here and roughly halving actual
-                # throughput (a configured 30 FPS was only ever delivering
-                # ~15 FPS). Do not add a sleep back here.
-                #
-                # Deliberately ONE capture_request() per iteration, not
-                # separate capture_metadata() + capture_array() calls - see
-                # the class docstring's bug #3. Each of those triggers its
-                # own independent capture, and get_outputs() needs the exact
-                # same underlying frame's metadata that its image came from;
-                # requesting them separately let those desync and left
-                # get_outputs() permanently None on real hardware.
-                request = self._picam2.capture_request()
                 try:
-                    metadata = request.get_metadata()
-                    self.last_frame_array = request.make_array("main")
-                    outputs = self.imx500.get_outputs(metadata, add_batch=True)
-                finally:
-                    request.release()
+                    item = await asyncio.wait_for(latest.get(), timeout_s)
+                except asyncio.TimeoutError:
+                    raise CameraStallError(f"no camera frame for {timeout_s:.1f}s") from None
+                if isinstance(item, Exception):
+                    raise CameraStallError(f"camera capture failed: {item}") from item
+                ts, array, outputs, metadata = item
+                self.last_frame_array = array
                 yield Frame(
-                    ts=time.monotonic(),
+                    ts=ts,
                     width=self.width,
                     height=self.height,
                     raw_detection_output=(self.imx500, outputs, metadata, self._picam2),
                 )
-                await asyncio.sleep(0)  # yield control to the event loop between frames
+                timeout_s = self.stall_timeout_s
         finally:
-            self._picam2.stop()
+            stop.set()
+            thread.join(timeout=self.stall_timeout_s)
+            if thread.is_alive():
+                # stop() would wait on the same hung request - leave it to the
+                # process exit.
+                log.error("Camera capture thread is hung - not stopping the camera")
+            else:
+                self._picam2.stop()
 
 
 def open_real_camera_and_detector(hardware_cfg: dict):

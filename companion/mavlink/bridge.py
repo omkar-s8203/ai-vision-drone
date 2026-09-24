@@ -34,6 +34,14 @@ STREAM_RETRY_S = 5.0
 MODE_RETRY_AFTER_S = 1.5
 MODE_MAX_ATTEMPTS = 3
 
+# Link recovery (see run()). No MAVLink data at all for this long, a read error,
+# or a failed write closes the connection and reopens it - first after
+# RECONNECT_MIN_DELAY_S, backing off to at most the configured max delay while
+# the port cannot be opened (USB FC unplugged, still booting).
+DEFAULT_SILENCE_RECONNECT_S = 5.0
+DEFAULT_RECONNECT_MAX_DELAY_S = 5.0
+RECONNECT_MIN_DELAY_S = 0.5
+
 # SET_POSITION_TARGET_LOCAL_NED type_mask: use velocity (vx,vy,vz) and
 # yaw_rate only - ignore position, acceleration, and yaw angle.
 TYPE_MASK_VELOCITY_AND_YAW_RATE = (
@@ -105,12 +113,23 @@ class MavlinkBridge:
     """
 
     def __init__(
-        self, connection_string: str, source_system: int = 1, baud: Optional[int] = None
+        self,
+        connection_string: str,
+        source_system: int = 1,
+        baud: Optional[int] = None,
+        silence_reconnect_s: Optional[float] = DEFAULT_SILENCE_RECONNECT_S,
+        reconnect_max_delay_s: float = DEFAULT_RECONNECT_MAX_DELAY_S,
     ) -> None:
         self.connection_string = connection_string
         self.source_system = source_system
         self.baud = baud
+        self.silence_reconnect_s = silence_reconnect_s  # None = never reopen on silence alone
+        self.reconnect_max_delay_s = max(reconnect_max_delay_s, RECONNECT_MIN_DELAY_S)
         self._conn = None
+        # Set by a failed write (see _write); run() then reopens the link.
+        self._link_error: Optional[str] = None
+        self._last_rx_ts: Optional[float] = None
+        self.reconnect_count = 0
         self.telemetry = TelemetrySnapshot()
         # A real gap found on hardware: this bridge only ever HEARTBEATs back
         # and passively waited for the FC to stream everything else on its
@@ -157,6 +176,9 @@ class MavlinkBridge:
 
     @property
     def is_connected(self) -> bool:
+        """A connection has been opened (it may be mid-reopen - writes then
+        fail softly, see _write). Link health is the watchdog's "mavlink"
+        heartbeat, not this."""
         return self._conn is not None
 
     def connect(self) -> None:
@@ -164,6 +186,33 @@ class MavlinkBridge:
         if self.baud is not None:
             kwargs["baud"] = self.baud
         self._conn = mavutil.mavlink_connection(self.connection_string, **kwargs)
+
+    def _write(self, what: str, send, *args) -> bool:
+        """Every send to the FC goes through here. A write to a dead port (USB
+        FC unplugged or power-cycled) raises; that used to propagate into the
+        caller - skipping the whole perception frame, or silently killing the
+        heartbeat task for good. Instead: report False and have run() reopen
+        the link."""
+        try:
+            send(*args)
+            return True
+        except Exception as exc:
+            self._mark_link_broken(f"{what} failed: {exc}")
+            return False
+
+    def _mark_link_broken(self, reason: str) -> None:
+        if self._link_error is None:
+            log.error("MAVLink write error - the link will be reopened (%s)", reason)
+            self._link_error = reason
+
+    def _close_quietly(self) -> None:
+        conn = self._conn
+        if conn is None:
+            return
+        try:
+            conn.close()
+        except Exception:
+            log.debug("Closing the old MAVLink connection failed", exc_info=True)
 
     def position_age_s(self) -> Optional[float]:
         ts = self.telemetry.position_ts
@@ -197,30 +246,75 @@ class MavlinkBridge:
         self._conn.port.sendto(b"\x00", (host, port))
 
     async def run(self, on_message: Optional[Callable[[object], None]] = None) -> None:
+        """Receives for the life of the process. A lost link used to end this
+        task for good - the exception went nowhere (a background task nobody
+        awaits) and telemetry stayed frozen until the service was restarted.
+        Now the link is reopened (see _reconnect) and the FC's streams are
+        requested again on its first heartbeat."""
         assert self._conn is not None, "call connect() first"
         heartbeat_task = asyncio.create_task(self._own_heartbeat_loop())
         try:
-            loop = asyncio.get_event_loop()
-            recv = functools.partial(self._conn.recv_match, blocking=True, timeout=1.0)
             while True:
-                msg = await loop.run_in_executor(None, recv)
-                if msg is None:
-                    continue
-                try:
-                    self._handle_message(msg)
-                    if on_message:
-                        on_message(msg)
-                except Exception:
-                    try:
-                        msg_type = msg.get_type()
-                    except Exception:
-                        msg_type = type(msg)
-                    log.exception(
-                        "Failed to handle a %r MAVLink message - skipping it, receive loop stays alive",
-                        msg_type,
-                    )
+                reason = await self._receive_until_link_lost(on_message)
+                log.error("MAVLink link lost (%s) - reopening %s", reason, self.connection_string)
+                await self._reconnect()
         finally:
             heartbeat_task.cancel()
+
+    async def _receive_until_link_lost(self, on_message) -> str:
+        """Returns why the current connection has to be reopened."""
+        loop = asyncio.get_running_loop()
+        recv = functools.partial(self._conn.recv_match, blocking=True, timeout=1.0)
+        self._last_rx_ts = time.monotonic()
+        while True:
+            if self._link_error is not None:
+                return self._link_error
+            try:
+                msg = await loop.run_in_executor(None, recv)
+            except Exception as exc:
+                return f"read failed: {exc}"
+            now = time.monotonic()
+            if msg is None:
+                silent_s = now - self._last_rx_ts
+                if self.silence_reconnect_s is not None and silent_s > self.silence_reconnect_s:
+                    return f"no MAVLink data for {silent_s:.1f}s"
+                continue
+            self._last_rx_ts = now
+            try:
+                self._handle_message(msg)
+                if on_message:
+                    on_message(msg)
+            except Exception:
+                try:
+                    msg_type = msg.get_type()
+                except Exception:
+                    msg_type = type(msg)
+                log.exception(
+                    "Failed to handle a %r MAVLink message - skipping it, receive loop stays alive",
+                    msg_type,
+                )
+
+    async def _reconnect(self) -> None:
+        """Close and reopen until the port opens, backing off from
+        RECONNECT_MIN_DELAY_S to reconnect_max_delay_s. Never gives up: the FC
+        may take a while to come back, and the Pi has nothing better to do."""
+        delay = RECONNECT_MIN_DELAY_S
+        while True:
+            self._close_quietly()
+            await asyncio.sleep(delay)
+            try:
+                self.connect()
+            except Exception as exc:
+                log.warning("Reopening MAVLink %s failed (%s) - retrying in %.1fs", self.connection_string, exc, delay)
+                delay = min(delay * 2, self.reconnect_max_delay_s)
+                continue
+            self.reconnect_count += 1
+            self._link_error = None
+            # A new connection (or a rebooted FC) knows nothing of the streams
+            # this link asked for - ask again on the first heartbeat.
+            self._requested_data_streams = False
+            log.warning("MAVLink %s reopened (reconnect #%d)", self.connection_string, self.reconnect_count)
+            return
 
     async def _own_heartbeat_loop(self, rate_hz: float = 1.0) -> None:
         """Every MAVLink system, including a companion computer, is expected
@@ -229,7 +323,9 @@ class MavlinkBridge:
         (relevant for sim/testing over loopback UDP)."""
         period = 1.0 / rate_hz
         while True:
-            self._conn.mav.heartbeat_send(
+            self._write(
+                "heartbeat",
+                self._conn.mav.heartbeat_send,
                 mavutil.mavlink.MAV_TYPE_ONBOARD_CONTROLLER,
                 mavutil.mavlink.MAV_AUTOPILOT_INVALID,
                 0, 0,
@@ -387,7 +483,9 @@ class MavlinkBridge:
         request_data_stream_send signature and MAV_DATA_STREAM_* enum, not
         guessed) and ArduPilot still honors it."""
         assert self._conn is not None, "call connect() first"
-        self._conn.mav.request_data_stream_send(
+        self._write(
+            "request_data_stream",
+            self._conn.mav.request_data_stream_send,
             self._conn.target_system,
             self._conn.target_component,
             mavutil.mavlink.MAV_DATA_STREAM_ALL,
@@ -430,7 +528,9 @@ class MavlinkBridge:
         # pre-arm check.
         apply_force = force and not armed
         self._pending_arm_intents.append(armed)
-        self._conn.mav.command_long_send(
+        sent = self._write(
+            "arm/disarm",
+            self._conn.mav.command_long_send,
             self._conn.target_system,
             self._conn.target_component,
             mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
@@ -439,6 +539,11 @@ class MavlinkBridge:
             FORCE_ARM_DISARM_MAGIC_NUMBER if apply_force else 0,
             0, 0, 0, 0, 0,
         )
+        if not sent:
+            # No ACK will ever come for a request that never left the Pi -
+            # report it as rejected now instead of waiting on nothing.
+            self._pending_arm_intents.pop()
+            self.pending_arm_ack = {"armed_requested": armed, "accepted": False}
 
     def request_home_position(self) -> None:
         """Asks the FC to (re)send HOME_POSITION - ArduPilot broadcasts this
@@ -447,7 +552,9 @@ class MavlinkBridge:
         it. Call this once home is expected to exist (e.g. on the arm
         transition - see main.py) rather than polling continuously."""
         assert self._conn is not None, "call connect() first"
-        self._conn.mav.command_long_send(
+        self._write(
+            "home position request",
+            self._conn.mav.command_long_send,
             self._conn.target_system,
             self._conn.target_component,
             mavutil.mavlink.MAV_CMD_GET_HOME_POSITION,
@@ -470,7 +577,9 @@ class MavlinkBridge:
         in GUIDED mode - real, documented behavior, not something this
         bridge needs to separately guard against."""
         assert self._conn is not None, "call connect() first"
-        self._conn.mav.command_long_send(
+        self._write(
+            "takeoff",
+            self._conn.mav.command_long_send,
             self._conn.target_system,
             self._conn.target_component,
             mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
@@ -495,7 +604,11 @@ class MavlinkBridge:
         return True
 
     def _send_mode(self, mode_number: int) -> None:
-        self._conn.mav.set_mode_send(
+        # A failed write is handled like a lost packet: check_pending_mode()
+        # re-sends it (on the reopened link) and reports if it never took.
+        self._write(
+            "set_mode",
+            self._conn.mav.set_mode_send,
             self._conn.target_system,
             mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
             mode_number,
@@ -540,7 +653,9 @@ class MavlinkBridge:
         if not guidance_allowed:
             return False
         assert self._conn is not None, "call connect() first"
-        self._conn.mav.set_position_target_local_ned_send(
+        return self._write(
+            "velocity setpoint",
+            self._conn.mav.set_position_target_local_ned_send,
             int(time.monotonic() * 1000) & 0xFFFFFFFF,
             self._conn.target_system,
             self._conn.target_component,
@@ -551,4 +666,3 @@ class MavlinkBridge:
             0, 0, 0,
             0, yaw_rate,
         )
-        return True

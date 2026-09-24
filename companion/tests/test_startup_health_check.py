@@ -39,6 +39,11 @@ _COMPLETE_ORBIT_CONFIG = {
 _COMPLETE_SAFETY_CONFIG = {
     "min_obstacle_distance_m": 2.0, "min_battery_pct": 20, "min_takeoff_battery_pct": 30, "min_gps_fix_type": 3,
     "max_force_disarm_altitude_m": 1.5,
+    "target_hold_after_unseen_s": 0.3, "detection_carry_max_s": 0.5, "pipeline_max_frame_age_s": 5.0,
+}
+_COMPLETE_NETWORK_CONFIG = {
+    "ws_host": "0.0.0.0", "ws_port": 8765, "comms_timeout_s": 3.0, "comms_loss_rtl_s": 15.0,
+    "ws_send_queue_max": 200,
 }
 
 
@@ -59,7 +64,7 @@ def test_sim_mode_does_not_require_mavlink_config():
     it for sim mode."""
     fake_configs = {
         "hardware.yaml": {"camera": {"width": 1280, "height": 720, "target_fps": 30}},
-        "network.yaml": {"ws_host": "0.0.0.0", "ws_port": 8765, "comms_timeout_s": 3.0, "comms_loss_rtl_s": 15.0},
+        "network.yaml": _COMPLETE_NETWORK_CONFIG,
         "approach_limits.yaml": {"rc_override_deadband": 0.15},
         "safety_limits.yaml": _COMPLETE_SAFETY_CONFIG,
         "grid_search_limits.yaml": _COMPLETE_GRID_SEARCH_CONFIG,
@@ -74,7 +79,7 @@ def test_sim_mode_does_not_require_mavlink_config():
 def test_hardware_mode_requires_mavlink_and_imx500_config():
     fake_configs = {
         "hardware.yaml": {"camera": {"width": 1280, "height": 720, "target_fps": 30}},
-        "network.yaml": {"ws_host": "0.0.0.0", "ws_port": 8765, "comms_timeout_s": 3.0, "comms_loss_rtl_s": 15.0},
+        "network.yaml": _COMPLETE_NETWORK_CONFIG,
         "approach_limits.yaml": {"rc_override_deadband": 0.15},
         "safety_limits.yaml": _COMPLETE_SAFETY_CONFIG,
     }
@@ -112,7 +117,7 @@ def test_flags_a_missing_grid_search_key_instead_of_only_parse_checking_it():
     mid-flight - an even worse time to discover a config typo)."""
     fake_configs = {
         "hardware.yaml": {"camera": {"width": 1280, "height": 720, "target_fps": 30}},
-        "network.yaml": {"ws_host": "0.0.0.0", "ws_port": 8765, "comms_timeout_s": 3.0, "comms_loss_rtl_s": 15.0},
+        "network.yaml": _COMPLETE_NETWORK_CONFIG,
         "approach_limits.yaml": {"rc_override_deadband": 0.15},
         "safety_limits.yaml": _COMPLETE_SAFETY_CONFIG,
         # A real-world typo: "waypoint_radius_m" renamed/misspelled, and
@@ -150,11 +155,14 @@ def test_passes_with_no_problems_does_not_raise():
         "hardware.yaml": {
             "camera": {
                 "width": 1280, "height": 720, "target_fps": 30,
-                "imx500_model_path": "/usr/share/imx500-models/x.rpk",
+                "imx500_model_path": "/usr/share/imx500-models/x.rpk", "stall_timeout_s": 2.0,
             },
-            "mavlink": {"connection": "/dev/serial0", "baud": 57600},
+            "mavlink": {
+                "connection": "/dev/serial0", "baud": 57600,
+                "silence_reconnect_s": 5.0, "reconnect_max_delay_s": 5.0,
+            },
         },
-        "network.yaml": {"ws_host": "0.0.0.0", "ws_port": 8765, "comms_timeout_s": 3.0, "comms_loss_rtl_s": 15.0},
+        "network.yaml": _COMPLETE_NETWORK_CONFIG,
         "approach_limits.yaml": {"rc_override_deadband": 0.15},
         "safety_limits.yaml": _COMPLETE_SAFETY_CONFIG,
         "grid_search_limits.yaml": _COMPLETE_GRID_SEARCH_CONFIG,

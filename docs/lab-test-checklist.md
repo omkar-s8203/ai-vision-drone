@@ -198,6 +198,7 @@ app's Status tab against Mission Planner side by side.
 | 5.7 | RC inputs shown in the app | Match sticks/switch movement | |
 | 5.8 | **Telemetry survives an FC reboot.** With the app showing altitude/GPS, reboot the FC (Mission Planner: "Reboot Autopilot", or briefly disconnect and reconnect FC power with the Pi kept powered) | Within ~10 s of the FC's heartbeat returning, altitude/GPS/battery values resume updating **without restarting the Pi service** | s |
 | 5.9 | During 5.8 watch the app's health panel | `mavlink` shows the interruption, then recovers | |
+| 5.10 | During 5.8 watch the journal (`journalctl -u ai-vision-drone -f`) | If the FC was silent for > 5 s: `MAVLink link lost (no MAVLink data ...) - reopening`, then `reopened (reconnect #1)`; telemetry resumes. If the FC is on USB, repeat by unplugging the USB lead for ~5 s: same recovery, no service restart | |
 
 If 5.8 fails, guidance would silently run on frozen altitude - do not proceed.
 
@@ -216,6 +217,7 @@ restart it afterwards.
 | 6A.2 | `python tools/detection_regression.py capture --duration 30 --out session.json`, then `python tools/detection_regression.py analyze session.json` with a person standing/walking in view | Consistent detections frame to frame; reacquire >= 90 %, false-lost <= 5 % | |
 | 6A.3 | `python tools/ws_latency_benchmark.py --uri ws://<pi-ip>:8765 --count 100` from the laptop on the Pi WiFi | Round trip < 50 ms | ms |
 | 6A.4 | Video: watch for lag walking in front of the camera | Glass-to-glass under ~200 ms, no freezing | |
+| 6A.5 | With the service running, a person standing still in view: watch the app's detection box for 30 s | The box stays up steadily - no blinking on/off frame to frame (frames without an AI result reuse the last one) | |
 
 ### 6B - Camera calibration and distance (MANDATORY before trusting Follow)
 
@@ -303,8 +305,10 @@ Set the FC to `GUIDED` with the switch and arm. Keep your hand on the mode switc
 |---|---|---|---|
 | 7C.1 | Watch the commands for 5 minutes of normal target motion | No oscillation/hunting around the separation; vx settles | |
 | 7C.2 | Stall test: pause the companion for ~2 s (`sudo kill -STOP <pid>` then `sudo kill -CONT <pid>`; pid from `systemctl status`) | **No** setpoints are sent during the stall (the FC's `GUID_TIMEOUT` holds); after resuming, the first commands **ramp from 0** - no step to the old speed | |
-| 7C.3 | Camera loss: unplug the camera (or cover-and-stall it) for ~2 s while Follow is active | Guidance stops (`System check failed - guidance paused`); after recovery it restarts from 0. Reseat the camera with the Pi **powered off** if it did not recover | |
+| 7C.3 | Camera loss: make the camera stop delivering frames for > 2 s while Follow is active (never hot-unplug the CSI ribbon - if you have no safe way to stall it, record N-A) | Setpoints stop; within ~2 s the journal shows `Camera stopped delivering frames ... exiting so systemd restarts the service`; the service restarts (`systemctl status`: new PID) and comes back **in IDLE** - Follow does **not** resume on its own | |
 | 7C.4 | Altitude-stream loss is covered by **5.8** (FC reboot): confirm the vertical command was 0 while altitude was unknown and resumed after the stream returned | | |
+| 7C.5 | Hang test: `sudo kill -STOP <pid>` and leave it stopped | Within ~10 s systemd kills it (`journalctl`: `Watchdog timeout`) and restarts it; it comes back **in IDLE** | s |
+| 7C.6 | Brief-miss test: with Follow active, have the helper step briefly half behind a post (well under a second) | Commands continue smoothly - no drop to 0 for a single missed detection; a longer occlusion (> 0.3 s) holds (`HOLD target_unseen`) | |
 
 ### 7D - Target-loss recovery
 
@@ -387,6 +391,7 @@ Setup: FC armed in **GUIDED**, Follow engaged with a tracked target, **guidance 
 | 9.9 | Pi-side kill: while Follow is engaged, `sudo systemctl stop ai-vision-drone` | Setpoints stop instantly; the FC (per `GUID_TIMEOUT`) holds - confirm in Mission Planner that it stops commanding motion; nothing restarts guidance on its own | |
 | 9.10 | **Lost mode request is retried.** With the FC in GUIDED and Follow engaged, drop the Pi-to-FC serial link for ~2 s right as you trigger the comms-loss RTL (or unplug the FC TELEM lead briefly during 9.2) | The Pi re-sends RTL (up to 3 sends 1.5 s apart) and the FC ends in RTL; if it never does, the app speaks **"Flight controller did not change mode"** and the session log has `mode_change_result` with `confirmed: false` | |
 | 9.11 | The pilot flips the switch to LOITER while the Pi is retrying a mode request | The Pi stops retrying immediately and does **not** force its own mode | |
+| 9.12 | **Slow phone:** during 9.6, as the link degrades, watch the Pi's commands and journal | `guidance_command`/telemetry timing on the Pi stays regular (never freezes waiting on the phone); the journal may show `Ground-station client ... messages behind - disconnecting it`, and the app reconnects when the link improves | |
 
 ---
 
@@ -399,6 +404,8 @@ Setup: FC armed in **GUIDED**, Follow engaged with a tracked target, **guidance 
 | 10.3 | During 10.1 watch fps/latency in the health panel | fps >= 15, no growth in latency over time | |
 | 10.4 | Brown-out check: run a motor-power event with **props off** (throttle blip while armed) while the Pi runs | Pi does not reboot, camera and MAVLink stay alive | |
 | 10.5 | Kill the service mid-session (`kill -9`) | systemd restarts it within ~3 s, **in IDLE** | |
+| 10.7 | After boot: `systemctl show ai-vision-drone -p Type -p WatchdogUSec -p ActiveState` | `Type=notify`, `WatchdogUSec=10s`, `ActiveState=active` (READY was received). If it sits in `activating` and restarts every 2 minutes, READY is not arriving - check the journal | |
+| 10.8 | During the 10.1 soak: `systemctl show ai-vision-drone -p NRestarts` before and after | Unchanged - no watchdog restarts during normal running | |
 | 10.6 | Record/stop recording several times; check the file plays | Recording works, video stays smooth while recording | |
 
 ---
@@ -492,6 +499,10 @@ level and voltage; transmitter mode switch tested; GPS 3D fix, HDOP <= 2.5; fenc
 | Target reacquire window / search timeout | 2 s / 60 s | code default / `target_recovery.yaml` |
 | Identity: swap after / drop after (frames) | 5 / 20 | `reidentification.yaml` |
 | Telemetry treated as stale after | 2 s | `mavlink/bridge.py` |
+| Hold after target unseen / reuse last AI result for | 0.3 s / 0.5 s | `safety_limits.yaml` |
+| Camera stall -> exit / watchdog frame age / WatchdogSec | 2 s / 5 s / 10 s | `hardware.yaml`, `safety_limits.yaml`, `deploy/ai-vision-drone.service` |
+| MAVLink reopen after silence / max retry delay | 5 s / 5 s | `hardware.yaml` |
+| App send backlog before disconnect | 200 messages (~1 s) | `network.yaml` |
 
 ## Appendix C - Results summary
 

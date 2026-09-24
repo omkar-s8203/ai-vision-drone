@@ -316,16 +316,24 @@ graceful fallback:
   same mechanism, not separate code paths - if the camera stops producing
   frames or the MAVLink link stops delivering messages, the corresponding
   heartbeat goes stale and this gate trips.
+- **A camera that hangs** is a separate case: the frame loop itself stops,
+  so nothing evaluates the gate above at all (no setpoints are sent either -
+  the FC's `GUID_TIMEOUT` holds). Capture now runs on its own thread; no frame
+  for `camera.stall_timeout_s` (2 s) raises `CameraStallError` and the process
+  exits (status 3) for systemd to restart it.
 - **Process-level backstop**: `deploy/ai-vision-drone.service`
-  (`Restart=on-failure`) restarts the whole companion process if it
-  crashes outright, always coming back up in `IDLE` - it never
-  auto-resumes a guidance mode after a restart. `SystemdWatchdog`
-  (`companion/safety/watchdog.py`) is wired to send `WATCHDOG=1` if
-  `sdnotify` happens to be installed, but the unit intentionally uses
-  `Type=simple` (not `Type=notify`) because the code never sends the
-  `READY=1` notification `Type=notify` requires - so this specific
-  systemd-level hang-detection path is not actually active today, only
-  crash-restart is (see `docs/hardware-wiring.md` if this needs revisiting).
+  (`Type=notify`, `WatchdogSec=10`, `Restart=always`) restarts the whole
+  companion process whenever it ends, always coming back up in `IDLE` - it
+  never auto-resumes a guidance mode after a restart. `SystemdWatchdog`
+  (`companion/safety/watchdog.py`, its own `sd_notify` - the `sdnotify`
+  package it used to rely on was never a dependency, so the old watchdog
+  silently did nothing) sends `READY=1` once the first frame has gone
+  through the pipeline, then `WATCHDOG=1` only while a frame has completed
+  within `pipeline_max_frame_age_s` (5 s). A frozen event loop or a stalled
+  perception loop stops the pings and systemd kills and restarts the service.
+  Confirmed against real systemd (a transient `Type=notify` unit under WSL:
+  READY accepted, then `Result=watchdog` once pings stopped) - not yet on the
+  Pi itself (lab checklist 10.7-10.8).
 - **Guarantee**: guidance stops within one `HeartbeatWatchdog.timeout_s`
   window of any required subsystem going quiet, not just on an outright
   exception.
@@ -480,8 +488,10 @@ graceful fallback:
 - **No driving on frozen coordinates**: while the tracker is in REACQUIRE,
   `state_machine.target` still holds the last box, and Follow/Orbit used to
   keep computing from it (constant yaw rate, constant forward speed, for up
-  to `reacquire_timeout_s`). They now command zero velocity until the target
-  is genuinely seen again (Approach-Test already aborted on this).
+  to `reacquire_timeout_s`). They now command zero velocity once the target
+  has been unseen for `target_hold_after_unseen_s` (0.3 s) - see "Safety pass:
+  detection flicker, link and process recovery" below for why not on the very
+  first missed frame (Approach-Test already aborted on this).
 - **Tracking identity**: the IoU tracker follows whichever box overlaps its
   prediction, so two people crossing could silently swap the followed
   subject. `AppearanceMemory.check_identity()` compares the tracked box to
@@ -668,13 +678,64 @@ behaviour or safety limits by itself.
   inconsistency with Approach-Test's deliberately-sticky behavior above -
   it's a considered difference, not an oversight.
 
+## Safety pass: detection flicker, link and process recovery
+
+- **Detection flicker**: the IMX500 does not attach an AI result to every
+  camera frame. Those frames used to parse as "no detections", so the
+  tracker counted a miss, the target flipped TRACKING -> REACQUIRE, Follow
+  commanded a zero-velocity hold for that frame (the drone stuttered) and the
+  app's boxes blinked. `IMX500Detector.parse()` now returns `None` for "no
+  result" (distinct from `[]`, "the model saw nothing"). The orchestrator
+  reuses the last real detections for up to `detection_carry_max_s` (0.5 s) -
+  for the app's boxes, tap-to-select and the obstacle check - and skips the
+  tracker update on those frames (`TrackingStateMachine.coast()`), along with
+  the identity check and appearance re-match, which compare boxes against
+  the current image. Follow/Orbit hold only once the target has been unseen
+  for `target_hold_after_unseen_s` (0.3 s), measured from the target's
+  last sighting - so a TRACKING target whose results have stopped arriving
+  is held too, and after `detection_carry_max_s` a stopped AI degrades to
+  "saw nothing" and on to TARGET_LOST. A target judged to be the wrong person
+  is still held immediately.
+- **MAVLink reconnect**: a read error, a failed write, or no MAVLink data
+  for `mavlink.silence_reconnect_s` (5 s) closes the connection and reopens
+  it, backing off up to `reconnect_max_delay_s` while the port will not open,
+  and never giving up. The FC's telemetry streams are requested again on the
+  new link's first heartbeat. Previously a read error ended the receive task
+  silently (telemetry froze until a service restart) and a write error
+  either skipped a whole perception frame or killed the companion's own
+  heartbeat task for good. Writes now report failure instead: a velocity
+  setpoint shows `guidance_sent: false`, an unsendable arm request is
+  reported rejected, a mode request is retried like a lost packet.
+  Guidance has already stopped (2 s watchdog) before a silent link is reopened.
+- **Slow ground-station client**: `WebSocketTransport.broadcast()` used to
+  await every client's send, which waits for the socket to drain - one phone
+  on weak WiFi stalled the perception loop and with it every setpoint,
+  telemetry update and failsafe check. Each client now has its own queue
+  and writer task. A client `ws_send_queue_max` (200) messages behind (about
+  a second of updates) is closed with code 1013 and no longer counts as
+  connected (so guidance pauses, exactly as for a lost link); the app
+  reconnects fresh.
+- **Parameters**: all of the above are in config (`safety_limits.yaml`,
+  `hardware.yaml`, `network.yaml`), required by the startup health check and
+  range-checked there - e.g. `target_hold_after_unseen_s` above 1 s refuses
+  to boot, so a typo cannot quietly bring back steering on stale boxes. The
+  check also refuses a camera stall timeout that is not shorter than the
+  pipeline frame age.
+- **Tests**: `test_tracking_safety_orchestrator.py` (flicker/carry/hold),
+  `test_state_machine.py` (coast), `test_imx500_detector.py`,
+  `test_mavlink_reconnect.py`, `test_transport_slow_client.py`,
+  `test_camera_stall.py`, `test_service_watchdog.py`,
+  `test_safety_parameters.py`.
+- **Not yet verified on hardware**: all of it - see the lab checklist rows
+  6A.5, 5.8-5.10, 7C.3, 7C.5, 9.12 and 10.7-10.8.
+
 ## Fault-injection test coverage summary
 
 Every mechanism above that has a corresponding `SafetySupervisor` gate is
 covered by at least one test that independently trips *only that
 condition* and asserts guidance is denied - this is what "fault injection"
 means in this codebase's test suite, not a separate framework. As of this
-writing: 666 companion tests passing
+writing: 757 companion tests passing
 (`.venv/Scripts/python -m pytest -q`), including a real end-to-end test
 (`test_integration_websocket.py`) that drives the actual JSON wire
 protocol over a real WebSocket and real MAVLink link, and real-MAVLink

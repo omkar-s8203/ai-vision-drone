@@ -5,9 +5,22 @@ Description=AI Vision Drone companion (vision/AI/guidance stack)
 # for the WebSocket/video server.
 After=network-online.target
 Wants=network-online.target
+# Never stop restarting. systemd's default rate limit (5 starts in 10s) would
+# otherwise give up on the companion for good after a burst of failures - a
+# drone in the air is better served by one more attempt.
+StartLimitIntervalSec=0
 
 [Service]
-Type=simple
+# Type=notify: the companion sends READY=1 only once its first camera frame
+# has made it through the whole pipeline (companion/safety/watchdog.py), then
+# WATCHDOG=1 every WatchdogSec/2 for as long as frames keep flowing. No ping
+# for WatchdogSec - a frozen event loop, or a perception loop that stopped
+# producing frames - and systemd kills and restarts it. Never reaching READY
+# (camera missing or dead at boot) restarts it after TimeoutStartSec.
+Type=notify
+NotifyAccess=main
+WatchdogSec=10
+TimeoutStartSec=120
 User=omkar
 Group=omkar
 WorkingDirectory=/home/omkar/ai-vision-drone
@@ -17,11 +30,13 @@ Environment=COMPANION_MODE=hardware
 # --system-site-packages (picamera2 lives in system site-packages, not pip).
 ExecStart=/home/omkar/ai-vision-drone/mavlink-venv/bin/python3 -m companion.main
 
-# Crash recovery - if the process dies (exception, killed, etc.) systemd
-# brings it back. Deliberately does NOT auto-resume Follow/Orbit/Approach
-# guidance on restart: CompanionOrchestrator always starts in IDLE
-# (docs plan M10 - restart must never come back up already flying a
-# guidance mode with no operator confirmation).
+# Crash recovery - whatever ends the process (exception, watchdog kill, the
+# deliberate exit on a stalled camera - status 3) systemd brings it back.
+# Deliberately does NOT auto-resume Follow/Orbit/Approach guidance on restart:
+# CompanionOrchestrator always starts in IDLE (docs plan M10 - restart must
+# never come back up already flying a guidance mode with no operator
+# confirmation). While it is down no setpoints arrive, so the FC holds
+# position on its own GUID_TIMEOUT.
 #
 # Before touching any hardware, companion.main._amain() runs a boot-time
 # health self-check (docs plan M15) confirming every config file it will
@@ -30,8 +45,10 @@ ExecStart=/home/omkar/ai-vision-drone/mavlink-venv/bin/python3 -m companion.main
 # journal line instead of a bare KeyError several stack frames into camera
 # or MAVLink construction. `journalctl -u ai-vision-drone` is where that
 # shows up on a real restart loop.
-Restart=on-failure
-RestartSec=3
+Restart=always
+RestartSec=2
+# A hung camera thread must not hold up the restart.
+TimeoutStopSec=10
 
 # Keep the companion's own log lines out of the fixed-size systemd journal
 # and in the app's own rotating file logs (companion/logging_/setup.py

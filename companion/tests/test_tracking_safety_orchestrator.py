@@ -146,24 +146,43 @@ def test_non_finite_or_non_numeric_values_are_ignored(tmp_path, bad):
 
 # --- no driving on frozen coordinates ---------------------------------------
 
+async def _follow_a_far_person(orch, conn):
+    """Selects an off-center, far person and follows it until 0.2s - leaves a
+    nonzero command as the last setpoint."""
+    far_person = _person(BBox(300, 300, 80, 160))
+    orch._on_target_selected({"x": 340.0, "y": 380.0, "point": True})
+    await orch.process_frame(_frame(0.0, [far_person]))
+    orch._on_mode_command({"mode": "follow"})
+    await orch.process_frame(_frame(0.1, [far_person]))
+    await orch.process_frame(_frame(0.2, [far_person]))
+    assert _velocity_calls(conn)[-1] != (0.0, 0.0, 0.0, 0.0)
+    return far_person
+
+
 @pytest.mark.asyncio
-async def test_follow_holds_still_while_the_target_is_briefly_unseen(tmp_path):
+async def test_follow_holds_still_once_the_target_has_been_unseen_long_enough(tmp_path):
     """While REACQUIRE, state_machine.target still holds the last box; Follow
     used to keep computing from it (constant yaw rate / forward speed on
-    stale coordinates). It must command zero velocity instead."""
+    stale coordinates). Past target_hold_after_unseen_s it must command zero."""
     with _build(tmp_path) as (orch, _rec, conn):
-        far_person = _person(BBox(300, 300, 80, 160))  # off-center and far -> nonzero command
-        orch._on_target_selected({"x": 340.0, "y": 380.0, "point": True})
-        await orch.process_frame(_frame(0.0, [far_person]))
-        orch._on_mode_command({"mode": "follow"})
-        await orch.process_frame(_frame(0.1, [far_person]))
-        await orch.process_frame(_frame(0.2, [far_person]))
-        moving = _velocity_calls(conn)[-1]
-        assert moving != (0.0, 0.0, 0.0, 0.0)
-
-        result = await orch.process_frame(_frame(0.3, []))  # target vanishes
+        await _follow_a_far_person(orch, conn)
+        hold_after = orch.target_hold_after_unseen_s
+        result = await orch.process_frame(_frame(0.2 + hold_after, []))
         assert result["tracking_state"] == TrackingState.REACQUIRE
         assert _velocity_calls(conn)[-1] == (0.0, 0.0, 0.0, 0.0)
+
+
+@pytest.mark.asyncio
+async def test_a_single_missed_detection_does_not_make_follow_stutter(tmp_path):
+    """The stutter: every missed detection used to drop the command to zero
+    for that frame. A miss shorter than target_hold_after_unseen_s keeps
+    steering on the last box."""
+    with _build(tmp_path) as (orch, _rec, conn):
+        await _follow_a_far_person(orch, conn)
+        result = await orch.process_frame(_frame(0.25, []))
+        assert result["tracking_state"] == TrackingState.REACQUIRE
+        assert _velocity_calls(conn)[-1] != (0.0, 0.0, 0.0, 0.0)
+        assert _last_tracking_update(orch)["guidance_hold"] is None
 
 
 @pytest.mark.asyncio
@@ -176,8 +195,9 @@ async def test_follow_ramps_up_from_a_standstill_after_a_hold(tmp_path):
         for i in range(1, 40):
             await orch.process_frame(_frame(0.1 * i, [person]))
         cruising_vx = _velocity_calls(conn)[-1][0]
-        await orch.process_frame(_frame(4.1, []))            # hold
-        await orch.process_frame(_frame(4.2, [person]))      # target back
+        await orch.process_frame(_frame(4.3, []))            # unseen 0.4s -> hold
+        assert _velocity_calls(conn)[-1] == (0.0, 0.0, 0.0, 0.0)
+        await orch.process_frame(_frame(4.4, [person]))      # target back
         resumed_vx = _velocity_calls(conn)[-1][0]
         assert resumed_vx < cruising_vx
         assert resumed_vx <= orch.follow.limits["max_accel_mps2"] * 0.1 + 1e-9
@@ -307,7 +327,7 @@ async def test_hold_reason_is_reported_while_the_target_is_unseen(tmp_path):
         await orch.process_frame(_frame(0.1, [person]))
         assert _last_tracking_update(orch)["guidance_hold"] is None  # normal following: nothing held
 
-        await orch.process_frame(_frame(0.2, []))
+        await orch.process_frame(_frame(0.4, []))  # unseen 0.3s
         update = _last_tracking_update(orch)
         assert update["guidance_hold"] == "target_unseen"
         assert update["guidance_sent"] is True  # a zero-velocity hold was actually sent
@@ -333,9 +353,9 @@ async def test_hold_reason_clears_once_the_target_is_tracked_again(tmp_path):
         orch._on_target_selected({"x": 340.0, "y": 380.0, "point": True})
         await orch.process_frame(_frame(0.0, [person]))
         orch._on_mode_command({"mode": "follow"})
-        await orch.process_frame(_frame(0.1, []))
+        await orch.process_frame(_frame(0.4, []))  # unseen 0.4s
         assert _last_tracking_update(orch)["guidance_hold"] == "target_unseen"
-        await orch.process_frame(_frame(0.2, [person]))
+        await orch.process_frame(_frame(0.5, [person]))
         assert _last_tracking_update(orch)["guidance_hold"] is None
 
 
@@ -352,3 +372,107 @@ async def test_hold_reason_reports_the_takeoff_climb(tmp_path):
         update = _last_tracking_update(orch)
         assert update["guidance_hold"] == "auto_takeoff"
         assert update["guidance_sent"] is False
+
+
+# --- frames with no AI result (the detection flicker) -------------------------
+
+def _last_detections_update(orch):
+    import json
+
+    for raw in reversed(orch.link.transport.sent):
+        msg = json.loads(raw)
+        if msg["type"] == "detections_update":
+            return msg["payload"]
+    raise AssertionError("no detections_update was sent")
+
+
+def _no_result_frame(ts):
+    """A camera frame the AI attached no result to (IMX500 outputs=None)."""
+    return Frame(ts=ts, width=FRAME_W, height=FRAME_H, raw_detection_output=None)
+
+
+@pytest.mark.asyncio
+async def test_a_frame_with_no_ai_result_keeps_tracking(tmp_path):
+    with _build(tmp_path) as (orch, _rec, conn):
+        await _follow_a_far_person(orch, conn)
+        result = await orch.process_frame(_no_result_frame(0.233))
+        assert result["tracking_state"] == TrackingState.TRACKING
+        assert _velocity_calls(conn)[-1] != (0.0, 0.0, 0.0, 0.0)
+
+
+@pytest.mark.asyncio
+async def test_frames_with_no_ai_result_do_not_update_the_tracker(tmp_path):
+    with _build(tmp_path) as (orch, _rec, conn):
+        await _follow_a_far_person(orch, conn)
+        with patch.object(orch.state_machine.tracker, "update", wraps=orch.state_machine.tracker.update) as update:
+            await orch.process_frame(_no_result_frame(0.233))
+            await orch.process_frame(_no_result_frame(0.266))
+            update.assert_not_called()
+        assert orch.state_machine.target.last_seen_ts == 0.2
+
+
+@pytest.mark.asyncio
+async def test_the_app_keeps_seeing_the_last_boxes_on_a_frame_with_no_ai_result(tmp_path):
+    with _build(tmp_path) as (orch, _rec, conn):
+        await _follow_a_far_person(orch, conn)
+        await orch.process_frame(_no_result_frame(0.233))
+        boxes = _last_detections_update(orch)["detections"]
+        assert [b["bbox"] for b in boxes] == [{"x": 300, "y": 300, "w": 80, "h": 160}]
+
+
+@pytest.mark.asyncio
+async def test_a_tap_on_a_carried_over_box_still_selects_it(tmp_path):
+    with _build(tmp_path) as (orch, _rec, _conn):
+        person = _person(BBox(300, 300, 80, 160))
+        await orch.process_frame(_frame(0.0, [person]))
+        orch._on_target_selected({"x": 340.0, "y": 380.0, "point": True})
+        result = await orch.process_frame(_no_result_frame(0.033))
+        assert result["tracking_state"] == TrackingState.TRACKING
+
+
+@pytest.mark.asyncio
+async def test_follow_holds_when_ai_results_stop_even_though_still_tracking(tmp_path):
+    """The hold is about the target's age, not the tracking state: a TRACKING
+    target whose results stopped arriving must not be steered on forever."""
+    with _build(tmp_path) as (orch, _rec, conn):
+        await _follow_a_far_person(orch, conn)
+        result = await orch.process_frame(_no_result_frame(0.2 + orch.target_hold_after_unseen_s))
+        assert result["tracking_state"] == TrackingState.TRACKING
+        assert _velocity_calls(conn)[-1] == (0.0, 0.0, 0.0, 0.0)
+        assert _last_tracking_update(orch)["guidance_hold"] == "target_unseen"
+
+
+@pytest.mark.asyncio
+async def test_carried_detections_expire_and_then_count_as_seeing_nothing(tmp_path):
+    with _build(tmp_path) as (orch, _rec, conn):
+        await _follow_a_far_person(orch, conn)
+        expired = 0.2 + orch.detection_carry_max_s + 0.05
+        result = await orch.process_frame(_no_result_frame(expired))
+        assert result["tracking_state"] == TrackingState.REACQUIRE
+        assert _last_detections_update(orch)["detections"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_stopped_ai_eventually_loses_the_target(tmp_path):
+    with _build(tmp_path) as (orch, _rec, conn):
+        await _follow_a_far_person(orch, conn)
+        ts, state = 0.2, None
+        while ts < 0.2 + orch.detection_carry_max_s + orch.state_machine.reacquire_timeout_s + 0.2:
+            ts += 0.1
+            state = (await orch.process_frame(_no_result_frame(ts)))["tracking_state"]
+        assert state == TrackingState.TARGET_LOST
+
+
+@pytest.mark.asyncio
+async def test_the_identity_check_is_skipped_on_frames_with_no_ai_result(tmp_path):
+    """The carried box is from an older image; comparing it to the current
+    pixels would count honest motion as an identity mismatch."""
+    camera = _PaintableCamera()
+    with _build(tmp_path, camera) as (orch, _rec, _conn):
+        box = BBox(200, 200, 80, 160)
+        await _select_red_target(orch, camera, box)
+        with patch.object(orch, "_verify_tracked_identity", wraps=orch._verify_tracked_identity) as verify:
+            await orch.process_frame(_no_result_frame(0.033))
+            verify.assert_not_called()
+            await orch.process_frame(_frame(0.066, [_person(box)]))
+            verify.assert_called_once()

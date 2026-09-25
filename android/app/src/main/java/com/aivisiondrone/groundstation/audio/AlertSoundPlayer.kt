@@ -78,6 +78,7 @@ class AlertSoundPlayer(context: Context) {
         AlertEvent.HOLDING_TAKEOFF_CLIMB -> ToneGenerator.TONE_PROP_BEEP
         AlertEvent.HOLDING_TARGET_UNSEEN -> ToneGenerator.TONE_CDMA_ABBR_ALERT
         AlertEvent.HOLDING_IDENTITY_UNSURE -> ToneGenerator.TONE_CDMA_ABBR_ALERT
+        AlertEvent.HOLDING_ON_GROUND -> ToneGenerator.TONE_SUP_ERROR
     }
 
     companion object {

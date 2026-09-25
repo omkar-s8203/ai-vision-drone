@@ -28,6 +28,7 @@ def _no_reconnect_delay(monkeypatch):
 def _msg(msg_type: str) -> MagicMock:
     msg = MagicMock()
     msg.get_type.return_value = msg_type
+    msg.get_srcComponent.return_value = 1  # the autopilot's component ID
     return msg
 
 

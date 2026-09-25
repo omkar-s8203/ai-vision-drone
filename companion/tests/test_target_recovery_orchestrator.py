@@ -146,6 +146,7 @@ async def test_target_reacquired_during_search_cancels_recovery_and_resumes_foll
 async def test_search_timeout_with_healthy_battery_triggers_rtl(tmp_path):
     with _build_orchestrator(tmp_path) as (orchestrator, recorder, conn, transport):
         await _engage_follow(orchestrator)
+        orchestrator.mavlink.telemetry.armed = True  # the Pi only RTLs an aircraft it is flying
         orchestrator.mavlink.telemetry.battery_remaining_pct = 80
         orchestrator.mavlink.telemetry.home_lat = 37.7749
         orchestrator.mavlink.telemetry.home_lon = -122.4194

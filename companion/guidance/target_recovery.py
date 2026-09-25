@@ -62,6 +62,10 @@ class TargetRecoveryController:
     def is_active(self) -> bool:
         return self._searching_since is not None or self._awaiting_confirmation
 
+    @property
+    def awaiting_land_confirmation(self) -> bool:
+        return self._awaiting_confirmation
+
     def start_search(self, now: float) -> None:
         """No-op if a search or a pending land confirmation is already in
         progress - call this every frame the target is lost while a

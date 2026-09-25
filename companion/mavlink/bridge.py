@@ -19,6 +19,20 @@ log = logging.getLogger(__name__)
 # arming to override preflight checks and disarming in flight)").
 FORCE_ARM_DISARM_MAGIC_NUMBER = 21196
 
+# MAVLink component IDs / enum values used to tell the flight controller's own
+# HEARTBEAT apart from every other component's. Plain numbers (from the MAVLink
+# common dialect) rather than mavutil attributes, so the filtering logic does not
+# depend on how pymavlink is loaded.
+MAV_COMP_ID_AUTOPILOT1 = 1
+# A companion computer identifies itself with the vehicle's system ID and this
+# component ID (MAVLink "Onboard computer" standard). pymavlink's default of 0
+# is MAV_COMP_ID_ALL, which is not a valid source component.
+MAV_COMP_ID_ONBOARD_COMPUTER = 191
+MAV_AUTOPILOT_INVALID = 8
+# EXTENDED_SYS_STATE.landed_state
+MAV_LANDED_STATE_UNDEFINED = 0
+MAV_LANDED_STATE_ON_GROUND = 1
+
 # Position data older than this is treated as unknown by fresh_alt_m()/
 # fresh_position() - guidance must not steer or apply altitude limits on it.
 POSITION_MAX_AGE_S = 2.0
@@ -100,6 +114,9 @@ class TelemetrySnapshot:
     # Monotonic time of the last GLOBAL_POSITION_INT - lat/lon/alt_m above are
     # only as trustworthy as this is recent (see MavlinkBridge.fresh_*).
     position_ts: Optional[float] = None
+    # EXTENDED_SYS_STATE.landed_state (MAV_LANDED_STATE_*); None until the FC
+    # reports it (or when it reports UNDEFINED).
+    landed_state: Optional[int] = None
 
 
 class MavlinkBridge:
@@ -116,12 +133,14 @@ class MavlinkBridge:
         self,
         connection_string: str,
         source_system: int = 1,
+        source_component: int = MAV_COMP_ID_ONBOARD_COMPUTER,
         baud: Optional[int] = None,
         silence_reconnect_s: Optional[float] = DEFAULT_SILENCE_RECONNECT_S,
         reconnect_max_delay_s: float = DEFAULT_RECONNECT_MAX_DELAY_S,
     ) -> None:
         self.connection_string = connection_string
         self.source_system = source_system
+        self.source_component = source_component
         self.baud = baud
         self.silence_reconnect_s = silence_reconnect_s  # None = never reopen on silence alone
         self.reconnect_max_delay_s = max(reconnect_max_delay_s, RECONNECT_MIN_DELAY_S)
@@ -182,7 +201,7 @@ class MavlinkBridge:
         return self._conn is not None
 
     def connect(self) -> None:
-        kwargs: dict = {"source_system": self.source_system}
+        kwargs: dict = {"source_system": self.source_system, "source_component": self.source_component}
         if self.baud is not None:
             kwargs["baud"] = self.baud
         self._conn = mavutil.mavlink_connection(self.connection_string, **kwargs)
@@ -336,6 +355,12 @@ class MavlinkBridge:
     def _handle_message(self, msg) -> None:
         msg_type = msg.get_type()
         if msg_type == "HEARTBEAT":
+            # ArduPilot routes every other component's HEARTBEAT onto this port
+            # too - the GCS on the telemetry radio, a gimbal, another companion.
+            # Taking those as the FC's would flip fc_mode/armed to garbage and
+            # retarget every command (GUIDED, RTL, arm) at the wrong system.
+            if not self._is_autopilot_heartbeat(msg):
+                return
             self._conn.target_system = msg.get_srcSystem()
             self._conn.target_component = msg.get_srcComponent()
             self.telemetry.fc_mode = mavutil.mode_string_v10(msg)
@@ -433,6 +458,10 @@ class MavlinkBridge:
             self.telemetry.fence_breached = self.telemetry.fence_enabled and not bool(
                 msg.onboard_control_sensors_health & fence_bit
             )
+        elif msg_type == "EXTENDED_SYS_STATE":
+            self.telemetry.landed_state = (
+                msg.landed_state if msg.landed_state != MAV_LANDED_STATE_UNDEFINED else None
+            )
         elif msg_type == "HOME_POSITION":
             # ArduPilot broadcasts this when home is set/changed, and
             # answers request_home_position()'s MAV_CMD_GET_HOME_POSITION
@@ -465,6 +494,21 @@ class MavlinkBridge:
                     "armed_requested": self._pending_arm_intents.pop(0),
                     "accepted": msg.result == mavutil.mavlink.MAV_RESULT_ACCEPTED,
                 }
+
+    @staticmethod
+    def _is_autopilot_heartbeat(msg) -> bool:
+        """The flight controller is component 1 (MAV_COMP_ID_AUTOPILOT1) and
+        reports a real autopilot type; GCSs, gimbals and companion computers
+        send MAV_AUTOPILOT_INVALID."""
+        return (
+            msg.get_srcComponent() == MAV_COMP_ID_AUTOPILOT1
+            and getattr(msg, "autopilot", None) != MAV_AUTOPILOT_INVALID
+        )
+
+    @property
+    def on_ground(self) -> bool:
+        """The FC reports it is landed (EXTENDED_SYS_STATE). False when unknown."""
+        return self.telemetry.landed_state == MAV_LANDED_STATE_ON_GROUND
 
     def request_data_streams(self, rate_hz: int = 4) -> None:
         """Sends a real REQUEST_DATA_STREAM(req_stream_id=MAV_DATA_STREAM_ALL)
@@ -653,6 +697,24 @@ class MavlinkBridge:
         a defense-in-depth backstop against a caller mistake."""
         if not guidance_allowed:
             return False
+        if not all(math.isfinite(v) for v in (vx, vy, vz, yaw_rate)):
+            # A NaN/inf reaching the FC is undefined behaviour in its position
+            # controller - never send one, whatever upstream bug produced it.
+            log.error("Refusing non-finite velocity setpoint (%r, %r, %r, %r)", vx, vy, vz, yaw_rate)
+            return False
+        return self._send_setpoint(vx, vy, vz, yaw_rate)
+
+    def send_stop_setpoint(self) -> bool:
+        """Zero velocity, zero yaw rate. ArduCopter keeps flying the last
+        GUIDED velocity setpoint for up to 3 s (its GUIDED timeout) after
+        setpoints stop arriving, so merely ceasing to send when guidance is
+        withdrawn (obstacle, SAFE, abort of Approach-Test...) would leave the
+        aircraft coasting toward whatever caused the stop. A stop is always
+        safe to command, so unlike send_velocity_setpoint() it needs no
+        Supervisor permission - it is how withdrawn permission is enforced."""
+        return self._send_setpoint(0.0, 0.0, 0.0, 0.0)
+
+    def _send_setpoint(self, vx: float, vy: float, vz: float, yaw_rate: float) -> bool:
         assert self._conn is not None, "call connect() first"
         return self._write(
             "velocity setpoint",

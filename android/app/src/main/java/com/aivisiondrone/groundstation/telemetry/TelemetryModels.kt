@@ -100,7 +100,10 @@ data class TrackingState(
     // Supervisor allows it (companion/main.py): "auto_takeoff" (climbing to a
     // safe altitude first), "target_unseen" (briefly out of sight - holds
     // rather than steering on stale coordinates), "identity_lost" (the tracked
-    // subject stopped looking like the selected target). null = not holding.
+    // subject stopped looking like the selected target), "gps_degraded" (grid
+    // search without a good fix), "on_ground" (the FC reports the aircraft is
+    // landed - only Arm & Follow takes off), "takeoff_refused_gps" /
+    // "takeoff_refused_battery". null = not holding.
     val guidanceHold: String? = null,
     // Teach mode: the name of the object being learned right now (null = not teaching)
     // and how many training photos have been saved so far.

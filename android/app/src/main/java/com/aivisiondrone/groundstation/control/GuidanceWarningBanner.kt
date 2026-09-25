@@ -35,6 +35,7 @@ const val HOLD_AUTO_TAKEOFF = "hold:auto_takeoff"
 const val HOLD_TARGET_UNSEEN = "hold:target_unseen"
 const val HOLD_IDENTITY_LOST = "hold:identity_lost"
 const val HOLD_GPS_DEGRADED = "hold:gps_degraded"
+const val HOLD_ON_GROUND = "hold:on_ground"
 const val HOLD_TAKEOFF_REFUSED_GPS = "hold:takeoff_refused_gps"
 const val HOLD_TAKEOFF_REFUSED_BATTERY = "hold:takeoff_refused_battery"
 
@@ -56,7 +57,9 @@ private fun describeReason(reason: String): String = when {
         "Obstacle too close: $className at $distance"
     }
     reason.startsWith("stale_subsystems") -> "System check failed - guidance paused"
-    reason == "rc_override" -> "RC override active - AI guidance paused"
+    // Roll/pitch/yaw stick deflection only - the throttle stick does not
+    // self-centre, so the Pi no longer reads its position as override.
+    reason == "rc_override" -> "Pilot moved the sticks - AI guidance paused"
     reason == "comms_lost" -> "Ground station link lost - guidance paused"
     reason == "fc_not_in_ai_mode" -> "Flight controller not in AI guidance mode"
     reason == "target_lost" -> "Target lost - guidance paused"
@@ -69,6 +72,9 @@ private fun describeReason(reason: String): String = when {
     reason == HOLD_TARGET_UNSEEN -> "Target not visible - holding position"
     reason == HOLD_IDENTITY_LOST -> "Not sure this is your target - holding position"
     reason == HOLD_GPS_DEGRADED -> "GPS fix degraded - holding position"
+    // The FC reports the aircraft is landed: guidance would otherwise launch
+    // it with a climb setpoint. Only Arm & Follow (a real takeoff) leaves the ground.
+    reason == HOLD_ON_GROUND -> "On the ground - use Arm & Follow to take off"
     reason == HOLD_TAKEOFF_REFUSED_GPS -> "Takeoff refused - no good GPS fix"
     reason == HOLD_TAKEOFF_REFUSED_BATTERY -> "Takeoff refused - battery too low"
     else -> reason

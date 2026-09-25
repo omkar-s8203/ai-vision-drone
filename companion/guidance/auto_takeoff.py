@@ -85,6 +85,15 @@ class AutoTakeoffController:
 
         if self.phase == AutoTakeoffPhase.WAITING_TO_ARM:
             if armed and fc_mode == "GUIDED":
+                tolerance_m = self.limits.get("altitude_tolerance_m", 1.0)
+                if (
+                    current_alt_m is not None and self.target_altitude_m is not None
+                    and current_alt_m >= self.target_altitude_m - tolerance_m
+                ):
+                    # Already airborne at height: ArduCopter rejects a takeoff
+                    # while flying, so waiting for one would only time out.
+                    self.phase = AutoTakeoffPhase.DONE
+                    return "ready"
                 self.phase = AutoTakeoffPhase.CLIMBING
                 return "send_takeoff"
             return "hold"

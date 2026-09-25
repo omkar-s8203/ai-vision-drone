@@ -10,7 +10,14 @@ class RcOverrideMonitor:
     guidance is active is treated as override intent.
     """
 
-    MONITORED_CHANNELS = (1, 2, 3, 4)  # roll, pitch, throttle, yaw
+    # Roll, pitch, yaw: the spring-centred sticks, where "off centre" really does
+    # mean the pilot is holding them. Throttle (3) is deliberately not monitored:
+    # it does not return to centre, and ArduCopter expects it at the bottom to
+    # arm, so after an app-armed takeoff its resting position read as permanent
+    # "override" - GUIDED was never requested, guidance never ran, and if the FC
+    # was already in GUIDED the Pi switched it to LOITER with the throttle at
+    # the bottom, i.e. into a descent.
+    MONITORED_CHANNELS = (1, 2, 4)
 
     def __init__(
         self, deadband: float = 0.15, channel_center: int = 1500, channel_range: int = 500

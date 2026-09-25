@@ -864,6 +864,7 @@ class MainViewModel : ViewModel() {
                 "auto_takeoff" -> _alertEvents.tryEmit(AlertEvent.HOLDING_TAKEOFF_CLIMB)
                 "target_unseen" -> _alertEvents.tryEmit(AlertEvent.HOLDING_TARGET_UNSEEN)
                 "identity_lost" -> _alertEvents.tryEmit(AlertEvent.HOLDING_IDENTITY_UNSURE)
+                "on_ground" -> _alertEvents.tryEmit(AlertEvent.HOLDING_ON_GROUND)
             }
         }
     }

@@ -18,6 +18,12 @@ class Pid:
         if dt <= 0:
             return 0.0
         self._integral += error * dt
+        if self.out_limit is not None and self.ki != 0:
+            # Anti-windup: the integral term alone may never ask for more than
+            # the output limit, or a long saturated stretch (a climb to a
+            # distant altitude target) keeps pushing well past the setpoint.
+            max_integral = abs(self.out_limit / self.ki)
+            self._integral = max(-max_integral, min(max_integral, self._integral))
         derivative = 0.0 if self._prev_error is None else (error - self._prev_error) / dt
         self._prev_error = error
         output = self.kp * error + self.ki * self._integral + self.kd * derivative

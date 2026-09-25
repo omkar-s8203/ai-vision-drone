@@ -103,6 +103,10 @@ DEFAULT_PIPELINE_MAX_FRAME_AGE_S = 5.0
 # restarts the service (Restart=always) and it comes back up in IDLE.
 EXIT_CAMERA_STALL = 3
 
+# Zero-velocity setpoints sent after guidance is withdrawn mid-motion (see
+# CompanionOrchestrator._enforce_stop_after_guidance).
+STOP_SETPOINT_REPEATS = 3
+
 _HOLD_COMMAND = GuidanceCommand(vx_mps=0.0, vy_mps=0.0, vz_mps=0.0, yaw_rate_rads=0.0)
 
 
@@ -221,6 +225,7 @@ class CompanionOrchestrator:
         self._identity_mismatch_frames = 0  # consecutive frames the tracked box failed the appearance check
         self._was_armed = False  # edge-detects the arm transition to request HOME_POSITION once
         self._was_rc_override_in_guided = False  # edge-detects entering override-while-GUIDED (see process_frame)
+        self._stop_setpoints_pending = 0  # see _enforce_stop_after_guidance
 
         self.link.on_target_selected(self._on_target_selected)
         self.link.on_mode_command(self._on_mode_command)
@@ -377,7 +382,9 @@ class CompanionOrchestrator:
             height_m = _safe_clamp(
                 payload.get("grid_search_height_m"), grid_cfg.get("min_dimension_m"), grid_cfg.get("max_dimension_m")
             )
-            heading_deg = payload.get("grid_search_heading_deg")
+            # A NaN heading planned NaN waypoints: never reached, and a NaN
+            # heading error saturated the yaw PID - a permanent spin.
+            heading_deg = _safe_clamp(payload.get("grid_search_heading_deg"), None, None)
             if heading_deg is None:
                 heading_deg = self.mavlink.telemetry.heading_deg or 0.0
             if (
@@ -489,12 +496,15 @@ class CompanionOrchestrator:
         )
         if orbit_altitude is not None:
             orbit_cfg["target_altitude_m"] = orbit_altitude
-        follow_max_speed = payload.get("follow_max_speed_mps")
+        # set_max_speed() clamps to [min_speed_mps, config ceiling]; this only
+        # drops missing/non-numeric/non-finite values, which used to raise
+        # half-way through this handler and leave the rest of it unapplied.
+        follow_max_speed = _safe_clamp(payload.get("follow_max_speed_mps"), None, None)
         if follow_max_speed is not None:
-            self.follow.set_max_speed(float(follow_max_speed))
-        orbit_max_speed = payload.get("orbit_max_speed_mps")
+            self.follow.set_max_speed(follow_max_speed)
+        orbit_max_speed = _safe_clamp(payload.get("orbit_max_speed_mps"), None, None)
         if orbit_max_speed is not None:
-            self.orbit.set_max_speed(float(orbit_max_speed))
+            self.orbit.set_max_speed(orbit_max_speed)
         self.recorder.record(
             "mode_command",
             mode=mode.name,
@@ -596,9 +606,15 @@ class CompanionOrchestrator:
         automatically, regardless of what the recovery controller or the
         obstacle check concluded."""
         approved = bool(payload.get("approved", False))
+        if not self.recovery.awaiting_land_confirmation:
+            # Nothing was asked: a late/duplicate/stray response (the dialog
+            # answered after the target was re-found, a replayed message) must
+            # neither land the aircraft nor cancel the mode now running.
+            self.recorder.record("land_confirmation_response_ignored", approved=approved)
+            return
         self.recovery.confirm_landing(approved)
         self.recorder.record("land_confirmation_response", approved=approved)
-        if approved:
+        if approved and self.mavlink.is_connected:
             self.mavlink.set_mode("LAND")
         self.requested_mode = SupervisorState.IDLE
 
@@ -1054,15 +1070,26 @@ class CompanionOrchestrator:
             # always takes precedence" (docs/safety-case.md). Suppress it in
             # that case: the pilot is already flying manually, so there is
             # nothing for an autonomous RTL to usefully override.
-            if not rc_override:
-                self.mavlink.set_mode("RTL")
-                self.recorder.record(
-                    "target_recovery_rtl", distance_to_home_m=recovery_result.distance_to_home_m
-                )
-            else:
+            # Likewise only while this Pi is the one flying it (armed, GUIDED):
+            # a pilot who flipped FLTMODE_CH to LOITER without touching the
+            # sticks is not "rc_override", but has just as clearly taken over -
+            # the search timer kept running regardless and used to RTL them.
+            t = self.mavlink.telemetry
+            pi_in_control = t.armed and t.fc_mode == AI_GUIDANCE_MODE_NAME
+            if rc_override:
                 self.recorder.record(
                     "target_recovery_rtl_suppressed_rc_override",
                     distance_to_home_m=recovery_result.distance_to_home_m,
+                )
+            elif not pi_in_control or not self.mavlink.is_connected:
+                self.recorder.record(
+                    "target_recovery_rtl_suppressed_not_in_guided",
+                    fc_mode=t.fc_mode, armed=t.armed,
+                )
+            else:
+                self.mavlink.set_mode("RTL")
+                self.recorder.record(
+                    "target_recovery_rtl", distance_to_home_m=recovery_result.distance_to_home_m
                 )
             self.requested_mode = SupervisorState.IDLE
             effective_requested_state = SupervisorState.IDLE
@@ -1186,6 +1213,13 @@ class CompanionOrchestrator:
         )
         if auto_takeoff_holding:
             hold_reason = "auto_takeoff"  # withhold real guidance this frame - see the check above
+        elif decision.guidance_allowed and self.mavlink.on_ground:
+            # Armed on the ground in GUIDED, ArduCopter takes off on any climb
+            # setpoint - pixel-framing Follow with the target above image
+            # centre would launch the aircraft with no takeoff sequence, and
+            # horizontal setpoints would then drag it along at skid height.
+            # Leaving the ground is only ever MAV_CMD_NAV_TAKEOFF (Arm & Follow).
+            hold_reason = "on_ground"
         elif decision.state == SupervisorState.SEARCHING:
             command = recovery_result.command
         elif decision.state == SupervisorState.FOLLOWING and self.state_machine.target is not None:
@@ -1293,6 +1327,7 @@ class CompanionOrchestrator:
                     vx=command.vx_mps, vy=command.vy_mps, vz=command.vz_mps,
                     yaw_rate=command.yaw_rate_rads,
                 )
+        self._enforce_stop_after_guidance(command if sent else None, auto_takeoff_holding)
 
         if self._teach_result is not None:
             teach_result, self._teach_result = self._teach_result, None
@@ -1376,6 +1411,34 @@ class CompanionOrchestrator:
             "supervisor_decision": decision,
             "command_sent": sent,
         }
+
+    def _enforce_stop_after_guidance(self, sent_command: Optional[GuidanceCommand], auto_takeoff_holding: bool) -> None:
+        """ArduCopter keeps flying the last GUIDED velocity setpoint for up to
+        3 s after they stop. So when a moving command is followed by a frame
+        with nothing sent - SAFE (obstacle, comms, battery, RC override),
+        Approach-Test aborting, GPS degraded - command an explicit stop,
+        repeated for a few frames in case one is lost on the serial link.
+        Only while still in GUIDED (outside it the FC ignores setpoints and the
+        pilot/another mode is in charge) and never during an auto-takeoff climb,
+        which any setpoint would cancel."""
+        if sent_command is not None:
+            moving = any(
+                v != 0.0 for v in (
+                    sent_command.vx_mps, sent_command.vy_mps, sent_command.vz_mps, sent_command.yaw_rate_rads,
+                )
+            )
+            self._stop_setpoints_pending = STOP_SETPOINT_REPEATS if moving else 0
+            return
+        if self._stop_setpoints_pending <= 0 or auto_takeoff_holding:
+            return
+        if self.mavlink.telemetry.fc_mode != AI_GUIDANCE_MODE_NAME or not self.mavlink.is_connected:
+            self._stop_setpoints_pending = 0
+            return
+        first = self._stop_setpoints_pending == STOP_SETPOINT_REPEATS
+        if self.mavlink.send_stop_setpoint():
+            self._stop_setpoints_pending -= 1
+            if first:
+                self.recorder.record("guidance_stop_commanded")
 
     def _detections_for(self, frame) -> tuple[list[Detection], bool]:
         """(detections, fresh) for this frame. `fresh` is False when the frame

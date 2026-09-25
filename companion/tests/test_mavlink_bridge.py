@@ -12,7 +12,7 @@ def test_connect_passes_baud_when_specified():
         bridge = MavlinkBridge("/dev/serial0", baud=921600)
         bridge.connect()
         mock_mavutil.mavlink_connection.assert_called_once_with(
-            "/dev/serial0", source_system=1, baud=921600
+            "/dev/serial0", source_system=1, source_component=191, baud=921600
         )
 
 
@@ -23,7 +23,7 @@ def test_connect_omits_baud_when_not_specified():
         bridge = MavlinkBridge("udpin:127.0.0.1:14550")
         bridge.connect()
         mock_mavutil.mavlink_connection.assert_called_once_with(
-            "udpin:127.0.0.1:14550", source_system=1
+            "udpin:127.0.0.1:14550", source_system=1, source_component=191
         )
 
 

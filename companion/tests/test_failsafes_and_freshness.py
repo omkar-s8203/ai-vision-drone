@@ -27,6 +27,12 @@ from companion.vision.detector import BBox, IMX500Detector
 IMAGE_W, IMAGE_H = 1280, 720
 
 
+def _only_stops_since(conn, count_before):
+    """Every velocity setpoint sent after `count_before` is a zero-velocity stop."""
+    calls = conn.mav.set_position_target_local_ned_send.call_args_list[count_before:]
+    return all(c.args[8:11] == (0.0, 0.0, 0.0) and c.args[15] == 0.0 for c in calls)
+
+
 # --- operator link liveness: real traffic, not socket state ----------------
 
 class _AgingTransport(FakeTransport):
@@ -288,7 +294,9 @@ async def test_the_geofence_stops_follow_at_the_orchestrator_level(tmp_path):
         assert sent_before > 0
         orch.mavlink.telemetry.fence_breached = True
         await orch.process_frame(_frame(0.2, [person]))
-        assert conn.mav.set_position_target_local_ned_send.call_count == sent_before
+        # No more guidance - only an explicit stop, so the FC does not keep
+        # flying the last velocity for its 3 s GUIDED timeout.
+        assert _only_stops_since(conn, sent_before)
 
 
 # --- auto-takeoff pre-flight ------------------------------------------------
@@ -402,7 +410,7 @@ async def test_a_stale_position_holds_the_sweep_instead_of_steering_on_old_coord
 
         orch.mavlink.telemetry.position_ts -= 30.0  # GLOBAL_POSITION_INT stopped
         await orch.process_frame(_frame(0.2, []))
-        assert conn.mav.set_position_target_local_ned_send.call_count == sent
+        assert _only_stops_since(conn, sent)
         assert _last_update(orch)["guidance_hold"] == "gps_degraded"
 
 

@@ -17,6 +17,10 @@ defeat the entire point of the override.
 
 ## Step 1: Configure and verify `FLTMODE_CH`
 
+**Status (2026-09-25): configured, and confirmed that the switch overrides
+the Pi on the real aircraft.** Record 1c (Pi off) and the formal 20/20 of
+1d (with Follow actively sending setpoints) in the lab checklist's Stage 4.
+
 This is the actual, non-negotiable safety guarantee the whole project is
 built around - a hardware switch on the transmitter that changes the
 flight controller's mode through the RC receiver directly, a path that

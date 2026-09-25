@@ -25,8 +25,9 @@ mechanism is never silent to the operator.
   guarantee this whole project is built around; everything else here is a
   software backstop on top of it.
 - **Software backstop**: `RcOverrideMonitor.is_overriding()`
-  (`companion/mavlink/rc_monitor.py`) watches `RC_CHANNELS` for stick
-  deflection beyond a deadband while AI guidance is active, and
+  (`companion/mavlink/rc_monitor.py`) watches `RC_CHANNELS` for roll, pitch
+  or yaw stick deflection beyond a deadband while AI guidance is active (not
+  throttle - it does not self-centre, see "Safety audit 2026-09"), and
   `SafetySupervisor.evaluate()` forces `SAFE` (reason `"rc_override"`) the
   moment it sees this - independent of and in addition to the hardware
   path above.
@@ -119,14 +120,14 @@ mechanism is never silent to the operator.
   `::test_no_rc_override_never_requests_loiter`,
   `::test_rc_override_loiter_request_re_fires_after_override_clears`).
 - **Status**: software backstop implemented and unit/integration tested.
-  **The hardware switch itself is not yet configured on the transmitter**
-  (`FLTMODE_CH` param) - see root README "What's next" #4. Until that's
-  done, the actual non-negotiable guarantee this project depends on is not
-  live on real hardware yet, only the software approximation of it is.
-  **`docs/flight-readiness-checklist.md`** has the exact step-by-step
-  procedure for configuring and verifying it (including the plan's own
-  20/20-trials acceptance criteria), plus the props-off guidance dry-run
-  that comes right after.
+  **The hardware switch is configured (`FLTMODE_CH`) and confirmed on the
+  real aircraft (2026-09-25): the pilot's mode switch overrides the Pi.**
+  The non-negotiable guarantee this project depends on is now live on real
+  hardware. Still to record against `docs/lab-test-checklist.md` Stage 4:
+  the switch working with the Pi powered off (4A), and the formal 20/20
+  trials with Follow actively sending setpoints (4B.3) - that one needs the
+  props-off guidance dry run, since no guidance setpoint has reached the
+  real FC yet.
 - **Tests**: `test_rc_monitor.py` (deadband logic in isolation),
   `test_safety_supervisor.py::test_rc_override_forces_safe`,
   `test_approach_test.py::test_rc_override_aborts`,
@@ -813,3 +814,59 @@ just in-process Python calls.
     by class + IoU and only sets it `True` for that match. Unit-tested
     (`test_distance.py::test_estimator_ignores_rangefinder_by_default_even_when_available`,
     `test_proximity_guard.py::test_only_the_matching_detection_trusts_the_rangefinder_not_the_rest`).
+
+## Safety audit 2026-09
+
+A full audit of the companion's flight-critical path against MAVLink and
+ArduPilot companion-computer conventions. Every item below is fixed and covered
+by `companion/tests/test_audit_fixes.py` unless noted.
+
+- **Guidance withdrawn mid-motion let the aircraft coast.** When the Supervisor
+  went `SAFE` (obstacle, battery, comms, RC override, geofence), Approach-Test
+  aborted, or grid search lost GPS, the Pi simply stopped sending. ArduCopter
+  keeps flying the last GUIDED velocity setpoint until its 3 s GUIDED timeout -
+  at 3 m/s that is ~9 m, far past `min_obstacle_distance_m`. **Fixed**: after a
+  moving setpoint, a frame that sends nothing is followed by an explicit
+  zero-velocity stop (`MavlinkBridge.send_stop_setpoint()`), repeated 3 frames,
+  only while the FC is still in GUIDED and never during an auto-takeoff climb.
+- **HEARTBEATs from other components were taken as the FC's.** ArduPilot routes
+  the GCS's, gimbal's and other companions' heartbeats onto the companion port.
+  Each one overwrote `fc_mode`/`armed` and retargeted every command (GUIDED,
+  RTL, BRAKE, arm) at that component. **Fixed**: only component 1
+  (`MAV_COMP_ID_AUTOPILOT1`) with a real autopilot type is accepted.
+- **The companion identified itself as component 0** (`MAV_COMP_ID_ALL`, not a
+  valid source). **Fixed**: `MAV_COMP_ID_ONBOARD_COMPUTER` (191).
+- **Throttle position read as RC override.** The throttle stick does not
+  self-centre and sits low after arming, so after an app-armed takeoff the Pi saw
+  permanent "override": GUIDED was never requested, and in GUIDED the Pi switched
+  to LOITER with the throttle at the bottom - a descent. **Fixed**: only roll,
+  pitch and yaw are monitored.
+- **Guidance could launch the aircraft from the ground.** Armed in GUIDED on the
+  ground, ArduCopter takes off on any climb setpoint - pixel-framing Follow with
+  the target above image centre did exactly that, without the takeoff sequence.
+  **Fixed**: guidance is withheld (`guidance_hold: "on_ground"`) while
+  `EXTENDED_SYS_STATE.landed_state` is `ON_GROUND`; leaving the ground is only
+  ever `MAV_CMD_NAV_TAKEOFF`. Unknown landed state does not block.
+- **Target-loss RTL overrode the pilot's mode switch.** It was suppressed for
+  stick override only; a pilot who flipped `FLTMODE_CH` to LOITER still got RTL
+  when the search timed out. **Fixed**: only while armed and in GUIDED.
+- **A stray `land_confirmation_response` could LAND the aircraft.** **Fixed**:
+  ignored unless a confirmation is actually outstanding.
+- **Non-finite values.** A NaN grid-search heading planned NaN waypoints and
+  saturated the yaw PID (a permanent spin); a non-numeric max speed aborted the
+  mode handler half-way. **Fixed**: validated like every other app value, and
+  `send_velocity_setpoint()` refuses any non-finite setpoint as a last line.
+- **PID integral windup.** **Fixed**: the integral term is clamped to the output
+  limit.
+- **Auto-takeoff when already airborne** waited 30 s for a takeoff ArduCopter
+  rejects in flight. **Fixed**: already at height counts as ready.
+
+Still open (not code defects - need a decision or hardware):
+
+- The battery gate uses `battery_remaining_pct` only; if the FC has no
+  `BATT_CAPACITY` it reports -1 and the Pi's battery gate never trips. The FC's
+  own `BATT_LOW_ACT`/`BATT_CRT_ACT` must be configured regardless.
+- At critical battery the failsafe RTL takes precedence over target-recovery's
+  "too far to RTL, land here?" question, since both fire at low battery.
+- None of the MAVLink behaviour above has been confirmed against a real FC yet
+  (`EXTENDED_SYS_STATE` streaming in particular) - see the lab-test checklist.

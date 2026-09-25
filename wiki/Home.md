@@ -45,7 +45,7 @@ The original flight chain is untouched: RC transmitter → receiver → flight c
 
 ## Current status in one paragraph
 
-Roughly **72 % complete**. All software is written and tested (763 companion tests passing). The camera, on-sensor AI, video, MAVLink telemetry, arm/disarm and flight-mode control have all run together on the real Pi and flight controller, mounted on the aircraft with props off. **No guidance velocity command has yet been sent to the real flight controller**, the transmitter override switch (`FLTMODE_CH`) is not yet configured, and the camera has not been calibrated. Real flight has not started. See [Project Status and Roadmap](Project-Status-and-Roadmap).
+Roughly **75 % complete**. All software is written and tested (763 companion tests passing). The camera, on-sensor AI, video, MAVLink telemetry, arm/disarm and flight-mode control have all run together on the real Pi and flight controller, mounted on the aircraft with props off. The transmitter override switch (`FLTMODE_CH`) is configured and confirmed overriding the Pi. **No guidance velocity command has yet been sent to the real flight controller**, and the camera has not been calibrated. Real flight has not started. See [Project Status and Roadmap](Project-Status-and-Roadmap).
 
 ## Repository
 
